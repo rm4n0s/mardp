@@ -26,3 +26,19 @@ The script makes a certificate and key with the system's LibreSSL, imports them 
 `scripts/sign.sh <bundle>` signs with it, and stops with a message when it is missing. To use a different identity, set `MARDP_SIGN_IDENTITY` to its name.
 
 To remove the identity, delete the certificate `mardp development` (and its key) from the login keychain in Keychain Access.
+
+## The client (Linux)
+
+Remmina, with the RDP plugin, from your distribution. For video mardp uses H.264 (the colour depth "GFX AVC420 (32 bpp)" in Remmina's profile), which FreeRDP decodes with Cisco's OpenH264.
+
+On Fedora the packaged FreeRDP links `libopenh264.so.8`, which two packages provide: `openh264` (from the repository `fedora-cisco-openh264`, enabled by default) decodes; `noopenh264` (from Fedora's own repository) is a stub that decodes nothing. Check which one is installed:
+
+```bash
+rpm -q openh264 noopenh264
+```
+
+If it is `noopenh264`, swap it:
+
+```bash
+sudo dnf swap noopenh264 openh264 --enablerepo=fedora-cisco-openh264
+```

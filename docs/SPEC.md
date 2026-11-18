@@ -127,7 +127,7 @@ The library implements the server side of these Microsoft Open Specifications. E
 
 ### 5.1 Connection sequence
 
-1. **X.224 Connection Request / Confirm**, with the RDP negotiation: the client lists the security protocols it accepts, the server selects TLS (`PROTOCOL_SSL`). A client that does not offer TLS gets the negotiation failure `SSL_REQUIRED_BY_SERVER`.
+1. **X.224 Connection Request / Confirm**, with the RDP negotiation: the client lists the security protocols it accepts, the server selects TLS (`PROTOCOL_SSL`). A client that does not offer TLS gets the negotiation failure `SSL_REQUIRED_BY_SERVER`; so does one that sends no negotiation request at all (FreeRDP with `/sec:rdp`). What real clients send is recorded in `rdp/testdata/x224/`: FreeRDP and Remmina on automatic security offer TLS, CredSSP and CredSSP with the early authorization result (`0x0B`), and the server picks TLS from it.
 2. **TLS handshake** (§8).
 3. **MCS Connect Initial / Response** with the GCC blocks: the server reads the client's core data (desktop size, colour depth, keyboard layout, client name, the flag that says it supports the graphics pipeline), its channel list and its monitor block, and answers with the server core, security (no RDP encryption: TLS does it) and network blocks. Static channels the server opens: `drdynvc` and `rdpsnd`. Others the client asks for are accepted and ignored.
 4. **MCS Erect Domain, Attach User, Channel Joins.**
@@ -415,7 +415,7 @@ Kept in `docs/MANUAL-CHECKS.md` with the exact steps: connect from Remmina; watc
 - macOS 14 or newer on the Mac that runs mardp, Apple silicon or Intel (D20). Development and every measurement happen on the owner's Apple silicon Mac; Intel is built but not tested.
 - Build: `go build ./...`; the app: Glutter's `glutter-macos build`, wrapped by `scripts/build-app.sh`, which also signs with the development identity (§7.1).
 - On Linux, `go build ./...` and `go test ./...` pass: the library and the pipeline are tested there, the Mac parts are stubs.
-- The client: a current Remmina, whose FreeRDP is built with H.264 for the video path (R5 checks the owner's).
+- The client: a current Remmina, whose FreeRDP is built with H.264 for the video path. On Fedora that is the packaged FreeRDP with Cisco's `openh264` installed, not the stub `noopenh264` (§19 R5).
 
 ## 17. Milestones
 
@@ -440,14 +440,14 @@ mardp is BSD-3-Clause. The protocols are implemented from Microsoft's Open Speci
 
 Each is answered by a small program before the real work starts, because the answer changes the design.
 
-| # | Question | If the answer is bad |
-|---|---|---|
-| R1 | Does ScreenCaptureKit deliver frames when the Mac's monitor is asleep or absent, once mardp has woken the display and holds the assertion? (The owner's Mac is used over Screen Sharing with the monitor asleep.) | A virtual display moves from M7 into 1.0 |
-| R2 | Does ScreenCaptureKit still capture the system sound while the Mac's output is muted? If not, does a Core Audio tap with muting (macOS 14.2) do it? | "On the client only" becomes "on both" in 1.0 |
-| R3 | What does a client see and what can it do while the Mac is locked? | The README says to turn the lock off while away, or 1.0 gets a note in the window |
-| R4 | Can the pointer's current image be read from an app that is not in front, on macOS 27? | The fallback of §10.3 is the default |
-| R5 | Does Fedora's FreeRDP decode H.264 as packaged (checked in the virtual machine of §15.3), and which profiles? The owner checks the same on their own machine: Remmina's colour depth list has "GFX AVC420" | The README gets install steps for the Linux side; §9.3's profile changes |
-| R6 | macOS asks again, from time to time, whether an app may keep recording the screen. How often on macOS 27, and does it interrupt a running session? | The window explains it; the checklist notices a withdrawn permission |
+| # | Question | If the answer is bad | Answer |
+|---|---|---|---|
+| R1 | Does ScreenCaptureKit deliver frames when the Mac's monitor is asleep or absent, once mardp has woken the display and holds the assertion? (The owner's Mac is used over Screen Sharing with the monitor asleep.) | A virtual display moves from M7 into 1.0 | To be checked (0.5) |
+| R2 | Does ScreenCaptureKit still capture the system sound while the Mac's output is muted? If not, does a Core Audio tap with muting (macOS 14.2) do it? | "On the client only" becomes "on both" in 1.0 | To be checked (0.6) |
+| R3 | What does a client see and what can it do while the Mac is locked? | The README says to turn the lock off while away, or 1.0 gets a note in the window | To be checked (0.7) |
+| R4 | Can the pointer's current image be read from an app that is not in front, on macOS 27? | The fallback of §10.3 is the default | To be checked (0.7) |
+| R5 | Does Fedora's FreeRDP decode H.264 as packaged (checked in the virtual machine of §15.3), and which profiles? The owner checks the same on their own machine: Remmina's colour depth list has "GFX AVC420" | The README gets install steps for the Linux side; §9.3's profile changes | Yes (2026-11-19, test machine): FreeRDP 3.33.1 (`freerdp-3.33.1-1.fc45`) is built with `WITH_GFX_H264=ON` and links OpenH264 directly (`libopenh264.so.8`, not loaded at run time); Remmina 1.4.43 (`remmina-1.4.43-6.fc45`) offers "GFX AVC420 (32 bpp)" and "GFX AVC444 (32 bpp)". The catch: two packages provide `libopenh264.so.8`, Cisco's `openh264` (repository `fedora-cisco-openh264`, enabled by default) and the stub `noopenh264` (Fedora's own repository), which decodes nothing; the machine got the real one, 2.6.0. The README tells the Linux side to check `rpm -q openh264` and how to swap the stub. Sound: FreeRDP decodes AAC (`WITH_FDK_AAC`), Opus, GSM and MP3. Which profiles OpenH264 decodes is checked with the encoder's own output in 0.8 |
+| R6 | macOS asks again, from time to time, whether an app may keep recording the screen. How often on macOS 27, and does it interrupt a running session? | The window explains it; the checklist notices a withdrawn permission | To be checked (0.7) |
 
 Other risks, without a check of their own:
 
