@@ -1,0 +1,36 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - depguard
+    - errorlint
+    - forbidigo
+    - gocritic
+    - misspell
+    - nilerr
+    - unconvert
+    - usestdlibvars
+  settings:
+    depguard:
+      rules:
+        errors:
+          deny:
+            - pkg: errors
+              desc: use github.com/rm4n0s/errors (CLAUDE.md, "Error handling")
+            - pkg: github.com/pkg/errors
+              desc: use github.com/rm4n0s/errors
+    forbidigo:
+      forbid:
+        - pattern: ^fmt\.Errorf$
+          msg: use errors.NewErrf of github.com/rm4n0s/errors (CLAUDE.md, "Error handling")
+    misspell:
+      locale: US
+  exclusions:
+    paths:
+      - spikes/
+
+formatters:
+  enable:
+    - gofmt

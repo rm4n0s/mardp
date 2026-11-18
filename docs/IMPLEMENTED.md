@@ -1,0 +1,9 @@
+# mardp: Implemented steps
+
+One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was built, how it was proved, what differs from the plan and why, and which manual checks are pending.
+
+## 0.1 Groundwork (2026-11-19)
+- **Built:** `go.mod` (`github.com/rm4n0s/mardp`, Go 1.27.3, `github.com/rm4n0s/errors` v0.2.0). `.gitignore` entries for the binary, `build/`, `*.app` and `spikes/out/`. `scripts/check.sh` runs gofmt, `go vet` (also as Linux, so the stubs of `internal/mac` are checked), golangci-lint, the tests with `-race -tags debug_mode` and without tags, and the Linux build and vet of `rdp/...` once it exists; on macOS it gives the tests the resolved temporary folder. `.golangci.yml` (v2): the standard linters plus depguard (the standard `errors` package is refused), forbidigo (`fmt.Errorf` is refused), errorlint, gocritic, misspell and a few more; `spikes/` is excluded. `internal/archtest`: the rules of SPEC §4.1 as data; a package folder the table does not know is a violation.
+- **Proved:** `scripts/check.sh` passes. `TestRepository` checks this tree; `TestCheckFindsPlantedViolation` plants `import "C"` in `internal/host` and an import of `internal/host` in `rdp` and finds exactly those two (while `testdata/` and a correct cgo file under `internal/mac` are left alone); `TestForbidden` covers every row of the table; `TestCheckFailures` asserts the route of each of the four tags. The lint rules were tried on a planted file that imports `errors` and calls `fmt.Errorf`: both reported.
+- **Differs from the plan:** SPEC §4.1 now says what the table left open: a package under `internal/mac` may import `internal/host` (the types it implements) and its siblings; `rdp/rdptest` is imported only by test files; `spikes/` may import anything and nothing imports it.
+- **Manual checks:** none.
