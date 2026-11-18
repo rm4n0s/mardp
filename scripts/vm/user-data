@@ -1,0 +1,64 @@
+#cloud-config
+# The mardp test machine (SPEC §15.3, docs/VM.md). It holds nothing of the
+# owner's. The guest agent runs the commands of scripts/vm.sh; there is no SSH
+# login.
+hostname: mardp-test
+users:
+  - name: mardp
+    gecos: mardp test user
+    groups: [wheel, audio, video]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    shell: /bin/bash
+ssh_pwauth: false
+# A test machine: SELinux would confine the guest agent's commands, so it is
+# permissive here, from the first boot on.
+bootcmd:
+  - [setenforce, "0"]
+  - [sed, -i, "s/^SELINUX=.*/SELINUX=permissive/", /etc/selinux/config]
+growpart:
+  mode: auto
+  devices: ["/"]
+package_update: false
+packages:
+  - qemu-guest-agent
+  - kernel-modules
+  - kernel-modules-extra
+  - alsa-utils
+  - pipewire
+  - pipewire-pulseaudio
+  - pipewire-utils
+  - pulseaudio-utils
+  - wireplumber
+  - freerdp
+  - remmina
+  - remmina-plugins-rdp
+  - xorg-x11-server-Xvfb
+  - xdotool
+  - ImageMagick
+  - ffmpeg-free
+  - nmap-ncat
+  - tcpdump
+  - "@xfce-desktop-environment"
+  - lightdm
+write_files:
+  - path: /etc/sysconfig/qemu-ga
+    content: |
+      # mardp test machine: every guest agent command is allowed.
+      FILTER_RPC_ARGS=""
+      BLACKLIST_RPC=""
+  - path: /etc/lightdm/lightdm.conf.d/50-mardp-autologin.conf
+    content: |
+      [Seat:*]
+      autologin-user=mardp
+      autologin-session=xfce
+runcmd:
+  - [systemctl, set-default, graphical.target]
+  - [systemctl, enable, lightdm]
+  - [loginctl, enable-linger, mardp]
+  - [systemctl, enable, qemu-guest-agent]
+  - [touch, /var/lib/mardp-setup-done]
+power_state:
+  mode: reboot
+  message: mardp test machine set up, rebooting into the installed kernel
+  condition: true
