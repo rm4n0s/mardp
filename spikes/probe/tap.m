@@ -4,19 +4,34 @@
 #import <CoreAudio/CoreAudio.h>
 #import <CoreAudio/CATapDescription.h>
 #import <CoreAudio/AudioHardwareTapping.h>
+#import <AVFoundation/AVFoundation.h>
 #include <stdatomic.h>
 #include <math.h>
 #include "tap.h"
 
 static _Atomic float gPeak;
 
+AVAudioEngine *startTone(void);
+
 // tapProbe taps the whole system output for the given seconds and returns the
 // peak sample level. stage says which call failed (1 create tap, 2 tap uid,
 // 3 aggregate device, 4 io proc, 5 start).
-int tapProbe(double seconds, int mute, float *peak, int *stage) {
+int tapProbe(double seconds, int mute, int tone, int excludePid, float *peak, int *stage) {
 	@autoreleasepool {
 		atomic_store(&gPeak, 0.0f);
-		CATapDescription *d = [[CATapDescription alloc] initStereoGlobalTapButExcludeProcesses:@[]];
+		NSMutableArray<NSNumber *> *ex = [NSMutableArray array];
+		if (excludePid > 0) {
+			AudioObjectPropertyAddress pa = {kAudioHardwarePropertyTranslatePIDToProcessObject, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+			pid_t pid = excludePid;
+			AudioObjectID obj = kAudioObjectUnknown;
+			UInt32 osz = sizeof(obj);
+			*stage = 0;
+			OSStatus pst = AudioObjectGetPropertyData(kAudioObjectSystemObject, &pa, sizeof(pid), &pid, &osz, &obj);
+			if (pst != noErr) return pst;
+			printf("excluding pid %d as audio object %u\n", excludePid, obj);
+			if (obj != kAudioObjectUnknown) [ex addObject:@(obj)];
+		}
+		CATapDescription *d = [[CATapDescription alloc] initStereoGlobalTapButExcludeProcesses:ex];
 		d.name = @"mardp probe tap";
 		d.privateTap = YES;
 		d.muteBehavior = mute ? CATapMuted : CATapUnmuted;
@@ -62,7 +77,9 @@ int tapProbe(double seconds, int mute, float *peak, int *stage) {
 			*stage = 5;
 			st = AudioDeviceStart(dev, proc);
 			if (st == noErr) {
+				AVAudioEngine *eng = tone ? startTone() : nil;
 				[NSThread sleepForTimeInterval:seconds];
+				[eng stop];
 				AudioDeviceStop(dev, proc);
 			}
 			AudioDeviceDestroyIOProcID(dev, proc);

@@ -65,12 +65,18 @@ func main() {
 		exSelf := fs.Bool("exclude-self", false, "excludesCurrentProcessAudio")
 		exApp := fs.String("exclude-app", "", "bundle id to leave out")
 		tone := fs.Bool("tone", false, "play a tone from this process")
+		exPid := fs.Int("exclude-pid", 0, "process ID of a running app to leave out")
 		_ = fs.Parse(os.Args[2:])
 		cs := C.CString(*exApp)
 		defer C.free(unsafe.Pointer(cs))
 		o := C.probeOpts{seconds: C.double(*secs), width: C.int(*w), height: C.int(*h),
-			animate: b2i(*anim), audio: b2i(*audio), excludeSelf: b2i(*exSelf), excludeBundle: cs, tone: b2i(*tone)}
+			animate: b2i(*anim), audio: b2i(*audio), excludeSelf: b2i(*exSelf), excludeBundle: cs, tone: b2i(*tone), excludePid: C.int(*exPid)}
 		os.Exit(int(C.probeCapture(o)))
+	case "tone":
+		fs := flag.NewFlagSet("tone", flag.ExitOnError)
+		secs := fs.Float64("s", 10, "seconds")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(int(C.probeTone(C.double(*secs))))
 	case "cursor":
 		fs := flag.NewFlagSet("cursor", flag.ExitOnError)
 		secs := fs.Float64("s", 20, "seconds")
@@ -78,9 +84,19 @@ func main() {
 		_ = fs.Parse(os.Args[2:])
 		os.Exit(int(C.probeCursor(C.double(*secs), b2i(*move))))
 	case "tap":
+		fs := flag.NewFlagSet("tap", flag.ExitOnError)
+		secs := fs.Float64("s", 3, "seconds")
+		mute := fs.Bool("mute", false, "a tap that mutes what it taps")
+		tone := fs.Bool("tone", false, "play a tone from this process")
+		exSelf := fs.Bool("exclude-self", false, "leave this process out")
+		exPid := fs.Int("exclude-pid", 0, "leave this process out")
+		_ = fs.Parse(os.Args[2:])
+		if *exSelf {
+			*exPid = os.Getpid()
+		}
 		var peak C.float
 		var stage C.int
-		st := C.tapProbe(3, 0, &peak, &stage)
+		st := C.tapProbe(C.double(*secs), b2i(*mute), b2i(*tone), C.int(*exPid), &peak, &stage)
 		fmt.Printf("tap status %d at stage %d, peak %.4f\n", int(st), int(stage), float32(peak))
 	case "request-ax":
 		fmt.Println("accessibility granted:", C.axRequest() != 0)

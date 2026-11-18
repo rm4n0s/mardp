@@ -74,7 +74,7 @@ static double now(void) { return CFAbsoluteTimeGetCurrent(); }
 }
 @end
 
-static AVAudioEngine *startTone(void) {
+AVAudioEngine *startTone(void) {
 	AVAudioEngine *eng = [[AVAudioEngine alloc] init];
 	AVAudioFormat *fmt = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:48000 channels:2];
 	__block double phase = 0;
@@ -91,6 +91,23 @@ static AVAudioEngine *startTone(void) {
 	NSError *err = nil;
 	if (![eng startAndReturnError:&err]) { printf("tone: %s\n", err.description.UTF8String); return nil; }
 	return eng;
+}
+
+int probeTone(double seconds) {
+	@autoreleasepool {
+		[NSApplication sharedApplication];
+		[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+		NSWindow *win = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 2, 2) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+		win.alphaValue = 0.01;
+		[win orderFrontRegardless];
+		AVAudioEngine *eng = startTone();
+		if (!eng) return 1;
+		double t0 = now();
+		while (now() - t0 < seconds) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+		[win orderOut:nil];
+		[eng stop];
+		return 0;
+	}
 }
 
 int probeCapture(probeOpts o) {
@@ -124,6 +141,10 @@ int probeCapture(probeOpts o) {
 			NSString *bid = [NSString stringWithUTF8String:o.excludeBundle];
 			for (SCRunningApplication *a in content.applications) if ([a.bundleIdentifier isEqualToString:bid]) [excl addObject:a];
 			printf("excluding %lu running app(s) with bundle %s\n", (unsigned long)excl.count, o.excludeBundle);
+		}
+		if (o.excludePid > 0) {
+			for (SCRunningApplication *a in content.applications) if (a.processID == o.excludePid) { [excl addObject:a]; printf("excluding pid %d (%s, bundle '%s')\n", o.excludePid, a.applicationName.UTF8String, a.bundleIdentifier.UTF8String); }
+			if (excl.count == 0) printf("pid %d is not among %lu shareable applications\n", o.excludePid, (unsigned long)content.applications.count);
 		}
 		SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:disp excludingApplications:excl exceptingWindows:@[]];
 		SCStreamConfiguration *cfg = [[SCStreamConfiguration alloc] init];

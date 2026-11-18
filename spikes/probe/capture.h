@@ -7,6 +7,10 @@ typedef struct {
 	int excludeSelf;     // excludesCurrentProcessAudio
 	const char *excludeBundle; // leave this app out of the capture ("" = none)
 	int tone;            // play a 440 Hz tone from this process
+	int excludePid;      // leave the running app with this process ID out (0 = none)
 } probeOpts;
+
+// probeTone plays the 440 Hz tone for the given seconds.
+int probeTone(double seconds);
 
 int probeCapture(probeOpts o);
