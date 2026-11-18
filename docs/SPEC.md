@@ -187,8 +187,9 @@ macOS ties these permissions to the app's code signature. A build that is signed
 
 ### 7.2 The display
 
-- The captured display is the main display, or the one chosen in the settings.
-- While a client is connected mardp wakes the display and holds a power assertion that keeps it awake; the assertion is released when the session ends. Whether a Mac whose monitor is asleep or absent still delivers frames is checked first (§19, R1).
+- The captured display is the main display, or the one chosen in the settings. A display is remembered by its UUID (`CGDisplayCreateUUIDFromDisplayID`), never by its display ID: the ID changes when the monitor comes back from sleep (§19 R1).
+- While a client is connected mardp wakes the display (`IOPMAssertionDeclareUserActivity`) and holds a power assertion that keeps it awake (`PreventUserIdleDisplaySleep`); the assertion is released when the session ends. A display that was asleep is awake as soon as the first call returns, and ScreenCaptureKit delivers frames from it at once (§19 R1).
+- Waking can make macOS take the monitor away and add it back with a new display ID, a moment after the wake. A stream on the old display then stops with `SCStreamErrorDomain` -3815 ("failed to find any displays or windows to capture"). So the capture follows display changes (`CGDisplayRegisterReconfigurationCallback`): when the captured display goes away, or the stream stops with that error, it finds the display again by its UUID, or the main display, and starts a new stream at the session's size. The client sees a pause and then a key frame, not a dropped connection. The same path covers a monitor that is unplugged and plugged in again.
 - The pointer is not drawn into the captured frames. Its shape and position are sent separately (§10.3), so the client draws it with no delay.
 - mardp's own window is captured like any other window.
 
@@ -249,7 +250,7 @@ GFX data is wrapped in RDP 8 segments as the protocol requires, without compress
 - Hardware encoder, real-time mode, no B-frames (no frame reordering: every frame is shown as soon as it arrives).
 - High profile; if the interoperability check of M3 shows a client that cannot decode it, Main or Constrained Baseline (the check decides, and this line is updated).
 - The first frame is a key frame. After it only P-frames: the connection is TCP, nothing is lost, so periodic key frames would only cause bursts. A key frame is sent again when the client asks (Refresh Rect), when output resumes, and when the encoder is restarted.
-- Colour: 4:2:0, with the matrix and range that MS-RDPEGFX states for AVC420 (expected: BT.709, full range). A colour-bar test against a real client confirms it.
+- Colour: 4:2:0, with the matrix and range that MS-RDPEGFX states for AVC420 (expected: BT.709, full range). A colour-bar test against a real client confirms it. ScreenCaptureKit delivers `420v` (video range) unless asked for `420f` (full range) in the stream's pixel format, so the capture is asked for the range the encoder is set to (0.8 checks what VideoToolbox signals).
 - 4:2:0 softens coloured text a little. AVC444, which keeps full colour, is after 1.0.
 
 ### 9.4 Frame rate
@@ -442,7 +443,7 @@ Each is answered by a small program before the real work starts, because the ans
 
 | # | Question | If the answer is bad | Answer |
 |---|---|---|---|
-| R1 | Does ScreenCaptureKit deliver frames when the Mac's monitor is asleep or absent, once mardp has woken the display and holds the assertion? (The owner's Mac is used over Screen Sharing with the monitor asleep.) | A virtual display moves from M7 into 1.0 | To be checked (0.5) |
+| R1 | Does ScreenCaptureKit deliver frames when the Mac's monitor is asleep or absent, once mardp has woken the display and holds the assertion? (The owner's Mac is used over Screen Sharing with the monitor asleep.) | A virtual display moves from M7 into 1.0 | Yes, with the display asleep (2026-11-19, this Mac, macOS 27.2, one external 2560×1440 monitor; the display put to sleep with `pmset displaysleepnow`, since this Mac's own display sleep is off and its "asleep" monitor is the monitor's standby, which macOS sees as awake): after the two assertions of §7.2 the display reported awake at once, and a 1920×1080 stream gave its first frame within 30 ms, then 45 frames/s on a nearly still screen and 55 frames/s with motion, the longest gap 54 ms, no blank or suspended frames, over 30 s and in five shorter runs. Frames are `420v` (NV12, video range) IOSurfaces, BT.709 matrix, primaries and transfer function, every frame with dirty rectangles. The catch: once the monitor came back from sleep with a new display ID and the running stream stopped with error -3815 after 0.7 s; §7.2 now restarts the capture on display changes. A Mac with no monitor at all was not tried (the owner's has one), so the virtual display stays in M7 |
 | R2 | Does ScreenCaptureKit still capture the system sound while the Mac's output is muted? If not, does a Core Audio tap with muting (macOS 14.2) do it? | "On the client only" becomes "on both" in 1.0 | To be checked (0.6) |
 | R3 | What does a client see and what can it do while the Mac is locked? | The README says to turn the lock off while away, or 1.0 gets a note in the window | To be checked (0.7) |
 | R4 | Can the pointer's current image be read from an app that is not in front, on macOS 27? | The fallback of §10.3 is the default | To be checked (0.7) |
