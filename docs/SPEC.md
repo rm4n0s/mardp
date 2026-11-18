@@ -1,6 +1,6 @@
 # mardp: Specification
 
-Status, 2026-11-19: the owner answered the open decisions (§3, D12, D14 and D16 to D23) and asked for the implementation steps, which are in `docs/IMPLEMENTATION.md`. Nothing is implemented, and work on the steps starts when the owner says so.
+Status: the owner answered the open decisions (§3) and the steps of `docs/IMPLEMENTATION.md` are under way; `docs/IMPLEMENTED.md` lists the finished ones.
 
 mardp makes a Mac an RDP host: an RDP client on another machine (first of all Remmina on Linux) shows the Mac's desktop, controls its keyboard and mouse, and plays its sound. It is a desktop app written in Go, with a user interface built on [Glutter](https://github.com/rm4n0s/glutter), and it contains its own RDP server library, written from scratch.
 

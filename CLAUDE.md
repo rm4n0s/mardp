@@ -5,7 +5,7 @@ Guidance for Claude Code when working in this repository (Go, hosted on GitHub).
 ## Project
 mardp is an RDP host for macOS written in Go, so that RDP clients such as Remmina on Linux can connect to a Mac: they see its desktop, control it, and hear its sound, well enough to watch video. It is a desktop app whose user interface is built on [Glutter](https://github.com/rm4n0s/glutter), and it contains its own RDP server library (`rdp/`), written from scratch.
 
-**The specification comes first** (the user, 2026-11-18: "before you start implementation, we will write the specification first"). `docs/SPEC.md` and `docs/IMPLEMENTATION.md` exist; work on the steps starts only when the user says so (rule 1 of `docs/IMPLEMENTATION.md`). Until then, "Working through the steps" below does not apply.
+**The specification comes first** (the user, 2026-11-18: "before you start implementation, we will write the specification first"). `docs/SPEC.md` and `docs/IMPLEMENTATION.md` exist, and the user started the steps on 2026-11-19 ("work on the steps").
 
 **`docs/SPEC.md` is the source of truth.** Read the sections that cover a task before starting it. If the code and the spec disagree, or a task needs a decision the spec doesn't make, ask instead of guessing. When a decision changes, update the spec on the same branch.
 
