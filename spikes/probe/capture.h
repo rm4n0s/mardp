@@ -8,6 +8,8 @@ typedef struct {
 	const char *excludeBundle; // leave this app out of the capture ("" = none)
 	int tone;            // play a 440 Hz tone from this process
 	int excludePid;      // leave the running app with this process ID out (0 = none)
+	double reportEvery;  // print frame counts, mean luma and the lock state this often (0 = never)
+	double moveAt;       // post one zero-distance mouse move at this second (0 = never)
 } probeOpts;
 
 // probeTone plays the 440 Hz tone for the given seconds.

@@ -40,3 +40,20 @@ The probe of M0 plays a 440 Hz tone. Nothing here changes your volume; set it to
    ```
 
 Tell me what you heard in each and the printed peaks.
+
+## 0.7 The locked Mac (SPEC §19 R3)
+
+At the Mac (or over Screen Sharing), in the project folder (with the worktree of 0.6 if `spikes/` is gone):
+
+1. Run this; it captures for 60 seconds and prints a line every 5 seconds:
+
+   ```bash
+   open -W --stdout /dev/stdout spikes/out/Probe.app --args capture -s 60 -w 640 -h 360 -report 5 -move-at 40
+   ```
+
+2. Within 10 seconds, lock the Mac (Control-Command-Q) and leave it locked for a full minute. At second 40 the probe posts one mouse move of zero distance (the pointer does not move).
+3. Unlock, and send me everything it printed.
+
+## 0.7 The recurring Screen Recording question (SPEC §19 R6)
+
+If macOS asks again whether "mardp probe" (or later "mardp") may record the screen, tell me the date, the exact wording and buttons, and whether a capture or session was running at the time.

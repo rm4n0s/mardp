@@ -17,7 +17,7 @@ static double now(void) { return CFAbsoluteTimeGetCurrent(); }
 @property atomic_int frames, complete, idle, blank, suspended, other, withDirty, dirtyRects;
 @property atomic_int audioBuffers;
 @property (atomic) float audioPeak;
-@property (atomic) double firstFrame, lastFrame, maxGap;
+@property (atomic) double firstFrame, lastFrame, maxGap, luma;
 @property (atomic, copy) NSString *format;
 @property (atomic) int fw, fh, iosurface;
 @property (atomic, copy) NSString *stopError;
@@ -54,6 +54,15 @@ static double now(void) { return CFAbsoluteTimeGetCurrent(); }
 	if (self.lastFrame != 0 && t - self.lastFrame > self.maxGap) self.maxGap = t - self.lastFrame;
 	self.lastFrame = t;
 	atomic_fetch_add(&_frames, 1);
+	CVImageBufferRef yb = CMSampleBufferGetImageBuffer(sb);
+	if (yb && CVPixelBufferLockBaseAddress(yb, kCVPixelBufferLock_ReadOnly) == kCVReturnSuccess) {
+		const uint8_t *y = CVPixelBufferGetBaseAddressOfPlane(yb, 0);
+		size_t w = CVPixelBufferGetWidthOfPlane(yb, 0), h = CVPixelBufferGetHeightOfPlane(yb, 0), bpr = CVPixelBufferGetBytesPerRowOfPlane(yb, 0);
+		double sum = 0; int n = 0;
+		for (size_t r = h / 72; r < h; r += h / 36) for (size_t c = w / 128; c < w; c += w / 64) { sum += y[r * bpr + c]; n++; }
+		CVPixelBufferUnlockBaseAddress(yb, kCVPixelBufferLock_ReadOnly);
+		if (n) self.luma = sum / n;
+	}
 	NSArray *dirty = att[SCStreamFrameInfoDirtyRects];
 	if (dirty.count > 0) { atomic_fetch_add(&_withDirty, 1); atomic_fetch_add(&_dirtyRects, (int)dirty.count); }
 	if (self.format == nil) {
@@ -192,8 +201,37 @@ int probeCapture(probeOpts o) {
 		[stream startCaptureWithCompletionHandler:^(NSError *e) { serr = e; started = 1; }];
 		while (!started) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false);
 		if (serr) { printf("start: %s\n", serr.description.UTF8String); return 4; }
-		double t0 = now();
-		while (now() - t0 < o.seconds) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+		double t0 = now(), nextReport = o.reportEvery;
+		int moved = 0, lastFrames = 0, lastIdle = 0, lastBlank = 0, lastSusp = 0;
+		while (now() - t0 < o.seconds) {
+			CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+			double el = now() - t0;
+			if (o.moveAt > 0 && !moved && el >= o.moveAt) {
+				moved = 1;
+				double before = CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateCombinedSessionState, kCGEventMouseMoved);
+				CGEventRef here = CGEventCreate(NULL);
+				CGPoint p = CGEventGetLocation(here);
+				CFRelease(here);
+				CGEventRef mv = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, p, kCGMouseButtonLeft);
+				CGEventPost(kCGHIDEventTap, mv);
+				CFRelease(mv);
+				CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.2, false);
+				double after = CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateCombinedSessionState, kCGEventMouseMoved);
+				printf("%6.1fs posted a zero-distance mouse move at %.0f,%.0f (accessibility %d); seconds since the last mouse move: %.1f before, %.1f after\n",
+					el, p.x, p.y, AXIsProcessTrusted(), before, after);
+				fflush(stdout);
+			}
+			if (o.reportEvery > 0 && el >= nextReport) {
+				nextReport += o.reportEvery;
+				NSDictionary *sess = (__bridge_transfer NSDictionary *)CGSessionCopyCurrentDictionary();
+				int f = out.frames, i = out.idle, b = out.blank, su = out.suspended;
+				printf("%6.1fs locked %d on console %d: frames %d idle %d blank %d suspended %d, mean luma %.0f\n", el,
+					[sess[@"CGSSessionScreenIsLocked"] boolValue], [sess[(__bridge NSString *)kCGSessionOnConsoleKey] boolValue],
+					f - lastFrames, i - lastIdle, b - lastBlank, su - lastSusp, out.luma);
+				fflush(stdout);
+				lastFrames = f; lastIdle = i; lastBlank = b; lastSusp = su;
+			}
+		}
 		__block int stopped = 0;
 		[stream stopCaptureWithCompletionHandler:^(NSError *e) { stopped = 1; }];
 		while (!stopped) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false);

@@ -66,12 +66,19 @@ func main() {
 		exApp := fs.String("exclude-app", "", "bundle id to leave out")
 		tone := fs.Bool("tone", false, "play a tone from this process")
 		exPid := fs.Int("exclude-pid", 0, "process ID of a running app to leave out")
+		every := fs.Float64("report", 0, "print counts every this many seconds")
+		moveAt := fs.Float64("move-at", 0, "post one zero-distance mouse move at this second")
 		_ = fs.Parse(os.Args[2:])
 		cs := C.CString(*exApp)
 		defer C.free(unsafe.Pointer(cs))
 		o := C.probeOpts{seconds: C.double(*secs), width: C.int(*w), height: C.int(*h),
-			animate: b2i(*anim), audio: b2i(*audio), excludeSelf: b2i(*exSelf), excludeBundle: cs, tone: b2i(*tone), excludePid: C.int(*exPid)}
+			animate: b2i(*anim), audio: b2i(*audio), excludeSelf: b2i(*exSelf), excludeBundle: cs, tone: b2i(*tone), excludePid: C.int(*exPid), reportEvery: C.double(*every), moveAt: C.double(*moveAt)}
 		os.Exit(int(C.probeCapture(o)))
+	case "cursor-set":
+		fs := flag.NewFlagSet("cursor-set", flag.ExitOnError)
+		secs := fs.Float64("s", 10, "seconds")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(int(C.probeCursorSet(C.double(*secs))))
 	case "tone":
 		fs := flag.NewFlagSet("tone", flag.ExitOnError)
 		secs := fs.Float64("s", 10, "seconds")
