@@ -106,12 +106,5 @@ func (sr *sessionReader) static(id uint16, data []byte) error {
 // chunks of at most svc.ChunkLength bytes (Demand Active states no
 // VCChunkSize), one Send Data Indication each, all in one packet.
 func (s *Session) sendChannel(q queue, ch *staticChannel, msg []byte) error {
-	return s.wr.send(q, func(p *packet) error {
-		return svc.Split(msg, svc.ChunkLength, func(h svc.Header, chunk []byte) error {
-			p.tmp.Reset()
-			svc.WriteHeader(&p.tmp, h)
-			p.tmp.Write(chunk)
-			return appendChannelData(p, ch)
-		})
-	})
+	return s.wr.send(q, func(p *packet) error { return appendChannelMessage(p, ch, msg) })
 }

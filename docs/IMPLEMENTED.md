@@ -528,3 +528,18 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - The colour result removed a choice: the capture and the encoder are always full range.
   - Not planned but needed: the encoder's `Close` deadlock, the config upgrade, and FreeRDP's flag (`/gfx:AVC420` advertises GFX 8.0, 8.1 and FreeRDP's own set, so 8.1 is confirmed).
 - **Manual checks:** pending, see docs/MANUAL-CHECKS.md (3.9, a 1080p video in Remmina).
+
+## 4.1 RDPSND (2026-11-19)
+- **Built:**
+  - `rdp/internal/rdpsnd`: the PDUs of MS-RDPEA the server sends and reads: the server's and client's formats (AUDIO_FORMAT with its extra bytes), Quality Mode, Training and its confirm, WaveInfo with Wave, Wave2, Wave Confirm, Close.
+  - `Config.AudioFormats` and `PCMFormat`; `Session.Audio()` with `Format`, `Write`, `Delay` and `Close` (SPEC §6). When the session opens the server sends its formats (version 8), takes the first of them the client has, trains, and then sends each `Write` as one Wave2, or WaveInfo and Wave in one packet for a client older than version 8, on the control queue. The delay is from `Write` to the block's Wave Confirm.
+  - `rdptest`: `NegotiateAudio`, `Audio.ReadBlock`, `Audio.Confirm`, `Audio.Read`, `Audio.Send`.
+  - Static channel messages are chunked by `appendChannelMessage`, shared by `sendChannel` and `Write`.
+  - SPEC §6 (the sound API) and §10.1 (the channel as built).
+- **Proved:**
+  - The bytes of Microsoft's examples 4.1.1–4.2.4 (server and client formats, Training and its confirm, WaveInfo, the start of Wave, the Wave2 header, Wave Confirm), read and written; truncated and malformed PDUs with their routes.
+  - TestAudio: `rdptest` negotiates PCM and AAC with clients of versions 8, 6 and 5; the server takes the first of its formats in the client's list with the client's index; blocks numbered from 0 of 5, 1920 and 7000 bytes (several chunks) come back whole, as Wave2 with their audio timestamp or as WaveInfo and Wave; each confirm empties the unconfirmed count and gives a delay; Close sends the Close PDU and `Write` then fails.
+  - TestAudioUnavailable: no `rdpsnd`, no formats, a client that plays nothing, none or no common format, and a Training not confirmed: no format, `Write` fails with `TagAudioUnavailable`. TestAudioIgnores: a confirm of another Training, malformed PDUs, PDUs out of turn and confirms of blocks never sent are ignored and the sound goes on.
+  - `NewServer` refuses formats that do not fit one PDU; `Write` makes no allocations (both PDU kinds).
+- **Differs from the plan:** nothing.
+- **Manual checks:** none (a real client plays the sound in 4.6).

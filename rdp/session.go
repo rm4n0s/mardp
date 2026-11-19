@@ -184,6 +184,9 @@ type Session struct {
 	// video is the session's video output.
 	video   Video
 	pointer Pointer
+	audio   Audio
+	// audioFormats are the sound formats the server offers.
+	audioFormats []AudioFormat
 	// channels are the static channels the server reads.
 	channels []*staticChannel
 	// dvc is the manager of dynamic channels, nil when the client joined
@@ -394,6 +397,7 @@ func serverCaps(width, height int) caps.Caps {
 func (c *conn) activate(desktopSize func(*Client) (int, int)) (*Session, error) {
 	s := &Session{c: c, client: c.newClient()}
 	s.video.s = s
+	s.audio.s = s
 	s.openChannels()
 	s.width, s.height = s.client.DesktopWidth, s.client.DesktopHeight
 	if desktopSize != nil {
@@ -569,6 +573,7 @@ func (c *conn) runSession(ctx context.Context, s *Session, h Handler, o *openSes
 	// never reaches the application.
 	if sctx.Err() == nil {
 		s.startDVC(s.dvcWait)
+		s.startAudio(s.audioFormats)
 		s.startGFX()
 		wg.Go(func() { h.SessionOpened(sctx, s) })
 	}

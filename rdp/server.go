@@ -18,6 +18,9 @@ import (
 	"time"
 
 	"github.com/rm4n0s/errors"
+
+	"github.com/rm4n0s/mardp/rdp/internal/rdpsnd"
+	"github.com/rm4n0s/mardp/rdp/internal/wire"
 )
 
 // Tags of the errors NewServer and Serve return.
@@ -62,6 +65,10 @@ type Config struct {
 	// in; a connection still not logged in then is closed. 0 means
 	// DefaultLoginTimeout.
 	LoginTimeout time.Duration
+	// AudioFormats are the sound formats the server offers on rdpsnd, the
+	// one it prefers first (SPEC §10.1); a session takes the first the
+	// client has. None means no sound.
+	AudioFormats []AudioFormat
 }
 
 // Server is an RDP server. Make one with NewServer and run it with Serve.
@@ -77,6 +84,8 @@ type Server struct {
 	// dvcCapsWait is how long a client has to answer the capabilities of
 	// dynamic channels: dvcCapsWait, shorter in tests.
 	dvcCapsWait time.Duration
+	// audioFormats are Config.AudioFormats, copied.
+	audioFormats []AudioFormat
 }
 
 // openSession is the session a server has open: one at a time, a new one
@@ -135,6 +144,15 @@ func NewServer(cfg Config) (*Server, error) {
 		maxPending:   cfg.MaxPending,
 		loginTimeout: cfg.LoginTimeout,
 		dvcCapsWait:  dvcCapsWait,
+	}
+	wf := make([]rdpsnd.Format, 0, len(cfg.AudioFormats))
+	for _, f := range cfg.AudioFormats {
+		s.audioFormats = append(s.audioFormats, f.clone())
+		wf = append(wf, f.wire())
+	}
+	w := wire.NewWriter(nil)
+	if err := rdpsnd.AppendServerFormats(&w, audioVersion, audioLastBlock, wf); err != nil {
+		return nil, err
 	}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)

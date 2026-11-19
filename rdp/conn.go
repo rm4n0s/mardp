@@ -134,6 +134,7 @@ func (s *Server) serveConn(ctx context.Context, nc net.Conn, log *slog.Logger, r
 		return nil
 	}
 	sess.dvcWait = s.dvcCapsWait
+	sess.audioFormats = s.audioFormats
 	return c.runSession(ctx, sess, s.handler, &s.open)
 }
 
