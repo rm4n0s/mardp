@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 	"unsafe"
@@ -36,7 +37,7 @@ func TestCaptureVideo(t *testing.T) {
 	}()
 	st := f.next(t)
 	want := streamMode{video: true, fullRange: true, fn: unsafe.Pointer(&enc.fn), arg: unsafe.Pointer(&enc.arg)}
-	if st.mode != want {
+	if !reflect.DeepEqual(st.mode, want) {
 		t.Errorf("stream mode %+v, want %+v", st.mode, want)
 	}
 	if st.cfg != (host.ScreenConfig{Width: 1280, Height: 720, MaxFPS: DefaultVideoFPS}) {
@@ -50,7 +51,7 @@ func TestCaptureVideo(t *testing.T) {
 	f.set(func(f *fakeMac) { st.stats = VideoStats{Encoded: 100, Skipped: 7, Refused: 1} })
 	st.sk.stop(errNoCaptureSource, "gone")
 	st2 := f.next(t)
-	if st2.mode != want {
+	if !reflect.DeepEqual(st2.mode, want) {
 		t.Errorf("second stream mode %+v", st2.mode)
 	}
 	f.set(func(f *fakeMac) { st2.stats = VideoStats{Encoded: 20, Skipped: 3} })

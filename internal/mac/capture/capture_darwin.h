@@ -26,6 +26,7 @@ int mardpCapAlive(uint32_t id, const char *uuid);
 typedef struct {
 	long code;
 	void *stream, *output;
+	long excluded;
 	char message[512];
 } mardpCapStarted;
 
@@ -34,8 +35,17 @@ typedef struct {
 // fullRange set) and each frame goes to submit(arg, pixelBuffer, pts), a
 // long (*)(void *, CVPixelBufferRef, CMTime), instead of Go.
 // With window not 0 only that window is captured.
+// With sound set the stream captures the system sound instead, which goes
+// to Go: 48 kHz, two channels, float, without this process's own sound
+// unless includeSelf, and without the running apps that match apps (bundle
+// identifiers, one a line; one that ends in "." is a prefix), whose number
+// is excluded.
 mardpCapStarted mardpCapStart(uintptr_t handle, uint32_t id, int width, int height, int fps,
-	int video, int fullRange, void *submit, void *arg, uint32_t window);
+	int video, int fullRange, void *submit, void *arg, uint32_t window, int sound, int includeSelf, const char *apps);
+
+// mardpCapExcluded is how many of the applications ScreenCaptureKit lists
+// match apps, as mardpCapStart counts them; -1 when it does not answer.
+long mardpCapExcluded(const char *apps);
 
 // mardpCapCounts is what a stream did with its frames: handed to the
 // encoder, which took, skipped or refused them, and handed to Go.

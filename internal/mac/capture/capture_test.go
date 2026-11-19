@@ -38,6 +38,8 @@ type fakeMac struct {
 	started  []uint32
 	live     int
 	streams  chan *fakeStream
+	// apps is how many running apps a sound stream would leave out.
+	apps int
 }
 
 func newFakeMac(main string, displays map[string]uint32) *fakeMac {
@@ -79,9 +81,15 @@ func (f *fakeMac) start(id uint32, cfg host.ScreenConfig, sk *sink, mode streamM
 	}
 	f.started = append(f.started, id)
 	f.live++
-	st := &fakeStream{f: f, id: id, cfg: cfg, sk: sk, mode: mode}
+	st := &fakeStream{f: f, id: id, cfg: cfg, sk: sk, mode: mode, apps: f.apps}
 	f.streams <- st
 	return st, nil
+}
+
+func (f *fakeMac) excludedApps(apps []string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.apps
 }
 
 func (f *fakeMac) set(fn func(f *fakeMac)) {
@@ -105,7 +113,10 @@ type fakeStream struct {
 	mode    streamMode
 	stopped bool
 	stats   VideoStats // what stop returns
+	apps    int        // what excluded returns
 }
+
+func (s *fakeStream) excluded() int { return s.apps }
 
 func (s *fakeStream) stop() VideoStats {
 	s.f.mu.Lock()

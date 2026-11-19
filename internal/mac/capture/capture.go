@@ -50,6 +50,19 @@
 // frame after either is a whole frame. Capture never waits for the network:
 // it sees only these flags (SPEC §4.2). They do not touch CaptureVideo,
 // whose frames the encoder's own skip flag drops.
+//
+// # Sound
+//
+// Sound (SPEC §10.1) is the system sound, captured by a stream of its own
+// on the same display at 48 kHz, two channels, 32-bit float, not
+// interleaved, leaving out mardp's own sound (excludesCurrentProcessAudio)
+// and the apps of Options.ExcludeApps, UTM's by default (§15.3): a virtual
+// machine that plays the Mac's sound back would make a loop. ScreenCaptureKit
+// leaves out only the apps it lists as shareable, which are those with a
+// window, so the stream is started again when the apps it would leave out
+// change. A buffer of exact silence is not delivered: when nothing plays,
+// nothing is sent. Sound runs beside a capture of the picture, with a
+// Source of its own (NewSound).
 package capture
 
 import (
@@ -126,7 +139,25 @@ type Options struct {
 	Display string
 	// Logger receives the log; nil discards it.
 	Logger *slog.Logger
+	// ExcludeApps are the apps whose sound is left out, by bundle
+	// identifier; one that ends in "." is a prefix. nil means
+	// DefaultExcludeApps.
+	ExcludeApps []string
 }
+
+// DefaultExcludeApps are the apps whose sound is left out by default:
+// UTM's (SPEC §15.3).
+var DefaultExcludeApps = []string{"com.utmapp."}
+
+// The stream of sound.
+const (
+	// soundSide is the side of the picture a sound stream asks for, which
+	// it drops; ScreenCaptureKit needs one.
+	soundSide = 16
+	// soundRecheck is how often a sound stream checks the apps it leaves
+	// out.
+	soundRecheck = 5 * time.Second
+)
 
 // rawDisplay is a display as the backend sees it.
 type rawDisplay struct {
@@ -183,6 +214,12 @@ type streamMode struct {
 	// window, when not 0, is the only window captured (a CGWindowID), for
 	// tests that need a still picture on a screen that is not still.
 	window uint32
+	// sound makes a stream of sound instead of pictures, which leaves out
+	// the apps of exclude, and the process's own sound unless includeSelf
+	// (which only tests set).
+	sound       bool
+	includeSelf bool
+	exclude     []string
 }
 
 // stream is one running ScreenCaptureKit stream.
@@ -191,6 +228,8 @@ type stream interface {
 	// callback reaches the sink after it returns. It returns what the
 	// stream did with its frames.
 	stop() VideoStats
+	// excluded is how many running apps a sound stream leaves out.
+	excluded() int
 }
 
 // backend is ScreenCaptureKit and Core Graphics, or a fake.
@@ -206,6 +245,9 @@ type backend interface {
 	// start starts a stream of display id at cfg that delivers to sink, or
 	// to the encoder of mode.
 	start(id uint32, cfg host.ScreenConfig, sink *sink, mode streamMode) (stream, *startFailure)
+	// excludedApps is how many running apps ScreenCaptureKit lists that
+	// match apps (as Options.ExcludeApps); -1 when it does not answer.
+	excludedApps(apps []string) int
 }
 
 // Source captures one display. One Capture runs at a time.
@@ -224,8 +266,12 @@ type Source struct {
 	// The VideoStats of the streams that ended.
 	encoded, skipped, refused, crossings atomic.Int64
 
-	// onlyWindow is streamMode.window; only tests set it.
-	onlyWindow uint32
+	// onlyWindow is streamMode.window, and includeSelf
+	// streamMode.includeSelf; only tests set them.
+	onlyWindow  uint32
+	includeSelf bool
+	// recheck is soundRecheck; tests shorten it.
+	recheck time.Duration
 }
 
 var _ host.ScreenSource = (*Source)(nil)
@@ -236,7 +282,24 @@ func newSource(opts Options, mac backend) *Source {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Source{opts: opts, log: log, mac: mac, wait: displayWait, retry: firstRetry}
+	if opts.ExcludeApps == nil {
+		opts.ExcludeApps = DefaultExcludeApps
+	}
+	return &Source{opts: opts, log: log, mac: mac, wait: displayWait, retry: firstRetry, recheck: soundRecheck}
+}
+
+// Sound captures the system sound; it implements host.SoundSource.
+type Sound struct{ src *Source }
+
+var _ host.SoundSource = (*Sound)(nil)
+
+// Capture captures the system sound until ctx ends, following the display
+// its stream is on, and calls buf with each buffer that is not silent.
+func (k *Sound) Capture(ctx context.Context, buf func(*host.SoundBuffer)) error {
+	s := k.src
+	sk := &sink{src: s, sound: buf, stopped: make(chan stopEvent, 1)}
+	cfg := host.ScreenConfig{Width: soundSide, Height: soundSide, MaxFPS: 1}
+	return s.run(ctx, cfg, sk, streamMode{sound: true, includeSelf: s.includeSelf, exclude: s.opts.ExcludeApps})
 }
 
 // SetPaused stops or resumes the delivery of frames; the first frame after
@@ -347,10 +410,14 @@ func (s *Source) run(ctx context.Context, cfg host.ScreenConfig, sk *sink, mode 
 			}
 			continue
 		}
-		s.log.Info("capturing", "display", d.info.ID, "id", d.id, "width", cfg.Width, "height", cfg.Height, "fps", cfg.MaxFPS,
-			"video", mode.video)
+		if mode.sound {
+			s.log.Info("capturing sound", "display", d.info.ID, "id", d.id, "excludedApps", st.excluded())
+		} else {
+			s.log.Info("capturing", "display", d.info.ID, "id", d.id, "width", cfg.Width, "height", cfg.Height, "fps", cfg.MaxFPS,
+				"video", mode.video)
+		}
 		started := time.Now()
-		restart, err := s.watch(ctx, sk, st, d, tick)
+		restart, err := s.watch(ctx, sk, st, d, tick, mode)
 		if err != nil || !restart {
 			return err
 		}
@@ -369,7 +436,8 @@ func (s *Source) run(ctx context.Context, cfg host.ScreenConfig, sk *sink, mode 
 
 // watch waits while stream st of display d runs, and stops it. restart says
 // a new stream should start; err ends the capture.
-func (s *Source) watch(ctx context.Context, sk *sink, st stream, d rawDisplay, tick *time.Ticker) (restart bool, err error) {
+func (s *Source) watch(ctx context.Context, sk *sink, st stream, d rawDisplay, tick *time.Ticker, mode streamMode) (restart bool, err error) {
+	checked := time.Now()
 	defer func() {
 		v := st.stop()
 		s.encoded.Add(v.Encoded)
@@ -396,6 +464,13 @@ func (s *Source) watch(ctx context.Context, sk *sink, st stream, d rawDisplay, t
 				s.log.Info("the display changed; capturing again", "display", d.info.ID, "id", d.id)
 				return true, nil
 			}
+			if mode.sound && time.Since(checked) >= s.recheck {
+				checked = time.Now()
+				if n := s.mac.excludedApps(mode.exclude); n >= 0 && n != st.excluded() {
+					s.log.Info("the apps left out of the sound changed; capturing again", "excludedApps", n, "were", st.excluded())
+					return true, nil
+				}
+			}
 		}
 	}
 }
@@ -421,6 +496,7 @@ func sleep(ctx context.Context, d time.Duration) bool {
 type sink struct {
 	src           *Source
 	frame         func(*host.Frame)
+	sound         func(*host.SoundBuffer)
 	width, height int
 	stopped       chan stopEvent
 	// whole makes the next frame delivered whole: the first of a stream.
@@ -430,6 +506,38 @@ type sink struct {
 	img   host.Image
 	out   host.Frame
 	dirty []image.Rectangle
+	snd   host.SoundBuffer
+	// first is the time of the capture's first buffer of sound, in the
+	// host's clock, which all streams share; started says it is set.
+	first   time.Duration
+	started bool
+}
+
+// deliverSound hands one buffer of sound to the sound function, unless it
+// is silent: left and right are its two channels, at the host's time t.
+func (k *sink) deliverSound(left, right []float32, t time.Duration) {
+	if len(left) == 0 || len(left) != len(right) {
+		return
+	}
+	if !k.started {
+		k.first, k.started = t, true
+	}
+	if silent(left) && silent(right) {
+		return
+	}
+	k.snd = host.SoundBuffer{Left: left, Right: right, Time: max(t-k.first, 0)}
+	k.sound(&k.snd)
+	k.snd.Left, k.snd.Right = nil, nil
+}
+
+// silent says every sample of b is zero.
+func silent(b []float32) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // deliver hands one frame to the frame function: pix holds height rows of

@@ -11,3 +11,11 @@ func TestUnsupported(t *testing.T) {
 	}
 	assertRoute(t, err, "New.CaptureUnsupported")
 }
+
+func TestSoundUnsupported(t *testing.T) {
+	s, err := NewSound(Options{})
+	if s != nil {
+		t.Error("a sound source")
+	}
+	assertRoute(t, err, "NewSound.CaptureUnsupported")
+}

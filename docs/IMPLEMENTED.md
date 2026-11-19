@@ -543,3 +543,16 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - `NewServer` refuses formats that do not fit one PDU; `Write` makes no allocations (both PDU kinds).
 - **Differs from the plan:** nothing.
 - **Manual checks:** none (a real client plays the sound in 4.6).
+
+## 4.2 The sound source (2026-11-19)
+- **Built:**
+  - `internal/mac/capture`: `NewSound` and `Sound`, the host's `SoundSource` on macOS: a ScreenCaptureKit stream of sound on the display (48 kHz, two channels, float, not interleaved), without mardp's own sound and without the apps of `Options.ExcludeApps`, UTM's (`com.utmapp.`) by default. It follows the display as the picture's capture does, starts again when the apps it leaves out change (checked every 5 s), and drops buffers of exact silence. Each buffer goes to Go in place, with its time from the capture's first buffer.
+  - The stub for other systems (`TagCaptureUnsupported`), and, under `mardp_mac`, a tone the test process plays itself (AVAudioEngine) and its bundle identifier.
+  - SPEC §10.1 (the capture as built).
+- **Proved:**
+  - `mardp_mac` TestMacSound, run as the signed test app with the owner's output muted and its volume untouched: a 1 kHz tone at 0.1 played by the test's own process comes back at 0.0995 with its own sound let in, at 48 kHz (91,200 frames in 1.88 s, times never backwards); with the default options (own sound left out) nothing comes; with the test's own app among the apps left out, nothing comes, and ScreenCaptureKit lists that one app as matching. The rest of the package's Mac tests pass with the changed stream start.
+  - With the fake backend: the stream's mode (the default and given apps, the 16×16 picture at 1 fps), a new stream when the apps left out change, none when ScreenCaptureKit does not answer; buffers delivered with their time, silent and broken ones not, no allocation per buffer.
+- **Differs from the plan:**
+  - UTM's own sound was not played: the exclusion is proved with the test app standing in for UTM, through the same filter. Whether UTM plays the guest's sound from its windowed app (left out) or from its QEMU helper (which has no window, so ScreenCaptureKit cannot leave it out) is checked in 4.6 by ear-free measurement if the guest can play through its sound device, else by hand.
+  - The sound is not wired into the session yet: the pipeline (`host.Parts.Sound`) is 4.3.
+- **Manual checks:** none.

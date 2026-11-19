@@ -90,6 +90,7 @@ typedef long (*mardpSubmitFn)(void *arg, CVPixelBufferRef pb, CMTime pts);
 @property(nonatomic) uintptr_t handle;
 @property(nonatomic) BOOL live;
 @property(nonatomic) BOOL video;
+@property(nonatomic) BOOL sound;
 @property(nonatomic) OSType format;
 @property(nonatomic) mardpSubmitFn submit;
 @property(nonatomic) void *arg;
@@ -98,8 +99,44 @@ typedef long (*mardpSubmitFn)(void *arg, CVPixelBufferRef pb, CMTime pts);
 
 @implementation MardpOutput
 
+// sound hands a buffer of sound to Go: 32-bit float at 48 kHz, two
+// channels not interleaved (or one, played on both).
+- (void)sound:(CMSampleBufferRef)sb {
+	const AudioStreamBasicDescription *f =
+		CMAudioFormatDescriptionGetStreamBasicDescription(CMSampleBufferGetFormatDescription(sb));
+	if (f == NULL || f->mFormatID != kAudioFormatLinearPCM || (f->mFormatFlags & kAudioFormatFlagIsFloat) == 0 ||
+		(f->mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0 || f->mBitsPerChannel != 32 || f->mSampleRate != 48000) {
+		return;
+	}
+	struct {
+		AudioBufferList list;
+		AudioBuffer more[1];
+	} abl;
+	CMBlockBufferRef bb = NULL;
+	if (CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(sb, NULL, &abl.list, sizeof(abl), NULL, NULL,
+			kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, &bb) != noErr) {
+		return;
+	}
+	UInt32 n = abl.list.mNumberBuffers;
+	if (n == 1 || n == 2) {
+		AudioBuffer *l = &abl.list.mBuffers[0], *r = &abl.list.mBuffers[n - 1];
+		UInt32 frames = MIN(l->mDataByteSize, r->mDataByteSize) / sizeof(float);
+		CMTime pts = CMSampleBufferGetPresentationTimeStamp(sb);
+		@synchronized(self) {
+			if (self.live && frames > 0) {
+				mardpCapSound(self.handle, (float *)l->mData, (float *)r->mData, (int)frames, CMTimeGetSeconds(pts));
+			}
+		}
+	}
+	CFRelease(bb);
+}
+
 - (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sb ofType:(SCStreamOutputType)type {
-	if (type != SCStreamOutputTypeScreen) {
+	if (type == SCStreamOutputTypeAudio && self.sound) {
+		[self sound:sb];
+		return;
+	}
+	if (type != SCStreamOutputTypeScreen || self.sound) {
 		return;
 	}
 	CFArrayRef atts = CMSampleBufferGetSampleAttachmentsArray(sb, false);
@@ -200,21 +237,69 @@ static long fail(NSError *e, char *message, int len) {
 	return [e.domain isEqualToString:SCStreamErrorDomain] ? (long)e.code : -1;
 }
 
+// shareable asks ScreenCaptureKit for what it can capture; nil with *err
+// set, or nil alone when it did not answer in time.
+static SCShareableContent *shareable(NSError **errOut) {
+	dispatch_semaphore_t done = dispatch_semaphore_create(0);
+	__block SCShareableContent *content = nil;
+	__block NSError *err = nil;
+	[SCShareableContent getShareableContentExcludingDesktopWindows:NO
+	                                           onScreenWindowsOnly:YES
+	                                             completionHandler:^(SCShareableContent *c, NSError *e) {
+		content = c;
+		err = e;
+		dispatch_semaphore_signal(done);
+	}];
+	if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, answerWait)) != 0) {
+		*errOut = nil;
+		return nil;
+	}
+	*errOut = err;
+	return err != nil ? nil : content;
+}
+
+// leftOut returns the applications of content whose bundle identifiers
+// match apps (one a line; one that ends in "." is a prefix).
+static NSArray<SCRunningApplication *> *leftOut(SCShareableContent *content, const char *apps) {
+	NSMutableArray<NSString *> *list = [NSMutableArray array];
+	for (NSString *a in [[NSString stringWithUTF8String:apps ?: ""] componentsSeparatedByString:@"\n"]) {
+		if (a.length > 0) {
+			[list addObject:a];
+		}
+	}
+	NSMutableArray<SCRunningApplication *> *out = [NSMutableArray array];
+	for (SCRunningApplication *app in content.applications) {
+		NSString *bid = app.bundleIdentifier;
+		if (bid.length == 0) {
+			continue;
+		}
+		for (NSString *a in list) {
+			if ([a hasSuffix:@"."] ? [bid hasPrefix:a] : [bid isEqualToString:a]) {
+				[out addObject:app];
+				break;
+			}
+		}
+	}
+	return out;
+}
+
+long mardpCapExcluded(const char *apps) {
+	@autoreleasepool {
+		NSError *err = nil;
+		SCShareableContent *content = shareable(&err);
+		return content == nil ? -1 : (long)leftOut(content, apps).count;
+	}
+}
+
 // start starts a stream; see mardpCapStart.
 static long start(uintptr_t handle, uint32_t displayID, int width, int height, int fps, int video, int fullRange,
-	void *submit, void *arg, uint32_t windowID, void **streamOut, void **outputOut, char *message, int len) {
+	void *submit, void *arg, uint32_t windowID, int sound, int includeSelf, const char *apps, long *excluded,
+	void **streamOut, void **outputOut, char *message, int len) {
 	@autoreleasepool {
 		dispatch_semaphore_t done = dispatch_semaphore_create(0);
-		__block SCShareableContent *content = nil;
 		__block NSError *err = nil;
-		[SCShareableContent getShareableContentExcludingDesktopWindows:NO
-		                                           onScreenWindowsOnly:YES
-		                                             completionHandler:^(SCShareableContent *c, NSError *e) {
-			content = c;
-			err = e;
-			dispatch_semaphore_signal(done);
-		}];
-		if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, answerWait)) != 0) {
+		SCShareableContent *content = shareable(&err);
+		if (content == nil && err == nil) {
 			snprintf(message, len, "ScreenCaptureKit did not list the displays in time");
 			return -1;
 		}
@@ -246,6 +331,10 @@ static long start(uintptr_t handle, uint32_t displayID, int width, int height, i
 			// The window alone: a display filter that includes it still
 			// reports the whole display's changes.
 			filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:window];
+		} else if (sound) {
+			NSArray<SCRunningApplication *> *out = leftOut(content, apps);
+			*excluded = (long)out.count;
+			filter = [[SCContentFilter alloc] initWithDisplay:display excludingApplications:out exceptingWindows:@[]];
 		} else {
 			filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
 		}
@@ -262,9 +351,16 @@ static long start(uintptr_t handle, uint32_t displayID, int width, int height, i
 		cfg.showsCursor = NO;
 		cfg.minimumFrameInterval = CMTimeMake(1, fps);
 		cfg.queueDepth = 3;
+		if (sound) {
+			cfg.capturesAudio = YES;
+			cfg.excludesCurrentProcessAudio = includeSelf ? NO : YES;
+			cfg.sampleRate = 48000;
+			cfg.channelCount = 2;
+		}
 		MardpOutput *output = [[MardpOutput alloc] init];
 		output.handle = handle;
 		output.video = video != 0;
+		output.sound = sound != 0;
 		output.format = format;
 		output.submit = (mardpSubmitFn)submit;
 		output.arg = arg;
@@ -272,7 +368,16 @@ static long start(uintptr_t handle, uint32_t displayID, int width, int height, i
 		SCStream *stream = [[SCStream alloc] initWithFilter:filter configuration:cfg delegate:output];
 		dispatch_queue_t queue = dispatch_queue_create("mardp.capture", DISPATCH_QUEUE_SERIAL);
 		NSError *addErr = nil;
+		// A stream of sound takes its pictures too, and drops them:
+		// ScreenCaptureKit logs each one that has no output.
 		if (![stream addStreamOutput:output type:SCStreamOutputTypeScreen sampleHandlerQueue:queue error:&addErr]) {
+			output.live = NO;
+			return fail(addErr, message, len);
+		}
+		if (sound && ![stream addStreamOutput:output
+		                                  type:SCStreamOutputTypeAudio
+		                    sampleHandlerQueue:dispatch_queue_create("mardp.sound", DISPATCH_QUEUE_SERIAL)
+		                                 error:&addErr]) {
 			output.live = NO;
 			return fail(addErr, message, len);
 		}
@@ -296,10 +401,10 @@ static long start(uintptr_t handle, uint32_t displayID, int width, int height, i
 }
 
 mardpCapStarted mardpCapStart(uintptr_t handle, uint32_t displayID, int width, int height, int fps,
-	int video, int fullRange, void *submit, void *arg, uint32_t window) {
+	int video, int fullRange, void *submit, void *arg, uint32_t window, int sound, int includeSelf, const char *apps) {
 	mardpCapStarted r = {0};
-	r.code = start(handle, displayID, width, height, fps, video, fullRange, submit, arg, window, &r.stream, &r.output,
-		r.message, sizeof(r.message));
+	r.code = start(handle, displayID, width, height, fps, video, fullRange, submit, arg, window, sound, includeSelf, apps,
+		&r.excluded, &r.stream, &r.output, r.message, sizeof(r.message));
 	return r;
 }
 
@@ -322,5 +427,8 @@ void mardpCapStop(void *streamRef, void *outputRef, mardpCapCounts *counts) {
 		dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, answerWait));
 		// 3. Remove the output; both are released when this scope ends.
 		[stream removeStreamOutput:output type:SCStreamOutputTypeScreen error:nil];
+		if (output.sound) {
+			[stream removeStreamOutput:output type:SCStreamOutputTypeAudio error:nil];
+		}
 	}
 }
