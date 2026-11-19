@@ -206,3 +206,26 @@ mardp mutes your Mac's output only while a client gets the sound, and only if it
 
 Tell me what differed at any step.
 
+
+## 4.6 A video with sound in Remmina, and the clap test (SPEC §10.2, §14)
+
+The test machine proved that FreeRDP plays the sound right, as PCM and as AAC. Only your own Linux machine can show whether it plays without dropouts for minutes and in sync with the picture (SPEC §14: no dropout in 10 minutes, picture and sound at most 100 ms apart). Use any volume you like on the Linux machine; on the Mac, mardp mutes the output during the session only if it is not muted already (4.5), and never touches the volume.
+
+Remmina's profile: Basic tab, "Colour depth" "GFX AVC420 (32 bpp)"; Advanced tab, "Audio output mode" "Local".
+
+1. Build the app, open it with a log, check that "Sound" is on and "Where the sound plays" is "On the client only", and press Start:
+
+   ```bash
+   scripts/build-app.sh
+   ```
+
+   ```bash
+   open -n build/mardp.app --args -log-file /tmp/mardp.log
+   ```
+
+2. Connect with Remmina. Expected: `/tmp/mardp.log` has `msg="sound ready" … format=41222` (AAC; `format=1` is PCM, which is right only if your FreeRDP has no AAC decoder) and `msg="sending sound"`.
+3. On the Mac, play a video with sound full screen for 10 minutes (any video in Safari, or QuickTime). Expected on the Linux machine: the sound plays the whole time with no dropouts, clicks or speed changes; the log has no `the sound is behind` line.
+4. The clap test: play a video of a clap, a clapperboard or a beep with a flash (search for "audio video sync test" on YouTube; such videos show a flash and a beep together, often with a scale in milliseconds). Watch where the beep falls against the flash. Expected: they seem together; at most 100 ms apart. If you can, film the Linux screen with your phone at 60 or 120 frames a second and count the frames between the flash and the beep.
+5. Press Stop and close the window.
+
+Tell me whether the sound dropped out, how far apart the flash and the beep were (and which came first), and any line of `/tmp/mardp.log` with `level=WARN` or `level=ERROR`.

@@ -653,3 +653,22 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - "On both" still recovers a marker left from before.
 - **Manual checks:** the muting itself, the crash recovery and "on both": pending, see docs/MANUAL-CHECKS.md (4.5).
 
+
+## 4.6 A real client plays it (2026-11-19)
+- **Built:**
+  - `cmd/mardp/freerdp_sound_test.go` (`mardp_freerdp`):
+    - the library's server serves a 1 kHz tone (`host.ToneSource`), as PCM, and as AAC through AudioToolbox;
+    - FreeRDP in the test machine plays it with `/sound:sys:alsa,dev:mardpfile`, an ALSA file plugin over the null device, so the guest writes what it plays to `sound.wav` and nothing is heard anywhere;
+    - the test pulls the recording and compares it with the tone.
+  - `compareTone` and its self-test TestCompareTone (no test machine needed). From the sound's first loud sample to its last, less 50 ms at each end, every 10 ms window, taken every 5 ms, of each channel must be the tone at its level (RMS 0.15–0.2) with 99 % of it at 1 kHz. The self-test shows it catches 20 ms of silence, half a period dropped, a louder tone and added noise.
+  - The AVC test's server helper is now `serveHost`, shared with the sound test, and it passes the host's sound formats to the server.
+  - SPEC §15.3: the sink as built.
+- **Proved** (`scripts/vm.sh start`, `go test -tags mardp_freerdp -run 'FreeRDPSound|CompareTone' -v ./cmd/mardp/`, `scripts/vm.sh stop`), FreeRDP 3.33.1 on Fedora 45:
+  - PCM: format 1 negotiated and sent; 8.46 s of sound at 48 kHz, two channels; 1670 windows, none off the tone; RMS 0.177; 1.0000 of it at 1 kHz.
+  - AAC: format 0xA106 negotiated and sent; FreeRDP opened its device with `WAVE_FORMAT_AAC_MS [backend WAVE_FORMAT_PCM]` (it decodes the AAC itself); 8.41 s of sound; 1661 windows, none off the tone; RMS 0.177; 1.0000 of it at 1 kHz.
+  - mardp's log has no dropped packet, no full queue, no stopped sound.
+  - TestFreeRDPAVC still passes after the refactor.
+- **Differs from the plan:**
+  - The "null sink" is ALSA's file plugin over the null device, not a PulseAudio or PipeWire null sink. The guest agent runs as root with no sound server, and FreeRDP's ALSA backend writes straight into the file.
+  - Seen, not changed: FreeRDP 3.33 confirms each Wave2 block twice, so mardp logs the second confirm at Debug as "a Wave Confirm of no block ignored". The first confirm is matched, so the backlog and the gap rule work. FreeRDP also drops the first block while it opens its device (the file plugin has no mixer).
+- **Manual checks:** a video with sound for 10 minutes and the clap test on the owner's Linux machine: pending, see docs/MANUAL-CHECKS.md (4.6).

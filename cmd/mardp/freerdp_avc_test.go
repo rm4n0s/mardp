@@ -116,16 +116,17 @@ func (b *barSource) CaptureVideo(ctx context.Context, cfg host.VideoConfig, star
 	}
 }
 
-// serveBars serves the bars of src on addr until the test ends, logging to
-// logPath; it returns the port.
-func serveBars(t *testing.T, addr string, src *barSource, logPath string) int {
+// serveHost serves a host of parts with opts on addr until the test ends,
+// with the library's server and logging to logPath; it returns the port.
+func serveHost(t *testing.T, addr string, parts host.Parts, opts host.Options, logPath string) int {
 	t.Helper()
 	lf, err := os.Create(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(lf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	hst, err := host.New(host.Parts{Screen: &host.PatternScreen{}, Video: src}, host.Options{VideoFPS: 30, Logger: log})
+	opts.Logger = log
+	hst, err := host.New(parts, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func serveBars(t *testing.T, addr string, src *barSource, logPath string) int {
 		t.Fatal(err)
 	}
 	srv, err := rdp.NewServer(rdp.Config{Certificate: cert, Authenticator: rdp.StaticAuthenticator(testUser, testPassword),
-		Handler: hst, DesktopSize: hst.DesktopSize, Logger: log})
+		Handler: hst, DesktopSize: hst.DesktopSize, AudioFormats: hst.AudioFormats(), Logger: log})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +231,7 @@ func TestFreeRDPAVC(t *testing.T) {
 			dir := logDir(t)
 			src := &barSource{profile: tt.profile, full: tt.full}
 			logPath := filepath.Join(dir, "mardp.log")
-			port := serveBars(t, addr, src, logPath)
+			port := serveHost(t, addr, host.Parts{Screen: &host.PatternScreen{}, Video: src}, host.Options{VideoFPS: 30}, logPath)
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			out, err := vm(ctx, "sh", shotScript(addr, port, "/gfx:AVC420"))
