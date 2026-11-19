@@ -69,3 +69,20 @@ Apple M6:
 
 What it fixed: the sound path made a method value of its packet function for each captured buffer, one allocation every 10 ms; it is made once now.
 
+## The table of §14 (6.3)
+
+Each row with what is measured so far. "This Mac" is `scripts/perf.sh` (the test pattern through VideoToolbox, `rdptest` on the loopback; 20 and 60 second runs, 2026-11-19); "owner" is the manual check 6.3 of `docs/MANUAL-CHECKS.md`, with the owner's Mac and Linux machine on their LAN, still pending. The constants of SPEC §9.5 stay as they are until the owner's numbers show what to tune: on the loopback no frame is skipped and the bitrate never needs to fall.
+
+| What | Target | This Mac | Owner (LAN, Remmina) |
+|---|---|---|---|
+| Frames delivered (acknowledged) | ≥ 57 of 60 a second, 5 minutes | 60.0 a second, fewest 59 | pending |
+| Delay added by the host | ≤ 25 ms for 95% | p95 6.1 ms (the real capture adds ScreenCaptureKit's part) | pending (`-measure`) |
+| Delay from screen to screen | ≤ 100 ms | (needs both screens) | pending |
+| Sound | no dropout in 10 minutes | every block confirmed, 46.9 a second | pending |
+| Picture and sound apart | ≤ 100 ms | (needs a person) | pending |
+| CPU during the video | < 60% of one core | 14.9% | pending |
+| CPU idle, client connected | < 2% of one core | step 6.4 | pending |
+| Memory during the video | < 300 MB, not growing | 77 MB, not growing | pending |
+| Bitrate | ≤ cap (20 Mbit/s) | 18.5 Mbit/s | pending |
+| From "Connect" to the first picture | < 2 s | 0.26 s from the TCP connection | pending |
+

@@ -169,6 +169,7 @@ func TestPerf(t *testing.T) {
 	watch := perfSeconds(t)
 	h := newHome(t, nil) // 60 frames a second, 20 Mbit/s, the sound on the client
 	p := startPerf(t, h)
+	dialed := time.Now()
 	c, err := connectSized(t, h, testUser, testPassword, 1920, 1080)
 	if err != nil {
 		t.Fatal(err)
@@ -200,6 +201,7 @@ func TestPerf(t *testing.T) {
 		second            = time.Now().Add(time.Second)
 		end               = time.Now().Add(watch)
 		inSecond, keyless int
+		firstPicture      time.Duration
 	)
 	for time.Now().Before(end) {
 		f, err := c.ReadGFXFrame(ctx, g.ChannelID)
@@ -214,6 +216,9 @@ func TestPerf(t *testing.T) {
 			videoBytes += int64(len(d))
 		}
 		if len(f.H264) > 0 {
+			if frames == 0 {
+				firstPicture = time.Since(dialed)
+			}
 			frames++
 			inSecond++
 		} else {
@@ -263,6 +268,8 @@ func TestPerf(t *testing.T) {
 	}
 	mb := func(b int64) float64 { return float64(b) / (1 << 20) }
 	t.Logf("watched %v at 1920×1080, 60 fps cap, %d bit/s cap", watch, h.s.MaxBitrate)
+	t.Logf("from the connection to the first picture: %v (TLS, login, activation, the graphics pipeline, sound)",
+		firstPicture.Round(time.Millisecond))
 	t.Logf("frames delivered: %d (%d without H.264); a second, after the first: mean %.1f, fewest %d, %d of %d seconds under 57",
 		frames, keyless, mean, fewest, under, len(steady))
 	t.Logf("sound blocks confirmed: %d (%.1f a second)", blocks, float64(blocks)/watch.Seconds())
@@ -278,6 +285,9 @@ func TestPerf(t *testing.T) {
 	// The targets of SPEC §14 that the machine measures by itself.
 	if p95 := ms(t, timing, "timing.total.p95"); p95 > 25*time.Millisecond {
 		t.Errorf("95%% of frames took up to %v from capture to written, the target is 25 ms", p95)
+	}
+	if firstPicture > 2*time.Second {
+		t.Errorf("the first picture came %v after the connection, the target is under 2 s", firstPicture)
 	}
 	if mean < 57 {
 		t.Errorf("%.1f frames a second delivered, the target is 57", mean)

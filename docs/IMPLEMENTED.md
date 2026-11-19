@@ -823,3 +823,12 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
 - **Proved:** every benchmark passes with 0 B and 0 allocations per operation on the Apple M6 (docs/PERFORMANCE.md); the tests pass in the default run. The packages under `internal/mac` already had tests asserting 0 allocations on their paths (the capture's delivery of a frame and of sound, the encoder's delivery, the AAC encoder, the pointer).
 - **Differs from the plan:** the benchmarks allow the runtime's own background allocations, once in a thousand operations (seen: about once in 100 000); an operation that allocates allocates every time and fails them. Also covered: the bitmap and tile paths and the writer, beyond frames of H.264 and sound packets.
 - **Manual checks:** none.
+
+## 6.3 The real numbers (2026-11-19)
+- **Built:**
+  - `scripts/perf.sh` also measures the time from the TCP connection to the first picture (TLS, login, activation, the graphics pipeline and the sound), and fails over 2 s.
+  - docs/PERFORMANCE.md: the table of §14, each row with what this Mac measures and a column for the owner's numbers.
+  - docs/MANUAL-CHECKS.md (6.3): the exact steps for the owner: `mardp -headless -measure` from the app bundle, a 1080p60 video full screen, Remmina with the README's profile, the time to the first picture, `top` on the mardp process during the video and with a still screen, photos of both clocks for the delay from screen to screen, the clap test, the "video timing" log lines.
+- **Proved:** on this Mac: the first picture 0.26 s after the connection; the other numbers as in 6.1 (60 frames a second, host delay p95 6 ms, 15% of one core, 77 MB, under the bitrate cap).
+- **Differs from the plan:** the owner's numbers are pending, so the constants of §9.5 are not tuned yet: on the loopback nothing is skipped and the bitrate never falls, so there is nothing to tune them against. They are tuned, with their before and after in docs/PERFORMANCE.md, when the owner's numbers come.
+- **Manual checks:** the numbers of §14 on the owner's machines: pending, see docs/MANUAL-CHECKS.md (6.3).

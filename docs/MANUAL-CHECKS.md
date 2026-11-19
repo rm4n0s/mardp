@@ -377,3 +377,40 @@ A Mac that has never run mardp: a new user account on your Mac has none of mardp
 11. Log out of the test account and delete it in System Settings › Users & Groups, with its home folder.
 
 Tell me, step by step, what was as expected and what was not.
+
+## 6.3 The real numbers (SPEC §14)
+
+The numbers of §14 that only your two machines can give. It takes about 25 minutes. Nothing here changes your volume: set the Mac's sound yourself. Use the app built from `main` (`scripts/build-app.sh`, then copy `build/mardp.app` to `/Applications`), with Screen Recording granted.
+
+1. Quit mardp from its menu-bar icon. Start it without a window, measuring, so that its log has the host's delay of every frame:
+
+   ```bash
+   open -n /Applications/mardp.app --args -headless -measure -log-file /tmp/mardp-measure.log
+   ```
+
+   Expected: `grep listening /tmp/mardp-measure.log` prints a line.
+2. On the Mac, open a 1080p60 video (for example a 60 fps sports or game clip on YouTube in Safari, quality 1080p60) and make it full screen. Leave it playing.
+3. In Remmina connect with the README's profile ("GFX AVC420 (32 bpp)", sound "Local"), in a window of 1920×1080 or full screen. Note how long it takes from pressing Connect (after the fingerprint, which you accepted before) to the first picture: count, or use a stopwatch.
+4. While it plays, on the Mac, in Terminal:
+
+   ```bash
+   top -l 30 -s 10 -pid "$(pgrep -n -x mardp)" -stats pid,cpu,mem > /tmp/mardp-top.txt
+   ```
+
+   It takes 5 minutes. Meanwhile watch and listen in Remmina: note any sound dropout and any stutter.
+5. The delay from screen to screen: on the Mac, pause the video, open https://www.timeanddate.com/worldclock/ or any page with a clock showing milliseconds (for example https://time.is with the seconds, or search "stopwatch" and start one) full screen. Put the Linux screen with Remmina next to the Mac's screen and take 5 photos with your phone, each showing both clocks. The difference between the two clocks in each photo is the delay.
+6. Picture and sound apart: the clap test of 4.6 (a video of a clap or a clapperboard, watched in Remmina): note whether the sound comes before or after the picture, and by about how much.
+7. The idle cost: close the video so that the Mac's screen is still and nothing plays, leave Remmina connected, and run:
+
+   ```bash
+   top -l 30 -s 10 -pid "$(pgrep -n -x mardp)" -stats pid,cpu,mem > /tmp/mardp-top-idle.txt
+   ```
+
+8. Disconnect in Remmina, then stop mardp:
+
+   ```bash
+   pkill -TERM -x mardp
+   grep -E 'video timing' /tmp/mardp-measure.log | tail -5
+   ```
+
+Tell me (or paste): the time to the first picture (step 3), the last lines of step 8, `/tmp/mardp-top.txt` and `/tmp/mardp-top-idle.txt`, the 5 differences of step 5, what step 6 showed, and any dropout or stutter. With them I tune the constants of §9.5 and record every row of §14 in `docs/PERFORMANCE.md`.
