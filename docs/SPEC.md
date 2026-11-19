@@ -1,6 +1,6 @@
 # mardp: Specification
 
-Status: the owner answered the open decisions (§3) and the steps of `docs/IMPLEMENTATION.md` are under way; `docs/IMPLEMENTED.md` lists the finished ones.
+Status: version 1.0. Every step of `docs/IMPLEMENTATION.md` through M6 is implemented and logged in `docs/IMPLEMENTED.md`; the checks only the owner can make, on their own machines, are listed in `docs/MANUAL-CHECKS.md`, and their answers may still correct this specification.
 
 mardp makes a Mac an RDP host: an RDP client on another machine (first of all Remmina on Linux) shows the Mac's desktop, controls its keyboard and mouse, and plays its sound. It is a desktop app written in Go, with a user interface built on [Glutter](https://github.com/rm4n0s/glutter), and it contains its own RDP server library, written from scratch.
 
@@ -408,7 +408,7 @@ D7 makes speed a requirement, so the rules are part of the specification:
 - **Recent events**: connections, disconnections with their reason, failed logins.
   - As built in 5.2: while a client is connected, the status card shows its computer name and address, since when, the desktop size, the video path, the sound format ("AAC", "PCM" or none), the frames a second, the bitrate in Mbit/s and the delay, with a "Disconnect" button. The numbers are taken once a second: the frames are those the client acknowledged on the graphics pipeline, the updates sent on the bitmap paths; the bitrate counts every byte sent; the delay is how long the client takes to acknowledge a frame, smoothed over about eight frames, and is not measured on the bitmap paths. Disconnect tells the client that the server ended the session (Set Error Info, as `CloseByHost`).
   - The recent events card lists the last 50 events, the newest first, each with its time: a connection (name, address, user), a disconnection with why (the client disconnected, disconnected from this window, the server could not go on with it, another client connected, the server stopped), and a refused login (user, address). They are kept in memory, not saved.
-- Until the settings and the menu-bar icon exist (M5): the checklist's password line opens a form for the user name and the password (a set login shows "Change"), and closing the window quits the app, which stops the server (§7.3 applies from step 5.3). A checklist button asks macOS for its permission (macOS shows its question only the first time) and opens its pane of System Settings. The window asks the backend for the status once a second, by the binding's clock. A failed Start shows its message; a server that stops by itself shows why.
+- The checklist's password line opens a form for the user name and the password (a set login shows "Change"). A checklist button asks macOS for its permission (macOS shows its question only the first time) and opens its pane of System Settings. The window asks the backend for the status once a second, by the binding's clock. A failed Start shows its message; a server that stops by itself shows why. Closing the window keeps the app and the server running (§7.3).
 
 ### 12.3 The menu-bar icon
 
@@ -442,7 +442,7 @@ As built in 5.4:
 
 ## 14. Performance targets
 
-Measured on the owner's Apple silicon Mac and Linux machine on the same LAN, with a 1920×1080 session playing a 1080p60 video in full screen, H.264 path. They are targets for 1.0; the first measurements (M6) may correct a number, with the reason recorded here.
+Measured on the owner's Apple silicon Mac and Linux machine on the same LAN, with a 1920×1080 session playing a 1080p60 video in full screen, H.264 path. They are targets for 1.0; the first measurements (M6) may correct a number, with the reason recorded here. What this Mac measures by itself met every target without a change (docs/PERFORMANCE.md); the owner's measurements on the LAN are pending (6.3).
 
 | What | Target |
 |---|---|

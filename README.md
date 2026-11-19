@@ -2,7 +2,7 @@
 
 An RDP host for macOS, so that RDP clients such as Remmina on Linux can connect to a Mac: they see its desktop, control it and hear its sound, well enough to watch video. It contains its own RDP server library (`rdp/`), written in Go from scratch, and its window is built with [Glutter](https://github.com/rm4n0s/glutter).
 
-The design is in [docs/SPEC.md](docs/SPEC.md), the plan in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) and what is done in [docs/IMPLEMENTED.md](docs/IMPLEMENTED.md).
+The design is in [docs/SPEC.md](docs/SPEC.md), the plan in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) and what is done in [docs/IMPLEMENTED.md](docs/IMPLEMENTED.md). The numbers measured so far are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md); what still waits for a check on the owner's own machines (H.264 in Remmina on the LAN, the locked Mac, sound in sync) is in [docs/MANUAL-CHECKS.md](docs/MANUAL-CHECKS.md).
 
 ## Requirements
 
