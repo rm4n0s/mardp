@@ -59,6 +59,13 @@ const (
 	capsProtocolVersion  uint16 = 0x0200
 )
 
+// Bitmap Capability Set drawingFlags (2.2.7.1.2).
+const (
+	DrawAllowDynamicColorFidelity uint8 = 0x02
+	DrawAllowColorSubsampling     uint8 = 0x04
+	DrawAllowSkipAlpha            uint8 = 0x08
+)
+
 // Input Capability Set flags (2.2.7.1.6).
 const (
 	InputScancodes     uint16 = 0x0001

@@ -76,3 +76,24 @@ func TestWriterErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestWriterTruncate(t *testing.T) {
+	tests := []struct {
+		n    int
+		want []byte
+	}{
+		{0, []byte{}},
+		{2, []byte{1, 2}},
+		{4, []byte{1, 2, 3, 4}},
+		{5, []byte{1, 2, 3, 4}},
+		{-1, []byte{1, 2, 3, 4}},
+	}
+	for _, tt := range tests {
+		w := NewWriter(nil)
+		w.Write([]byte{1, 2, 3, 4})
+		w.Truncate(tt.n)
+		if !bytes.Equal(w.Bytes(), tt.want) {
+			t.Errorf("Truncate(%d) leaves % x, want % x", tt.n, w.Bytes(), tt.want)
+		}
+	}
+}

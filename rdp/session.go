@@ -138,6 +138,9 @@ type Client struct {
 	FastPathOutput bool
 	// DesktopResize says the client can follow a new desktop size.
 	DesktopResize bool
+	// SkipAlpha says the client takes 32-bit bitmaps without their alpha
+	// (DRAW_ALLOW_SKIP_ALPHA).
+	SkipAlpha bool
 	// InputScancodes, InputUnicode, InputExtendedMouse,
 	// InputHorizontalWheel, InputRelativeMouse and InputFastPath are the
 	// input the client says it sends (INPUT_FLAG_SCANCODES, _UNICODE,
@@ -172,6 +175,8 @@ type Session struct {
 	cancel context.CancelFunc
 	// wr writes everything the session sends.
 	wr *writer
+	// video is the session's video output.
+	video Video
 
 	mu sync.Mutex
 	// reason is why the server ended the session; 0 while it is open or
@@ -294,6 +299,7 @@ func (c *conn) newClient() Client {
 func addCaps(cl *Client, cc *caps.Caps) {
 	cl.FastPathOutput = cc.Has(caps.SetGeneral) && cc.General.ExtraFlags&caps.ExtraFastPathOutput != 0
 	cl.DesktopResize = cc.Has(caps.SetBitmap) && cc.Bitmap.DesktopResize
+	cl.SkipAlpha = cc.Has(caps.SetBitmap) && cc.Bitmap.DrawingFlags&caps.DrawAllowSkipAlpha != 0
 	if cc.Has(caps.SetInput) {
 		f := cc.Input.Flags
 		cl.InputScancodes = f&caps.InputScancodes != 0
@@ -368,6 +374,7 @@ func serverCaps(width, height int) caps.Caps {
 // open once Font Map is sent.
 func (c *conn) activate(desktopSize func(*Client) (int, int)) (*Session, error) {
 	s := &Session{c: c, client: c.newClient()}
+	s.video.s = s
 	s.width, s.height = s.client.DesktopWidth, s.client.DesktopHeight
 	if desktopSize != nil {
 		s.width, s.height = desktopSize(&s.client)

@@ -166,10 +166,11 @@ The exact Go names are decided in the implementation; this is the shape.
 - `rdp.NewServer(config)` and `Server.Serve(ctx, listener)`. The config holds the TLS certificate, the `Authenticator` (a function that gets the user name and password and answers yes or no), the `Handler`, the limits of §5.1 and a `slog.Logger`.
 - `Handler.SessionOpened(ctx, session)` (or a `HandlerFunc`) is called on a goroutine of its own when a client has finished the connection sequence. The session is over when its context is cancelled; `Session.Close(ctx, reason)` ends it from the app (§5.4). The connection is kept until the handler has returned.
 - `Config.DesktopSize(client) (width, height)` decides the session's size from what the client asked for (§9.2), before Demand Active; nil gives the client its own size. `Session.DesktopSize()` returns it.
-- `Session.Client()`: what the client is: name, address, user and domain, build, the desktop size it asked for, keyboard layout and type, whether it supports the graphics pipeline, its static channels, and from its Confirm Active fast-path output, the input it sends, its pointer cache, the largest pointer it shows, its largest fast-path update, surface commands and frame acknowledgement. Whether it decodes H.264 (AVC420) and its audio formats come with the channels that negotiate them.
+- `Session.Client()`: what the client is: name, address, user and domain, build, the desktop size it asked for, keyboard layout and type, whether it supports the graphics pipeline, its static channels, and from its Confirm Active fast-path output, the input it sends, its pointer cache, the largest pointer it shows, its largest fast-path update, whether it takes bitmaps without an alpha plane, surface commands and frame acknowledgement. Whether it decodes H.264 (AVC420) and its audio formats come with the channels that negotiate them.
 - **Video.** `Session.Video()` gives one of two things, chosen by the library from the client's capabilities:
   - *H.264*: `SendFrame(annexB, keyFrame)`. The library wraps it as a GFX frame (Start Frame, Wire To Surface with the AVC420 stream, End Frame).
-  - *Bitmaps*: `SendRects(image, rects)`. The library compresses the rectangles (Planar) and sends them through GFX, or as fast-path Bitmap Updates when the client has no graphics pipeline.
+  - *Bitmaps*: `SendRects(image, rects)`. The library compresses the rectangles (Planar) and sends them through GFX, or as fast-path Bitmap Updates when the client has no graphics pipeline (§9.6). The `Image` is BGRA pixels, rows top-down `Stride` bytes apart, its top left corner the desktop's; rectangles are clipped to it and to the desktop, and rectangles that miss both send nothing.
+  - `Video.Path()` says which path the session uses (`VideoBitmaps` until M3 adds the GFX paths), for the window (§9.1).
   - Both report flow: `Backlog()` (frames sent and not yet acknowledged, and the age of the oldest). The callbacks come through a `FlowSink` the app sets on the session with `Session.SetFlowSink`: `KeyFrameWanted()` (on Refresh Rect, and after output resumes) and `OutputSuppressed(bool)` (only when the state changes; a resume is followed by `KeyFrameWanted`). `Session.OutputSuppressed()` reports the state at any time.
 - **Sound.** `Session.Audio()`: the negotiated format (AAC, PCM or none) and `Write(data, timestamp)`. It reports the delay the client's confirmations show.
 - **Pointer.** `SetShape(image, hotspot)` (the library caches shapes and sends a cached index when a shape repeats), `Hide()`, `Move(x, y)`.
@@ -179,7 +180,7 @@ The exact Go names are decided in the implementation; this is the shape.
   - `Wheel` is in 120ths of a notch; `dy` is positive away from the user, `dx` positive to the right.
   - Input that arrives before a sink is set is dropped. A sink set later first gets the last `SyncLocks` the client sent; a flow sink set while output is suppressed first gets `OutputSuppressed(true)`. A sink takes effect before the next frame the session reads.
 - Every method that does I/O takes a `ctx`. Every failure is an `errors` Tag of its own with a route test (CLAUDE.md).
-- `Write` and `SendFrame` do not block on the network: they queue for the session's writer (§4.2) and fail with a tagged error when the queue is full, which is the app's signal to skip (§9.5).
+- `Write`, `SendFrame` and `SendRects` do not block on the network: they queue for the session's writer (§4.2) and fail with a tagged error when the queue is full, which is the app's signal to skip (§9.5). They take no `ctx`, since they never wait. One `SendRects` call is one packet of the video queue: the client gets all of its rectangles or, when the queue is full, none of them.
 
 ## 7. The host on macOS
 
@@ -281,6 +282,13 @@ The goal is that the client always shows the newest picture, never an old one th
 ### 9.6 The fallback paths
 
 The host asks ScreenCaptureKit for BGRA frames and the changed rectangles of each frame, and gives them to `SendRects`. The frame rate cap is 30. These paths exist so that every client gets a picture; they are not tuned for video.
+
+How the rectangles are sent as fast-path Bitmap Updates (MS-RDPBCGR 2.2.9.1.2.1.2):
+
+- Each rectangle is cut into tiles of at most 64×63 pixels (4032, so that a tile fits in one Bitmap Data and in one fast-path PDU whatever its compression). Tiles are packed into updates as large as the client's largest fast-path update (§5.2); a client without multifragment updates gets one PDU per update.
+- Each tile is 32 bpp, compressed with RDP 6.0 Planar (MS-RDPEGDI 2.2.2.5.1), lossless: ARGB, color loss level 0, no chroma subsampling. Its planes are run-length encoded when that is smaller, sent plain when that is smaller, and the tile goes uncompressed when even that is not smaller than its pixels.
+- A client that sets `DRAW_ALLOW_SKIP_ALPHA` (`Client.SkipAlpha`) gets no alpha plane; otherwise the alpha plane is 0xFF everywhere, since the screen is opaque.
+- Planar scan lines go bottom-up, as in an uncompressed bitmap; the real client confirms this in step 1.13.
 
 ## 10. Sound, input, pointer
 

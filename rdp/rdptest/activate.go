@@ -40,7 +40,8 @@ func (c *Client) ClientCaps() caps.Caps {
 		RefreshRect:    true,
 		SuppressOutput: true,
 	}
-	cc.Bitmap = caps.Bitmap{BitsPerPixel: 32, DesktopWidth: c.opts.Width, DesktopHeight: c.opts.Height, DesktopResize: true}
+	cc.Bitmap = caps.Bitmap{BitsPerPixel: 32, DesktopWidth: c.opts.Width, DesktopHeight: c.opts.Height, DesktopResize: true,
+		DrawingFlags: caps.DrawAllowDynamicColorFidelity | caps.DrawAllowSkipAlpha}
 	cc.Pointer = caps.Pointer{Color: true, ColorCacheSize: 20, CacheSize: 25, HasCacheSize: true}
 	cc.Input = caps.Input{
 		Flags:                caps.InputScancodes | caps.InputMouseX | caps.InputUnicode | caps.InputFastPath2 | caps.InputMouseHWheel,

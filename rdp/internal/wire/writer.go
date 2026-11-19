@@ -27,6 +27,14 @@ func (w *Writer) Len() int { return len(w.b) }
 // Reset drops what was written and keeps the capacity.
 func (w *Writer) Reset() { w.b = w.b[:0] }
 
+// Truncate drops what was written after the first n bytes, for output
+// that is written again another way. An n outside 0..Len changes nothing.
+func (w *Writer) Truncate(n int) {
+	if n >= 0 && n <= len(w.b) {
+		w.b = w.b[:n]
+	}
+}
+
 // U8 appends one byte.
 func (w *Writer) U8(v uint8) { w.b = append(w.b, v) }
 

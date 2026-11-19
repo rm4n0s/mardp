@@ -188,3 +188,32 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - Shutdown Request is answered with Shutdown Request Denied, as 2.2.2.2 says for a logged-on session; the plan only named the request.
   - SPEC §5.3 (what the session reads) and §6 (input and flow) are updated.
 - **Manual checks:** none.
+
+## 1.10 Bitmaps: Planar and fast-path Bitmap Updates (2026-11-19)
+- **Built:** `rdp/internal/bitmap`:
+  - The Bitmap Update Data and Bitmap Data of MS-RDPBCGR 2.2.9.1.1.3.1.2, 32 bpp, written one rectangle at a time (`BeginUpdate`, `AppendRect`, `EndUpdate`).
+  - The RDP 6.0 Planar encoder (MS-RDPEGDI 2.2.2.5.1, 3.1.9), lossless (ARGB, color loss level 0, no subsampling): run-length encoded planes when smaller, plain planes when smaller, otherwise the uncompressed pixels. No alpha plane when the client sets `DRAW_ALLOW_SKIP_ALPHA`, else a constant 0xFF one. Writing allocates nothing.
+  - The decoder (`ParseUpdate`, `Next`, `Draw`) for `rdptest`, which refuses anything this server never sends.
+  - 8 tags.
+
+  `wire.Writer.Truncate`. `caps`: the drawing flags of the Bitmap capability set.
+
+  In `rdp` (`video.go`):
+  - `Session.Video()`, `Video.Path()` (`VideoBitmaps`), `Image` and `Video.SendRects(img, rects)`. Rectangles are clipped to the image and the desktop, cut into 64×63 tiles, and packed into fast-path Bitmap Updates as large as the client's largest fast-path update (one PDU each without multifragment). All of one call goes in one packet of the video queue.
+  - `Client.SkipAlpha`. 1 tag (`TagImageInvalid`).
+
+  `rdptest`: `Screen` and `Screen.DrawBitmaps`, which draw what the client receives.
+- **Proved:**
+  - **Pixel for pixel:** `TestBitmaps` sends six rounds of random rectangles (some partly or wholly outside) of pictures with flat, gradient, striped and noisy areas, and the `rdptest` screen becomes the expected picture each round. This runs with the defaults, without multifragment, with an alpha plane, with a picture larger and smaller than the desktop, and on a 300×200 desktop. Rectangles that miss the desktop send nothing.
+  - **Microsoft's examples:** `TestMicrosoftRLE` encodes the RLE examples of MS-RDPEGDI 3.1.9.2 byte for byte: AAAABBCCCCCD, the delta example, the 19 bytes of 3.1.9.2.1 and a run of 100.
+  - `bitmap`: 400 random round trips, the choice of compression on flat and noisy tiles, the exact bytes of small cases, and every refused case of the decoder. 5000 mutations per seed run without a panic or a hang. Coverage is 99.5%.
+  - **0 allocations:** `TestVideoAllocs` (`SendRects` through the running writer) and `bitmap.TestAllocations`. Benchmarks (Apple M6): one 64×63 tile at 671 MB/s (flat), 538 MB/s (mixed), 199 MB/s (noise); a whole 1024×768 mixed frame through `SendRects` in 8.3 ms (379 MB/s).
+  - **Errors:** an image whose pixels do not hold its size, a client without fast-path output, a full queue (a client that reads nothing), and a session that is over, each with its route. Every new tag has a route test.
+  - Three repeated `-race` runs pass. Coverage: `rdp` 93.3%, `rdptest` 75.6%, `bitmap` 99.5%.
+- **Differs from the plan:**
+  - The decoder lives in `internal/bitmap`, next to the encoder, and `rdptest` uses it: `rdptest` may import internal packages and the codec's tables are shared.
+  - Planar scan lines are written bottom-up, as in an uncompressed bitmap; MS-RDPEGDI does not say for Bitmap Updates. Step 1.13 checks it with the real client.
+  - Only the `VideoBitmaps` path exists. GFX, H.264 and `Backlog()` come in M3.
+  - `SendRects` takes no `ctx`, since it never waits (SPEC §6 updated).
+  - SPEC §6 (video, `Client`) and §9.6 (tiles, compression, alpha, scan line order) are updated.
+- **Manual checks:** none.
