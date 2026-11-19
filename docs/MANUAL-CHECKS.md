@@ -350,3 +350,30 @@ Tell me what did not look or behave as expected.
 
 2. Expected: the Dock and Finder show mardp's icon (a white screen on a stand with a pointer, on a blue rounded square), not Glutter's.
 3. Read the README's "Installing", "The Remmina profile" and "What mardp does not protect against", and tell me what is unclear or does not match what you see.
+
+## 5.7 A fresh install (SPEC §15.7, M5)
+
+A Mac that has never run mardp: a new user account on your Mac has none of mardp's settings, permissions or login items, and is deleted at the end. Making and deleting it needs your password.
+
+1. In your own account, build the app, copy it to `/Applications` (where every account sees it), and quit mardp (menu-bar icon › Quit) so that port 3389 is free:
+
+   ```bash
+   scripts/build-app.sh
+   ```
+
+   ```bash
+   ditto build/mardp.app /Applications/mardp.app
+   ```
+
+2. In System Settings › Users & Groups, add a standard user (for example "mardptest"), and log in to it (Apple menu › Log Out, or switch user).
+3. Open `/Applications/mardp.app` from Finder. Expected: mardp's icon in the Dock; the window shows the checklist with three lines not done (Screen Recording, Accessibility, a password); Start is greyed out.
+4. Press the Screen Recording line's button. Expected: macOS asks, and System Settings opens at Screen Recording; turn mardp on. The line turns done by itself (if macOS says mardp must quit and reopen, let it, and note it).
+5. Press the Accessibility line's button and turn mardp on there. Expected: the line turns done by itself.
+6. Set a user name and a password from the checklist's password line. Expected: the checklist goes away; Start can be pressed.
+7. Press Start. Expected: macOS asks whether mardp may accept incoming connections; allow it. The window shows the addresses and the certificate's fingerprint; the menu-bar icon shows a dot.
+8. On your Linux machine, make a Remmina profile as the README's "The Remmina profile" says, and connect. Expected: Remmina shows the same fingerprint as mardp's window; after you accept, the Mac's desktop shows; macOS asks once whether mardp may send notifications (allow it); "… connected" notifies, and the window shows the session with "H.264 (AVC420) through the graphics pipeline".
+9. In the session: play a video with sound (as in 4.6) and clap once in it; type a line with Shift, Ctrl, Option and Command combinations in TextEdit; move the pointer over text and over a link. Expected: smooth picture with the sound in sync; every key as typed; the pointer turns into the I-beam and the hand.
+10. Close mardp's window. Expected: the session goes on, the menu-bar icon is filled; its menu's Disconnect ends the session ("… disconnected" notifies), and Quit ends mardp.
+11. Log out of the test account and delete it in System Settings › Users & Groups, with its home folder.
+
+Tell me, step by step, what was as expected and what was not.

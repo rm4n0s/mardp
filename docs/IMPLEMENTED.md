@@ -788,3 +788,9 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - The icon's test: its size, the clear margin and corners, the white frame and foot, the blue body.
 - **Differs from the plan:** also built: the minimum macOS of the bundle (a Glutter workaround, docs/GLUTTER-ISSUES.md), and a row of the package table for the icon's program.
 - **Manual checks:** the icon in the Dock and Finder, and reading the README: pending, see docs/MANUAL-CHECKS.md (5.6).
+
+## 5.7 A fresh install (2026-11-19)
+- **Built:** the check list of a fresh install (SPEC §15.7), in docs/MANUAL-CHECKS.md (5.7): a new user account on the owner's Mac, with none of mardp's settings, permissions or login items; the app from `/Applications`; the checklist with each permission and the password; Start and the firewall's question; Remmina with the README's profile, the fingerprint, the notifications' question; video with sound, the keyboard, the pointer; closing the window, Disconnect and Quit from the menu bar; deleting the account.
+- **Proved:** by the automated tests up to here, the first start's checklist (`internal/ui` TestFirstStart), a bundle built from a clean checkout that verifies and starts (5.6). The owner's run of the list: pending.
+- **Differs from the plan:** M5 is published with the owner's answers pending, as the earlier milestones were (CLAUDE.md: manual checks don't stop the work); they are recorded here when they come.
+- **Manual checks:** the fresh install: pending, see docs/MANUAL-CHECKS.md (5.7).
