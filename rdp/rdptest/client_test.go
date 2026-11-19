@@ -14,6 +14,7 @@ import (
 
 	"github.com/rm4n0s/mardp/rdp/internal/gcc"
 	"github.com/rm4n0s/mardp/rdp/internal/mcs"
+	"github.com/rm4n0s/mardp/rdp/internal/sec"
 	"github.com/rm4n0s/mardp/rdp/internal/tpkt"
 	"github.com/rm4n0s/mardp/rdp/internal/wire"
 	"github.com/rm4n0s/mardp/rdp/internal/x224"
@@ -302,5 +303,119 @@ func TestClientData(t *testing.T) {
 	}
 	if _, err := gcc.ParseClientData(w.Bytes()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// joined runs the server's side up to the end of the channel joins, with
+// user 1006.
+func (f *fake) joined() {
+	f.startTLS()
+	f.attach(mcs.AttachUserConfirm{HasInitiator: true, Initiator: 1006})
+	for _, id := range []uint16{1006, 1003, 1004, 1005} {
+		f.read()
+		f.send(true, func(w *wire.Writer) error {
+			return mcs.WriteChannelJoinConfirm(w, &mcs.ChannelJoinConfirm{Initiator: 1006, Requested: id, HasChannelID: true, ChannelID: id})
+		})
+	}
+}
+
+// indication sends pdu on the I/O channel.
+func (f *fake) indication(pdu func(w *wire.Writer)) {
+	var pw wire.Writer
+	pdu(&pw)
+	f.send(true, func(w *wire.Writer) error {
+		return mcs.WriteSendDataIndication(w, &mcs.SendData{Initiator: 1002, ChannelID: 1003, Priority: mcs.PriorityHigh, Segmentation: mcs.SegmentationWhole, Data: pw.Bytes()})
+	})
+}
+
+func TestLogin(t *testing.T) {
+	certs, err := testCerts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	trusted := certs[0]
+	ultimatum := func(f *fake) {
+		f.send(true, func(w *wire.Writer) error {
+			return mcs.WriteDisconnectProviderUltimatum(w, mcs.ReasonProviderInitiated)
+		})
+	}
+	tests := []struct {
+		name   string
+		script func(f *fake)
+		route  string // "" for a login
+		meta   map[string]any
+	}{
+		{"valid client", func(f *fake) {
+			f.indication(sec.WriteLicenseValidClient)
+		}, "", nil},
+		{"refused with a reason", func(f *fake) {
+			f.indication(func(w *wire.Writer) { sec.WriteSetErrorInfo(w, 1, sec.ErrInfoFreshCredentialsRequired) })
+			ultimatum(f)
+		}, "Client.Login." + TagLoginRefused, map[string]any{"errorInfo": sec.ErrInfoFreshCredentialsRequired, "reason": mcs.ReasonProviderInitiated}},
+		{"refused without a reason", ultimatum, "Client.Login." + TagLoginRefused, map[string]any{"errorInfo": uint32(0)}},
+		{"another license status", func(f *fake) {
+			f.indication(func(w *wire.Writer) {
+				w.Write([]byte{0x80, 0, 0, 0, 0xff, 0x03, 0x10, 0, 0x01, 0, 0, 0, 0x02, 0, 0, 0, 0x04, 0, 0, 0})
+			})
+		}, "Client.Login." + TagLicenseInvalid, map[string]any{"code": uint32(1)}},
+		{"license cut", func(f *fake) {
+			f.indication(func(w *wire.Writer) { w.Write([]byte{0x80, 0, 0, 0, 0xff, 0x03}) })
+		}, "Client.Login->ParseLicenseError", nil},
+		{"neither", func(f *fake) {
+			f.indication(func(w *wire.Writer) { w.Write([]byte{0x16, 0, 0x17, 0}) })
+		}, "Client.Login->ParseSetErrorInfo", nil},
+		{"bad ultimatum", func(f *fake) {
+			f.send(true, func(w *wire.Writer) error {
+				w.Write([]byte{mcs.ChoiceDisconnectProviderUltimatum << 2, 0x80, 0})
+				return nil
+			})
+		}, "Client.Login->ReadDisconnectProviderUltimatum", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var got sec.ClientInfo
+			nc := run(t, trusted.server, func(f *fake) {
+				f.joined()
+				r := wire.NewReader(f.read())
+				if err := x224.ReadDataHeader(&r); err != nil {
+					t.Error(err)
+				}
+				d, err := mcs.ReadSendDataRequest(&r)
+				if err != nil {
+					t.Error(err)
+				}
+				if d.Initiator != 1006 || d.ChannelID != 1003 {
+					t.Errorf("Client Info from %d on %d", d.Initiator, d.ChannelID)
+				}
+				if got, err = sec.ParseClientInfo(d.Data); err != nil {
+					t.Error(err)
+				}
+				tt.script(f)
+			})
+			c, err := Connect(ctx, nc, Options{TLSConfig: trusted.client, User: "u", Domain: "d", Password: "pw",
+				EditClientInfo: func(ci *sec.ClientInfo) { ci.WorkingDir = "w" }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = c.Login(ctx)
+			if tt.route == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				assertRoute(t, err, tt.route)
+				appErr, _ := errors.FromError(err)
+				for k, v := range tt.meta {
+					if appErr.Metadata[k] != v {
+						t.Errorf("%s = %v (%T), want %v (%T)", k, appErr.Metadata[k], appErr.Metadata[k], v, v)
+					}
+				}
+			}
+			if got.UserName != "u" || got.Domain != "d" || got.Password != "pw" || got.WorkingDir != "w" || got.Flags&sec.InfoUnicode == 0 {
+				t.Errorf("Client Info %+v", got)
+			}
+		})
 	}
 }

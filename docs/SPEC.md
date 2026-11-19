@@ -133,8 +133,8 @@ The library implements the server side of these Microsoft Open Specifications. E
    The DomainParameters' integers are read as unsigned, so an INTEGER whose top bit is set is not taken as negative: Microsoft's own Connect-Initial example writes maxMCSPDUsize 65535 as `02 02 ff ff`, which strict BER reads as -1. The server writes its own integers in strict BER (65535 as `02 03 00 ff ff`).
    Whatever the client proposes, the server answers with the domain parameters of Microsoft's Connect-Response (34 channel IDs, 3 user IDs, 0 token IDs, 1 priority, throughput 0, height 1, PDUs up to 65528 bytes, protocol version 2); RDP relies on none of them beyond what they allow. Channel IDs follow Microsoft's example too: the I/O channel is 1003, the static channels the client lists get 1004 onwards in its order, and the user ID comes after them. The X.224 Connection Confirm says EXTENDED_CLIENT_DATA_SUPPORTED. A client core block whose serverSelectedProtocol is not TLS ends the connection: it is what a downgrade between the two steps would leave.
 4. **MCS Erect Domain, Attach User, Channel Joins.** The client joins its user channel, the I/O channel and every static channel; a channel the server did not hand out is refused with rt-no-such-channel, and a join from another user ID ends the connection. The server does not offer to skip the joins.
-5. **Client Info**: user name, password, time zone, flags. The login of §8.2 happens here.
-6. **Licensing**: the server sends the "valid client" status. There is no license server.
+5. **Client Info**: user name, password, time zone, flags, sent by the user ID on the I/O channel with a Basic Security Header that says SEC_INFO_PKT (a header that says SEC_ENCRYPT is refused: TLS is the only security). The login of §8.2 happens here. A client with no user name or no password, or one whose password is a smart card PIN, fails the login without the Authenticator being asked.
+6. **Licensing**: the server sends the "valid client" status (STATUS_VALID_CLIENT, ST_NO_TRANSITION, an empty error blob, as in MS-RDPBCGR 4.1.11) from user 1002 on the I/O channel. There is no license server. From here the connection no longer counts among those not logged in and the login deadline no longer applies.
 7. **Demand Active / Confirm Active**: capabilities (§5.2).
 8. **Synchronize, Control, Font List / Font Map.** After Font Map the session is open and the library calls the app (§6).
 
@@ -155,7 +155,7 @@ Input events (fast-path, and the slow-path form too), Suppress Output (the clien
 
 ### 5.4 Ending a session
 
-The server ends a session with Set Error Info (the reason) and an MCS Disconnect Provider Ultimatum: logged out by the app's user, replaced by another client (D13), server stopped, login failed. A connection that goes silent is closed by TCP keep-alive (15 s idle, 5 s interval, 3 probes).
+The server ends a session with Set Error Info (the reason) and an MCS Disconnect Provider Ultimatum: logged out by the app's user, replaced by another client (D13), server stopped, login failed. Set Error Info is sent only to a client whose core data says it supports it (RNS_UD_CS_SUPPORT_ERRINFO_PDU); the ultimatum's reason is rn-provider-initiated. A failed login sends ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED (0x0A), see §20. A connection that goes silent is closed by TCP keep-alive (15 s idle, 5 s interval, 3 probes).
 
 ## 6. The library's API
 
@@ -213,7 +213,7 @@ macOS ties these permissions to the app's code signature. A build that is signed
 
 - One user name and one password, set in the app. There is no default password, and the server does not start until one is set (at least 8 characters).
 - The password is stored as a PBKDF2-HMAC-SHA256 hash with a random salt (`crypto/pbkdf2` of the standard library), never in clear text, never in a log.
-- The client sends the user name and password in Client Info, inside TLS. The comparison takes constant time. A client that sends none, or wrong ones, gets the logon-failure error and is disconnected, so Remmina asks again.
+- The client sends the user name and password in Client Info, inside TLS. The comparison takes constant time. A client that sends none, or wrong ones, gets the logon-failure error (ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED, §5.4 and §20) and is disconnected, so Remmina asks again. The library's `Authenticator` gets the user name, the domain, the password and the client's address, so the app can make an address wait (below).
 - After 5 failed logins from one address, that address waits: 1 minute, doubling to at most 1 hour. Failed logins are shown in the window and as a notification.
 - When NLA is added (after 1.0), the stored form of the password changes, because NTLM needs the NT hash; that is decided then (D12).
 
@@ -463,4 +463,8 @@ Other risks, without a check of their own:
 
 ## 20. Open decisions
 
-None. The ten questions of the first draft were answered by the owner on 2026-11-19 and are D12, D14 and D16 to D23 of §3. A new question is added here with a recommendation, and moves into §3 when it is answered.
+The ten questions of the first draft were answered by the owner on 2026-11-19 and are D12, D14 and D16 to D23 of §3. A new question is added here with a recommendation, and moves into §3 when it is answered.
+
+| # | Question | Recommendation, and what is built until it is answered |
+|---|---|---|
+| Q1 | Which Set Error Info code does a failed login send? MS-RDPBCGR 2.2.5.1.1 has no "logon failure" code; §8.2 only says Remmina should ask again | ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED (0x0A, "the server requires that the user enter their credentials"), followed by the Disconnect Provider Ultimatum. Built so in step 1.6; step 1.13 checks what FreeRDP and Remmina do with it (`docs/INTEROP.md`), and the answer moves here into §3 or changes the code |

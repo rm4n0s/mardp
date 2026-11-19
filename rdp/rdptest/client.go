@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"io"
 	"net"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/rm4n0s/mardp/rdp/internal/gcc"
 	"github.com/rm4n0s/mardp/rdp/internal/mcs"
+	"github.com/rm4n0s/mardp/rdp/internal/sec"
 	"github.com/rm4n0s/mardp/rdp/internal/tpkt"
 	"github.com/rm4n0s/mardp/rdp/internal/wire"
 	"github.com/rm4n0s/mardp/rdp/internal/x224"
@@ -47,6 +49,12 @@ const (
 	// TagJoinRefused: a Channel Join Confirm without success for a channel
 	// the server handed out.
 	TagJoinRefused = "ClientJoinRefused"
+	// TagLoginRefused: the server answered Client Info with a Disconnect
+	// Provider Ultimatum; the metadata has its reason and the Set Error
+	// Info code before it ("errorInfo", 0 when there was none).
+	TagLoginRefused = "ClientLoginRefused"
+	// TagLicenseInvalid: a license error message other than "valid client".
+	TagLicenseInvalid = "ClientLicenseInvalid"
 )
 
 // What a Client sends when its Options leave a field empty: what FreeRDP and
@@ -82,6 +90,10 @@ type Options struct {
 	// Channels are the static channels asked for; nil means
 	// DefaultChannels, and an empty slice none.
 	Channels []string
+	// User, Domain and Password are what Client Info logs in with.
+	User, Domain, Password string
+	// EditClientInfo changes Client Info before it is sent.
+	EditClientInfo func(ci *sec.ClientInfo)
 	// EditClientData changes the client's data blocks before they are
 	// sent, to test what the server makes of them.
 	EditClientData func(cd *gcc.ClientData)
@@ -522,4 +534,85 @@ func (c *Client) JoinAll(ctx context.Context) error {
 		c.Joined = append(c.Joined, id)
 	}
 	return nil
+}
+
+// ClientInfo is the Client Info the client sends before
+// Options.EditClientInfo changes it: Unicode strings, automatic logon with
+// the Options' credentials, and the extended part with a time zone, as
+// FreeRDP sends.
+func (c *Client) ClientInfo() sec.ClientInfo {
+	return sec.ClientInfo{
+		CodePage:      0,
+		Flags:         sec.InfoMouse | sec.InfoUnicode | sec.InfoAutologon | sec.InfoLogonErrors | sec.InfoMouseHasWheel | sec.InfoDisableCtrlAltDel,
+		Domain:        c.opts.Domain,
+		UserName:      c.opts.User,
+		Password:      sec.Secret(c.opts.Password),
+		Extended:      true,
+		AddressFamily: sec.AFInet,
+		Address:       "127.0.0.1",
+		Dir:           "C:\\Windows\\System32\\mstscax.dll",
+		Optional:      sec.OptPerformanceFlags,
+		TimeZone: sec.TimeZone{
+			StandardName: "UTC", DaylightName: "UTC",
+		},
+		PerformanceFlags: 0x80, // TS_PERF_ENABLE_FONT_SMOOTHING
+	}
+}
+
+// Login sends Client Info on the I/O channel and reads the answer: the
+// license "valid client", or Set Error Info and a Disconnect Provider
+// Ultimatum, which it returns as TagLoginRefused.
+func (c *Client) Login(ctx context.Context) error {
+	stop, err := c.watch(ctx)
+	if err != nil {
+		return err
+	}
+	defer stop()
+	ci := c.ClientInfo()
+	if c.opts.EditClientInfo != nil {
+		c.opts.EditClientInfo(&ci)
+	}
+	var iw wire.Writer
+	if err := sec.WriteClientInfo(&iw, &ci); err != nil {
+		return err
+	}
+	if err := c.sendData(func(w *wire.Writer) error {
+		return mcs.WriteSendDataRequest(w, &mcs.SendData{
+			Initiator: c.UserID, ChannelID: c.Server.Network.MCSChannelID,
+			Priority: mcs.PriorityHigh, Segmentation: mcs.SegmentationWhole, Data: iw.Bytes(),
+		})
+	}); err != nil {
+		return err
+	}
+	var errorInfo uint32
+	for {
+		r, err := c.readData()
+		if err != nil {
+			return err
+		}
+		if b := r.Rest(); len(b) > 0 && mcs.Choice(b[0]) == mcs.ChoiceDisconnectProviderUltimatum {
+			reason, err := mcs.ReadDisconnectProviderUltimatum(&r)
+			if err != nil {
+				return err
+			}
+			return errors.New(TagLoginRefused, "the server disconnected after Client Info", "reason", reason, "errorInfo", errorInfo)
+		}
+		d, err := mcs.ReadSendDataIndication(&r)
+		if err != nil {
+			return err
+		}
+		if len(d.Data) >= 2 && binary.LittleEndian.Uint16(d.Data)&sec.FlagLicensePkt != 0 {
+			l, err := sec.ParseLicenseError(d.Data)
+			if err != nil {
+				return err
+			}
+			if l.ErrorCode != sec.LicenseStatusValidClient || l.StateTransition != sec.LicenseNoTransition {
+				return errors.New(TagLicenseInvalid, "a license error other than valid client", "code", l.ErrorCode, "transition", l.StateTransition)
+			}
+			return nil
+		}
+		if _, errorInfo, err = sec.ParseSetErrorInfo(d.Data); err != nil {
+			return err
+		}
+	}
 }

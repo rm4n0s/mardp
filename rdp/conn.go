@@ -69,6 +69,7 @@ type conn struct {
 	release func()        // gives back the place among connections not logged in
 	buf     []byte        // the frame being read
 	w       wire.Writer   // the frame being written
+	pdu     wire.Writer   // the PDU a Send Data Indication carries
 
 	requested uint32 // the protocols the client offered
 	// blocks holds a copy of the client's data blocks, which client points
@@ -92,6 +93,7 @@ func (s *Server) serveConn(ctx context.Context, nc net.Conn, log *slog.Logger, r
 		release: release,
 		buf:     make([]byte, tpkt.MaxLength),
 		w:       wire.NewWriter(make([]byte, 0, 1024)),
+		pdu:     wire.NewWriter(make([]byte, 0, 256)),
 	}
 	if err := nc.SetDeadline(time.Now().Add(s.loginTimeout)); err != nil {
 		return errors.NewErr(TagDeadlineFailed, err)
@@ -117,7 +119,10 @@ func (s *Server) serveConn(ctx context.Context, nc net.Conn, log *slog.Logger, r
 	if err := c.joinChannels(); err != nil {
 		return err
 	}
-	return c.awaitLogin()
+	if err := c.login(s.auth); err != nil {
+		return err
+	}
+	return c.awaitSession()
 }
 
 // send writes one TPKT whose contents body appends.
@@ -356,10 +361,10 @@ func (c *conn) channelIndex(id uint16) int {
 	return -1
 }
 
-// awaitLogin waits for the client's next PDUs. Login (SPEC §5.1 step 5)
-// comes in step 1.6; until then the connection is held until the login
-// deadline closes it, and what the client sends is read and dropped.
-func (c *conn) awaitLogin() error {
+// awaitSession holds a logged-in connection until the client or the server
+// ends it. The capability exchange and the session come in step 1.7; until
+// then what the client sends is read and dropped.
+func (c *conn) awaitSession() error {
 	for {
 		if _, _, err := tpkt.ReadFrame(c.rw, c.buf); err != nil {
 			return err

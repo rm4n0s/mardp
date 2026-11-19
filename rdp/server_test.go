@@ -3,12 +3,14 @@ package rdp
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/rm4n0s/mardp/rdp/internal/gcc"
 	"github.com/rm4n0s/mardp/rdp/internal/mcs"
+	"github.com/rm4n0s/mardp/rdp/internal/sec"
 	"github.com/rm4n0s/mardp/rdp/internal/tpkt"
 	"github.com/rm4n0s/mardp/rdp/internal/wire"
 	"github.com/rm4n0s/mardp/rdp/internal/x224"
@@ -33,6 +36,12 @@ func assertRoute(t *testing.T, err error, route string) {
 		t.Errorf("unexpected failure path: %s, want %s", appErr.Route(), route)
 	}
 }
+
+// The credentials the test servers accept.
+const (
+	testUser     = "alice"
+	testPassword = "correct horse battery staple"
+)
 
 // testCert is made once: an RSA key takes a while.
 var testCert = sync.OnceValues(func() (certPair, error) {
@@ -117,6 +126,9 @@ func start(t *testing.T, cfg Config) *testServer {
 	rec := &recorder{}
 	cfg.Certificate = p.server
 	cfg.Logger = slog.New(rec)
+	if cfg.Authenticator == nil {
+		cfg.Authenticator = StaticAuthenticator(testUser, testPassword)
+	}
 	s, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -162,6 +174,51 @@ func (ts *testServer) connect(t *testing.T, opts rdptest.Options) (*rdptest.Clie
 	defer cancel()
 	opts.TLSConfig = ts.cfg
 	return rdptest.Connect(ctx, ts.dial(t), opts)
+}
+
+// login connects and logs in with opts' credentials, testUser and
+// testPassword when it has none.
+func (ts *testServer) login(t *testing.T, opts rdptest.Options) (*rdptest.Client, net.Conn, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if opts.User == "" && opts.Password == "" {
+		opts.User, opts.Password = testUser, testPassword
+	}
+	opts.TLSConfig = ts.cfg
+	nc := ts.dial(t)
+	c, err := rdptest.Connect(ctx, nc, opts)
+	if err != nil {
+		return c, nc, err
+	}
+	return c, nc, c.Login(ctx)
+}
+
+// text renders every record as JSON, as a real log would hold them.
+func (r *recorder) text(t *testing.T) string {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var buf strings.Builder
+	h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	for _, rec := range r.records {
+		if err := h.Handle(context.Background(), rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return buf.String()
+}
+
+// stillOpen checks that the server has not closed nc after d.
+func stillOpen(t *testing.T, nc net.Conn, d time.Duration) {
+	t.Helper()
+	if err := nc.SetReadDeadline(time.Now().Add(d)); err != nil {
+		t.Fatal(err)
+	}
+	var b [1]byte
+	if _, err := nc.Read(b[:]); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("connection closed: %v", err)
+	}
 }
 
 // closedWithin checks that the server closes nc within d.
@@ -382,7 +439,7 @@ func TestLoginTimeout(t *testing.T) {
 
 func TestServeStops(t *testing.T) {
 	p := certs(t)
-	s, err := NewServer(Config{Certificate: p.server})
+	s, err := NewServer(Config{Certificate: p.server, Authenticator: StaticAuthenticator(testUser, testPassword)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,6 +482,20 @@ type failingListener struct{ net.Listener }
 
 func (failingListener) Accept() (net.Conn, error) { return nil, io.ErrClosedPipe }
 
+// oneDeadline is a connection on which only the first SetDeadline works.
+type oneDeadline struct {
+	net.Conn
+	calls int
+}
+
+func (o *oneDeadline) SetDeadline(t time.Time) error {
+	o.calls++
+	if o.calls > 1 {
+		return io.ErrClosedPipe
+	}
+	return o.Conn.SetDeadline(t)
+}
+
 // tcpPair returns both ends of a TCP connection on 127.0.0.1.
 func tcpPair(t *testing.T) (client, server net.Conn) {
 	t.Helper()
@@ -456,13 +527,13 @@ func tcpPair(t *testing.T) (client, server net.Conn) {
 
 func TestErrors(t *testing.T) {
 	p := certs(t)
-	s, err := NewServer(Config{Certificate: p.server})
+	s, err := NewServer(Config{Certificate: p.server, Authenticator: StaticAuthenticator(testUser, testPassword)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	upTo := func(n int) func(ctx context.Context, c *rdptest.Client) error {
 		return func(ctx context.Context, c *rdptest.Client) error {
-			for _, step := range []func(context.Context) error{c.Negotiate, c.StartTLS, c.ConnectMCS, c.Attach, c.JoinAll}[:n] {
+			for _, step := range []func(context.Context) error{c.Negotiate, c.StartTLS, c.ConnectMCS, c.Attach, c.JoinAll, c.Login}[:n] {
 				if err := step(ctx); err != nil {
 					return err
 				}
@@ -506,6 +577,19 @@ func TestErrors(t *testing.T) {
 			"Server.serveConn->conn.connectMCS->conn.readData->ReadDataHeader." + x224.TagUnexpectedCode},
 		{"attach before erect domain", rdptest.Options{}, then(upTo(3), data(func(w *wire.Writer) error { mcs.WriteAttachUserRequest(w); return nil })),
 			"Server.serveConn->conn.attachUser->ReadErectDomainRequest." + mcs.TagUnexpectedPDU},
+		{"wrong password", rdptest.Options{User: testUser, Password: "wrong"}, upTo(6), "Server.serveConn->conn.login." + TagLoginFailed},
+		{"client info on a static channel", rdptest.Options{}, then(upTo(5), data(func(w *wire.Writer) error {
+			return mcs.WriteSendDataRequest(w, &mcs.SendData{Initiator: ioChannelID + 3, ChannelID: ioChannelID + 1, Data: []byte{0x40, 0, 0, 0}})
+		})), "Server.serveConn->conn.login." + TagChannelInvalid},
+		{"client info from another user", rdptest.Options{}, then(upTo(5), data(func(w *wire.Writer) error {
+			return mcs.WriteSendDataRequest(w, &mcs.SendData{Initiator: ioChannelID + 4, ChannelID: ioChannelID, Data: []byte{0x40, 0, 0, 0}})
+		})), "Server.serveConn->conn.login." + TagChannelInvalid},
+		{"client info encrypted", rdptest.Options{}, then(upTo(5), data(func(w *wire.Writer) error {
+			return mcs.WriteSendDataRequest(w, &mcs.SendData{Initiator: ioChannelID + 3, ChannelID: ioChannelID, Data: []byte{0x48, 0, 0, 0}})
+		})), "Server.serveConn->conn.login->ParseClientInfo->readHeader." + sec.TagEncrypted},
+		{"join request instead of client info", rdptest.Options{}, then(upTo(5), data(func(w *wire.Writer) error {
+			return mcs.WriteChannelJoinRequest(w, &mcs.ChannelJoinRequest{Initiator: ioChannelID + 3, ChannelID: ioChannelID})
+		})), "Server.serveConn->conn.login->ReadSendDataRequest->readSendData." + mcs.TagUnexpectedPDU},
 		{"connection request cut", rdptest.Options{}, then(raw(3, 0, 0, 20, 14, 0xe0), func(_ context.Context, c *rdptest.Client) error { return c.CloseWrite() }),
 			"Server.serveConn->conn.negotiate->conn.readTPKT->ReadFrame." + tpkt.TagReadFailed},
 	}
@@ -564,8 +648,24 @@ func TestErrors(t *testing.T) {
 		assertRoute(t, s.serveConn(context.Background(), sc, s.log, func() {}), "Server.serveConn."+TagDeadlineFailed)
 	})
 	t.Run("no certificate", func(t *testing.T) {
-		_, err := NewServer(Config{})
+		_, err := NewServer(Config{Authenticator: StaticAuthenticator("u", "p")})
 		assertRoute(t, err, "NewServer."+TagCertificateMissing)
+	})
+	t.Run("no authenticator", func(t *testing.T) {
+		_, err := NewServer(Config{Certificate: p.server})
+		assertRoute(t, err, "NewServer."+TagAuthenticatorMissing)
+	})
+	t.Run("deadline cannot be cleared", func(t *testing.T) {
+		cc, sc := tcpPair(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- s.serveConn(ctx, &oneDeadline{Conn: sc}, s.log, func() {}) }()
+		c := rdptest.New(cc, rdptest.Options{TLSConfig: p.client, User: testUser, Password: testPassword})
+		if err := upTo(6)(ctx, c); err != nil {
+			t.Logf("client: %v", err)
+		}
+		assertRoute(t, <-done, "Server.serveConn->conn.login."+TagClearDeadlineFailed)
 	})
 	t.Run("accept fails", func(t *testing.T) {
 		l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -583,4 +683,104 @@ func TestErrors(t *testing.T) {
 			t.Errorf("cause %v", err)
 		}
 	})
+}
+
+func TestLogin(t *testing.T) {
+	const timeout = 300 * time.Millisecond
+	ts := start(t, Config{LoginTimeout: timeout})
+	const wrong = "a wrong password, never logged"
+	tests := []struct {
+		name      string
+		opts      rdptest.Options
+		reason    string // "" for a login
+		errorInfo uint32
+	}{
+		{"right password", rdptest.Options{}, "", 0},
+		{"wrong password", rdptest.Options{User: testUser, Password: wrong}, reasonWrongCredentials, sec.ErrInfoFreshCredentialsRequired},
+		{"wrong user", rdptest.Options{User: "bob", Password: testPassword}, reasonWrongCredentials, sec.ErrInfoFreshCredentialsRequired},
+		{"no password", rdptest.Options{User: testUser}, reasonNoCredentials, sec.ErrInfoFreshCredentialsRequired},
+		{"no user", rdptest.Options{Password: wrong}, reasonNoCredentials, sec.ErrInfoFreshCredentialsRequired},
+		{"smart card PIN", rdptest.Options{EditClientInfo: func(ci *sec.ClientInfo) { ci.Flags |= sec.InfoPasswordIsSCPin }},
+			reasonSmartCard, sec.ErrInfoFreshCredentialsRequired},
+		{"ANSI strings", rdptest.Options{EditClientInfo: func(ci *sec.ClientInfo) { ci.Flags &^= sec.InfoUnicode }}, "", 0},
+		{"no Set Error Info support", rdptest.Options{User: testUser, Password: wrong,
+			EditClientData: func(cd *gcc.ClientData) { cd.Core.EarlyCapabilityFlags &^= gcc.EarlySupportErrInfoPDU }}, reasonWrongCredentials, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, nc, err := ts.login(t, tt.opts)
+			if tt.reason == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				// The login deadline no longer applies.
+				stillOpen(t, nc, 2*timeout)
+				return
+			}
+			assertRoute(t, err, "Client.Login."+rdptest.TagLoginRefused)
+			appErr, _ := errors.FromError(err)
+			if appErr.Metadata["errorInfo"] != tt.errorInfo || appErr.Metadata["reason"] != mcs.ReasonProviderInitiated {
+				t.Errorf("refused with %v", appErr.Metadata)
+			}
+			closedWithin(t, nc, 2*time.Second)
+		})
+	}
+	ts.log.find(t, "logged in")
+	rec := ts.log.find(t, "login failed")
+	err, _ := attr(rec, "err").Any().(error)
+	assertRoute(t, err, "Server.serveConn->conn.login."+TagLoginFailed)
+	ts.log.find(t, "client info")
+	log := ts.log.text(t)
+	for _, pw := range []string{testPassword, wrong} {
+		if strings.Contains(log, pw) {
+			t.Errorf("the log holds the password %q", pw)
+		}
+	}
+	for _, want := range []string{`"reason":"wrong credentials"`, `"reason":"no credentials"`, `"user":"bob"`, `"password":true`} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the log lacks %s", want)
+		}
+	}
+}
+
+func TestLoggedInLeavesThePendingCount(t *testing.T) {
+	ts := start(t, Config{MaxPending: 2})
+	for i := range 5 {
+		if _, _, err := ts.login(t, rdptest.Options{}); err != nil {
+			t.Fatalf("login %d: %v", i+1, err)
+		}
+	}
+}
+
+func TestLoginRequestHidesThePassword(t *testing.T) {
+	r := LoginRequest{User: "u", Domain: "d", Password: testPassword, Remote: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}}
+	var buf strings.Builder
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("x", "req", r)
+	for _, s := range []string{fmt.Sprint(r), fmt.Sprintf("%+v", r), fmt.Sprintf("%#v", r), buf.String()} {
+		if strings.Contains(s, testPassword) || !strings.Contains(s, "127.0.0.1:9") {
+			t.Errorf("printed as %s", s)
+		}
+	}
+	if (LoginRequest{}).String() != "LoginRequest{User: Domain: Remote:}" {
+		t.Errorf("empty request %s", LoginRequest{})
+	}
+}
+
+func TestStaticAuthenticator(t *testing.T) {
+	auth := StaticAuthenticator("u", "pw")
+	tests := []struct {
+		user, password string
+		want           bool
+	}{
+		{"u", "pw", true},
+		{"u", "pw2", false},
+		{"u", "", false},
+		{"U", "pw", false},
+		{"", "", false},
+	}
+	for _, tt := range tests {
+		if got := auth(LoginRequest{User: tt.user, Password: tt.password}); got != tt.want {
+			t.Errorf("%q %q: %v", tt.user, tt.password, got)
+		}
+	}
 }

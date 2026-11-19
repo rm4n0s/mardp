@@ -23,6 +23,8 @@ import (
 const (
 	// TagCertificateMissing: a Config without a TLS certificate.
 	TagCertificateMissing = "ServerCertificateMissing"
+	// TagAuthenticatorMissing: a Config without an Authenticator.
+	TagAuthenticatorMissing = "ServerAuthenticatorMissing"
 	// TagAcceptFailed: the listener failed for another reason than the
 	// server being stopped; the cause is kept.
 	TagAcceptFailed = "ServerAcceptFailed"
@@ -38,6 +40,8 @@ const (
 type Config struct {
 	// Certificate is the server's TLS certificate and key (SPEC §8.1).
 	Certificate tls.Certificate
+	// Authenticator decides who may log in (SPEC §8.2). It is required.
+	Authenticator Authenticator
 	// Logger receives the server's log. Nil discards it.
 	Logger *slog.Logger
 	// MaxPending is how many connections may be open before they log in;
@@ -53,6 +57,7 @@ type Config struct {
 // Server is an RDP server. Make one with NewServer and run it with Serve.
 type Server struct {
 	tls          *tls.Config
+	auth         Authenticator
 	log          *slog.Logger
 	maxPending   int
 	loginTimeout time.Duration
@@ -63,11 +68,15 @@ func NewServer(cfg Config) (*Server, error) {
 	if len(cfg.Certificate.Certificate) == 0 || cfg.Certificate.PrivateKey == nil {
 		return nil, errors.New(TagCertificateMissing, "the server needs a TLS certificate and its key")
 	}
+	if cfg.Authenticator == nil {
+		return nil, errors.New(TagAuthenticatorMissing, "the server needs an Authenticator")
+	}
 	s := &Server{
 		tls: &tls.Config{
 			Certificates: []tls.Certificate{cfg.Certificate},
 			MinVersion:   tls.VersionTLS12,
 		},
+		auth:         cfg.Authenticator,
 		log:          cfg.Logger,
 		maxPending:   cfg.MaxPending,
 		loginTimeout: cfg.LoginTimeout,
@@ -144,9 +153,17 @@ func (s *Server) handle(ctx context.Context, nc net.Conn, log *slog.Logger, rele
 		log.Info("connection closed: the server stopped")
 	case errors.Is(err, io.EOF):
 		log.Info("connection closed by the client", "err", err)
+	case hasTag(err, TagLoginFailed):
+		log.Warn("login failed", "err", err)
 	case errors.Is(err, os.ErrDeadlineExceeded):
 		log.Info("connection closed: no login in time", "timeout", s.loginTimeout, "err", err)
 	default:
 		log.Warn("connection ended", "err", err)
 	}
+}
+
+// hasTag says whether err is an *errors.Error with tag.
+func hasTag(err error, tag string) bool {
+	appErr, ok := errors.FromError(err)
+	return ok && appErr.Tag == tag
 }
