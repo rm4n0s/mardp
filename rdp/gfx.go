@@ -371,20 +371,25 @@ type Backlog struct {
 	Frames int
 	// Oldest is how long ago the oldest of them was sent.
 	Oldest time.Duration
+	// Queued is the number of packets of the session's video queue not yet
+	// written to the connection, on every path.
+	Queued int
 }
 
 // Backlog returns the frames sent through the graphics pipeline that the
-// client has not acknowledged. It is zero on the bitmap path, which has no
+// client has not acknowledged, and the video still in the session's queue.
+// Frames and Oldest are zero on the bitmap path, which has no
 // acknowledgements, and while the client has suspended them.
 func (v *Video) Backlog() Backlog {
+	b := Backlog{Queued: v.s.wr.pending(queueVideo)}
 	g := v.s.gfx
 	if g == nil {
-		return Backlog{}
+		return b
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if len(g.unacked) == 0 {
-		return Backlog{}
+	if len(g.unacked) > 0 {
+		b.Frames, b.Oldest = len(g.unacked), g.now().Sub(g.unacked[0].at)
 	}
-	return Backlog{Frames: len(g.unacked), Oldest: g.now().Sub(g.unacked[0].at)}
+	return b
 }

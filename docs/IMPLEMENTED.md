@@ -489,3 +489,25 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - The still-screen proof captures the test's own window alone. The owner's display changed all the time during the runs (something redrew one small area about 60 times in 3 s). A display filter that includes only the test window still reported those changes as dirty rectangles, so only a window filter shows a still picture. The same change made TestMacStillScreen pass on a busy screen.
   - "Nothing" is at most one or two frames: ScreenCaptureKit sends the odd frame of an unchanged window.
 - **Manual checks:** none.
+
+## 3.8 Flow and rate control (2026-11-19)
+- **Built:**
+  - `rdp`: `Backlog.Queued`, the packets of the video queue the writer has not written yet, on every path.
+  - `rdp/rdptest`: `AVC420Caps`, `PlanarCaps` and `ReadGFXFrame` (one GFX frame's H.264 and tiles; tag `PDUUnexpected` for a PDU outside a frame).
+  - `internal/host`:
+    - `VideoSource` (`CaptureVideo(ctx, VideoConfig, started, frame)`), `VideoConfig`, `EncodedFrame`, and `Parts.Video`.
+    - The H.264 path (`avcPath`): skip before encoding (more than 2 frames unacknowledged, or video waiting in the queue at a tick), the bitrate rule (a quarter down, a sixteenth up, once a second; 8 Mbit/s to start, 1 to `Options.MaxBitrate`, default 20), key frames on Refresh Rect, on resume and after a frame lost to a full queue, skipping while output is suppressed.
+    - The frame-rate cap: `Options.VideoFPS` (default and most 60), passed to the capture.
+    - The session switches between the H.264 path and the bitmap paths whenever `Video.Path()` changes (`flowSwitch`), with a new capture each time, and logs "video path".
+    - `PatternVideo`, a fake video source whose frames carry their number and the time they were made, and whose size follows the bitrate.
+  - SPEC §6 (`Queued`), §9.4 (`VideoFPS`) and §9.5 (the numbers).
+- **Proved:**
+  - The bitrate rule as a table; the H.264 path with a fake session and encoder (skips, the skip lasting a frame's time, key frames, errors, suppression, the end of the path); the switch's hand-over of a suppressed state.
+  - TestSessionH264, a whole session with `rdptest` and `PatternVideo`: about 60 frames a second at full speed while the bitrate rises; with a client that acknowledges a frame each 50 ms the oldest frame on its way stays at 101 ms (limit 200), 60 frames are skipped before encoding, and the bitrate falls a quarter at a time; at full speed again it recovers; a Refresh Rect brings a key frame within 10 frames; while suppressed the encoder skips, and the resume brings a key frame within 5.
+  - TestSessionPathSwitch: no capture before the graphics pipeline; a key frame first on AVC420 with the cap of 30 fps and the bitrate bounded by `MaxBitrate`; tiles after the client re-advertises without H.264.
+  - A failing video source ends the session with its route logged; the options' defaults. All under the race detector, five times over.
+- **Differs from the plan:**
+  - "Sound keeps flowing while video is throttled" is not tested: sound is M4, and 4.3 extends TestSessionH264 with it.
+  - The skip needed `Backlog.Queued` and a ticker beside the check after each send: right after a send the frame just queued is in the queue, so that check counts only unacknowledged frames; and a skip shorter than a frame interval (the writer finishing a frame) does not lower the bitrate.
+  - The real `VideoSource` (capture into vtenc) is wired into the app in 3.9.
+- **Manual checks:** none.

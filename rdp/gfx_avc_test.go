@@ -10,6 +10,7 @@ import (
 
 	"github.com/rm4n0s/mardp/rdp/internal/gfx"
 	"github.com/rm4n0s/mardp/rdp/internal/input"
+	"github.com/rm4n0s/mardp/rdp/internal/wire"
 	"github.com/rm4n0s/mardp/rdp/rdptest"
 )
 
@@ -137,7 +138,7 @@ func TestH264Readvertise(t *testing.T) {
 	}
 	readAVC420(t, ctx, c, g.ChannelID)
 
-	if _, err := c.AdvertiseGFX(ctx, g.ChannelID, []gfx.CapSet{gfx.NewCapSet(gfx.Version107, gfx.FlagAVCDisabled)}); err != nil {
+	if _, err := c.AdvertiseGFX(ctx, g.ChannelID, rdptest.PlanarCaps()); err != nil {
 		t.Fatal(err)
 	}
 	if p := v.Path(); p != VideoPlanar {
@@ -180,4 +181,74 @@ func TestGFXSuppressed(t *testing.T) {
 	if calls, want := sink.wait(t, 3), []string{"suppressed true", "suppressed false", "key frame"}; !reflect.DeepEqual(calls, want) {
 		t.Errorf("calls %q, want %q", calls, want)
 	}
+}
+
+// TestBacklogQueued sends frames faster than the client reads: the
+// backlog counts the packets of the video queue not yet written, and they
+// drain as the client reads.
+func TestBacklogQueued(t *testing.T) {
+	_, c, s, _ := gfxOpen(t)
+	ctx := gfxContext(t)
+	v := s.Video()
+	if b := v.Backlog(); b != (Backlog{}) {
+		t.Errorf("backlog before the pipeline %+v", b)
+	}
+	g, err := c.StartGFX(ctx, []gfx.CapSet{gfx.NewCapSet(gfx.Version104, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rng := rand.New(rand.NewPCG(34, 35))
+	// Four frames of 900 kB fill more than the connection's buffers: the
+	// writer blocks on one and the others wait in the queue.
+	frames := make([][]byte, videoDepth)
+	for i := range frames {
+		frames[i] = annexB(rng, 900_000)
+		if err := v.SendFrame(frames[i], i == 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if b := v.Backlog(); b.Frames != videoDepth || b.Queued == 0 {
+		t.Errorf("backlog while the client does not read %+v", b)
+	}
+	for i := range frames {
+		if _, got := readAVC420(t, ctx, c, g.ChannelID); !bytes.Equal(got, frames[i]) {
+			t.Fatalf("frame %d differs", i)
+		}
+	}
+	waitBacklog(t, v, Backlog{Frames: videoDepth})
+}
+
+// TestReadGFXFrame reads frames with rdptest's ReadGFXFrame: an H.264
+// frame, a frame of tiles, and a PDU outside a frame.
+func TestReadGFXFrame(t *testing.T) {
+	_, c, s, _ := gfxOpen(t)
+	ctx := gfxContext(t)
+	v := s.Video()
+	g, err := c.StartGFX(ctx, rdptest.AVC420Caps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.Confirm.AVC420() {
+		t.Errorf("confirmed %+v", g.Confirm)
+	}
+	rng := rand.New(rand.NewPCG(36, 37))
+	frame := annexB(rng, 5000)
+	if err := v.SendFrame(frame, true); err != nil {
+		t.Fatal(err)
+	}
+	f, err := c.ReadGFXFrame(ctx, g.ChannelID)
+	if err != nil || f.ID != 1 || len(f.H264) != 1 || !bytes.Equal(f.H264[0], frame) || f.Tiles != 0 {
+		t.Fatalf("frame %d, %d H.264, %d tiles, %v", f.ID, len(f.H264), f.Tiles, err)
+	}
+	if err := v.SendRects(testImage(rng, 128, 64), []image.Rectangle{image.Rect(0, 0, 128, 64)}); err != nil {
+		t.Fatal(err)
+	}
+	if f, err = c.ReadGFXFrame(ctx, g.ChannelID); err != nil || f.ID != 2 || len(f.H264) != 0 || f.Tiles != 2 {
+		t.Fatalf("frame %d, %d H.264, %d tiles, %v", f.ID, len(f.H264), f.Tiles, err)
+	}
+	if err := c.SendGFX(ctx, g.ChannelID, func(w *wire.Writer) { gfx.AppendCapsAdvertise(w, rdptest.AVC420Caps()) }); err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.ReadGFXFrame(ctx, g.ChannelID)
+	assertRoute(t, err, "Client.ReadGFXFrame."+rdptest.TagPDUUnexpected)
 }

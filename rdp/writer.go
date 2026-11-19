@@ -116,6 +116,10 @@ func (wr *writer) send(q queue, build func(p *packet) error) error {
 	return nil
 }
 
+// pending is the number of q's packets not back on its free list: queued,
+// being written, or being built.
+func (wr *writer) pending(q queue) int { return cap(wr.free[q]) - len(wr.free[q]) }
+
 // get takes an empty packet from q's free list.
 func (wr *writer) get(q queue) (*packet, error) {
 	select {

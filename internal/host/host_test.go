@@ -92,14 +92,22 @@ func TestNew(t *testing.T) {
 	_, err := New(Parts{}, Options{})
 	assertRoute(t, err, "New."+TagScreenMissing)
 
-	h, err := New(Parts{Screen: &PatternScreen{}}, Options{MaxFPS: -1, MaxHeight: -5})
+	h, err := New(Parts{Screen: &PatternScreen{}}, Options{MaxFPS: -1, MaxHeight: -5, VideoFPS: 120})
 	if err != nil {
 		t.Fatal(err)
 	}
 	o := h.opts
 	if o.MaxFPS != DefaultMaxFPS || o.MaxHeight != 0 || o.DoubleClickTime != DefaultDoubleClickTime ||
-		o.DoubleClickDistance != DefaultDoubleClickDistance || o.now == nil {
+		o.DoubleClickDistance != DefaultDoubleClickDistance || o.now == nil ||
+		o.VideoFPS != DefaultVideoFPS || o.MaxBitrate != DefaultMaxBitrate || o.rateEvery != defaultRateEvery {
 		t.Errorf("defaults: %+v", o)
+	}
+	h, err = New(Parts{Screen: &PatternScreen{}}, Options{VideoFPS: 30, MaxBitrate: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := h.opts; o.VideoFPS != 30 || o.MaxBitrate != MinBitrate {
+		t.Errorf("options: %+v", o)
 	}
 }
 

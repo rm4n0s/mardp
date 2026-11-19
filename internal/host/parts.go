@@ -90,8 +90,9 @@ type ScreenSource interface {
 }
 
 // VideoEncoder controls the H.264 encoder of the H.264 path (SPEC §9.3,
-// §9.5), which M3 adds. Frames do not pass through Go (§4.2): the capture
-// hands them to the encoder, and only the encoded frames come out.
+// §9.5). Frames do not pass through Go (§4.2): the capture hands them to
+// the encoder, and only the encoded frames come out. Its methods may be
+// called from any goroutine.
 type VideoEncoder interface {
 	// SetBitrate sets the target bitrate, without a restart.
 	SetBitrate(bitsPerSecond int) error
@@ -100,6 +101,38 @@ type VideoEncoder interface {
 	// SetSkip makes the encoder skip the frames it gets, or encode them
 	// again.
 	SetSkip(skip bool)
+}
+
+// VideoConfig is what an H.264 capture is asked for.
+type VideoConfig struct {
+	// Width and Height are the session's desktop size, as in
+	// ScreenConfig.
+	Width, Height int
+	// MaxFPS is the most frames a second (SPEC §9.4).
+	MaxFPS int
+	// Bitrate is the encoder's first bitrate, in bits a second.
+	Bitrate int
+}
+
+// EncodedFrame is one H.264 frame.
+type EncodedFrame struct {
+	// Data is the access unit, Annex B; valid only during the call.
+	Data []byte
+	// Key says it is a key frame.
+	Key bool
+}
+
+// VideoSource captures the display into a hardware encoder (SPEC §4.2):
+// pictures go from the capture to the encoder without passing through Go,
+// and only the encoded frames come out.
+type VideoSource interface {
+	// CaptureVideo captures the display at cfg into a new encoder. It
+	// calls started with the encoder's controls before the first frame,
+	// then frame with each encoded frame, one at a time on a goroutine of
+	// the source; frame should return quickly. It returns nil when ctx
+	// ends, or the error that stopped the capture; the encoder is not used
+	// after it returns.
+	CaptureVideo(ctx context.Context, cfg VideoConfig, started func(VideoEncoder), frame func(*EncodedFrame)) error
 }
 
 // SoundBuffer is system sound as it is captured (SPEC §10.1): 48 kHz, two

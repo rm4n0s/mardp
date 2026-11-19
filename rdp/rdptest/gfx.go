@@ -109,3 +109,58 @@ func (c *Client) AdvertiseGFX(ctx context.Context, id uint32, sets []gfx.CapSet)
 func (c *Client) AckFrame(ctx context.Context, id, queueDepth, frameID, total uint32) error {
 	return c.SendGFX(ctx, id, func(w *wire.Writer) { gfx.AppendFrameAcknowledge(w, queueDepth, frameID, total) })
 }
+
+// AVC420Caps are capability sets of a client that decodes H.264: version
+// 8.1 with AVC420 and version 10.7.
+func AVC420Caps() []gfx.CapSet {
+	return []gfx.CapSet{gfx.NewCapSet(gfx.Version81, gfx.FlagAVC420Enabled), gfx.NewCapSet(gfx.Version107, 0)}
+}
+
+// GFXFrame is one frame the server sent on the graphics pipeline.
+type GFXFrame struct {
+	// ID is its frame ID.
+	ID uint32
+	// H264 is the Annex B data of each AVC420 Wire To Surface 1 in it.
+	H264 [][]byte
+	// Tiles counts its other Wire To Surface 1 PDUs.
+	Tiles int
+}
+
+// ReadGFXFrame reads the server's messages on the graphics channel id
+// until a whole frame, Start Frame to End Frame. Another PDU outside a
+// frame, or an End Frame of another frame, fails it with
+// TagPDUUnexpected.
+func (c *Client) ReadGFXFrame(ctx context.Context, id uint32) (GFXFrame, error) {
+	var f GFXFrame
+	in := false
+	for {
+		ps, err := c.ReadGFX(ctx, id)
+		if err != nil {
+			return f, err
+		}
+		for _, p := range ps {
+			switch {
+			case p.Cmd == gfx.CmdStartFrame && !in:
+				in, f.ID = true, p.FrameID
+			case p.Cmd == gfx.CmdEndFrame && in && p.FrameID == f.ID:
+				return f, nil
+			case p.Cmd == gfx.CmdWireToSurface1 && in && p.CodecID == gfx.CodecAVC420:
+				a, err := gfx.ReadAVC420(p.Body)
+				if err != nil {
+					return f, err
+				}
+				f.H264 = append(f.H264, a.Bitstream)
+			case p.Cmd == gfx.CmdWireToSurface1 && in:
+				f.Tiles++
+			default:
+				return f, errors.New(TagPDUUnexpected, "a graphics PDU out of its frame", "cmd", p.Cmd, "inFrame", in)
+			}
+		}
+	}
+}
+
+// PlanarCaps are capability sets of a client that does not decode H.264:
+// version 10.7 with AVC disabled.
+func PlanarCaps() []gfx.CapSet {
+	return []gfx.CapSet{gfx.NewCapSet(gfx.Version107, gfx.FlagAVCDisabled)}
+}

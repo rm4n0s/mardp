@@ -39,12 +39,22 @@ type Parts struct {
 	Pointer PointerSource
 	// System keeps the display awake during a session; nil does not.
 	System System
+	// Video captures the display into the H.264 encoder; nil sends the
+	// picture on the bitmap paths only.
+	Video VideoSource
 }
 
 // Options tune a Host. The zero value is the defaults.
 type Options struct {
-	// MaxFPS is the most frames a second; 0 means DefaultMaxFPS.
+	// MaxFPS is the most frames a second on the bitmap paths; 0 means
+	// DefaultMaxFPS.
 	MaxFPS int
+	// VideoFPS is the most frames a second on the H.264 path (SPEC §9.4):
+	// 0 means DefaultVideoFPS, more is capped to it.
+	VideoFPS int
+	// MaxBitrate is the H.264 path's highest bitrate (SPEC §9.5): 0 means
+	// DefaultMaxBitrate; it is at least MinBitrate.
+	MaxBitrate int
 	// MaxHeight caps the desktop's height (SPEC §9.2); 0 means no cap.
 	MaxHeight int
 	// Logger receives the log; nil discards it.
@@ -57,6 +67,8 @@ type Options struct {
 
 	// now is the clock of the double clicks; nil is time.Now.
 	now func() time.Time
+	// rateEvery is the H.264 path's rate period; 0 is defaultRateEvery.
+	rateEvery time.Duration
 }
 
 // Host runs the sessions of an rdp.Server: it is its rdp.Handler, and its
@@ -76,6 +88,16 @@ func New(parts Parts, opts Options) (*Host, error) {
 	}
 	if opts.MaxFPS <= 0 {
 		opts.MaxFPS = DefaultMaxFPS
+	}
+	if opts.VideoFPS <= 0 || opts.VideoFPS > DefaultVideoFPS {
+		opts.VideoFPS = DefaultVideoFPS
+	}
+	if opts.MaxBitrate <= 0 {
+		opts.MaxBitrate = DefaultMaxBitrate
+	}
+	opts.MaxBitrate = max(opts.MaxBitrate, MinBitrate)
+	if opts.rateEvery <= 0 {
+		opts.rateEvery = defaultRateEvery
 	}
 	if opts.MaxHeight < 0 {
 		opts.MaxHeight = 0
@@ -156,16 +178,12 @@ func (h *Host) SessionOpened(ctx context.Context, s *rdp.Session) {
 		}
 	}
 
-	pic := newBitmapPath(s.Video().SendRects, log, width, height, time.Second/time.Duration(h.opts.MaxFPS))
-	defer pic.stop()
-
 	var poll *pointerPoll
 	if h.parts.Pointer != nil {
 		poll = newPointerPoll(h.parts.Pointer, s.Pointer(), log, h.opts.now)
 		if d.PointWidth > 0 && d.PointHeight > 0 {
 			poll.px, poll.py = float64(width)/float64(d.PointWidth), float64(height)/float64(d.PointHeight)
 		}
-		pic.onFrame = poll.kickNow
 	}
 
 	if h.parts.Input != nil {
@@ -191,14 +209,90 @@ func (h *Host) SessionOpened(ctx context.Context, s *rdp.Session) {
 		}()
 	}
 
-	s.SetFlowSink(pic)
+	p := picture{h: h, s: s, log: log, width: width, height: height, poll: poll,
+		rate: &rateControl{bitrate: min(StartBitrate, h.opts.MaxBitrate), max: h.opts.MaxBitrate}}
+	p.sw.want = p.wantAVC
+	s.SetFlowSink(&p.sw)
 	defer s.SetFlowSink(nil)
-
-	err = h.parts.Screen.Capture(ctx, ScreenConfig{Width: width, Height: height, MaxFPS: h.opts.MaxFPS}, pic.frame)
-	if err != nil && ctx.Err() == nil {
+	if err := p.run(ctx); err != nil && ctx.Err() == nil {
 		log.Error("the capture stopped", "err", err)
 		h.close(ctx, s, log)
 	}
+}
+
+// picture sends a session's picture: on the H.264 path while the session
+// is on it and the host has a video source, on the bitmap path otherwise
+// (SPEC §9.1), switching when the session's path changes.
+type picture struct {
+	h             *Host
+	s             *rdp.Session
+	log           *slog.Logger
+	width, height int
+	poll          *pointerPoll
+	rate          *rateControl
+	sw            flowSwitch
+}
+
+// wantAVC says whether the H.264 path is the one to run.
+func (p *picture) wantAVC() bool {
+	return p.h.parts.Video != nil && p.s.Video().Path() == rdp.VideoAVC420
+}
+
+// run runs a capture of the path to run until ctx ends, or the capture
+// fails, and starts another when the path changes.
+func (p *picture) run(ctx context.Context) error {
+	for {
+		avc := p.wantAVC()
+		rctx, cancel := context.WithCancel(ctx)
+		var err error
+		if avc {
+			err = p.runAVC(rctx, cancel)
+		} else {
+			err = p.runBitmaps(rctx, cancel)
+		}
+		p.sw.set(nil, false, nil)
+		switched := rctx.Err() != nil
+		cancel()
+		if ctx.Err() != nil || (err != nil && !switched) {
+			return err
+		}
+		if err != nil {
+			p.log.Debug("the capture stopped as the path changed", "err", err)
+		}
+		p.log.Info("video path", "path", p.s.Video().Path().String())
+	}
+}
+
+// runBitmaps runs a capture for the bitmap paths.
+func (p *picture) runBitmaps(ctx context.Context, cancel func()) error {
+	h := p.h
+	pic := newBitmapPath(p.s.Video().SendRects, p.log, p.width, p.height, time.Second/time.Duration(h.opts.MaxFPS))
+	defer pic.stop()
+	if p.poll != nil {
+		pic.onFrame = p.poll.kickNow
+	}
+	p.sw.set(pic, false, cancel)
+	return h.parts.Screen.Capture(ctx, ScreenConfig{Width: p.width, Height: p.height, MaxFPS: h.opts.MaxFPS}, pic.frame)
+}
+
+// runAVC runs a capture into the encoder for the H.264 path.
+func (p *picture) runAVC(ctx context.Context, cancel func()) error {
+	h := p.h
+	interval := time.Second / time.Duration(h.opts.VideoFPS)
+	a := &avcPath{out: p.s.Video(), log: p.log, rate: p.rate, stop: cancel, interval: interval}
+	defer a.end()
+	if p.poll != nil {
+		a.onFrame = p.poll.kickNow
+	}
+	p.sw.set(a, true, cancel)
+	cfg := VideoConfig{Width: p.width, Height: p.height, MaxFPS: h.opts.VideoFPS, Bitrate: p.rate.bitrate}
+	// The ticker stops when the capture does, for whatever reason.
+	tctx, stopTicker := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	wg.Go(func() { a.run(tctx, interval/2, h.opts.rateEvery) })
+	defer wg.Wait()
+	defer stopTicker()
+	return h.parts.Video.CaptureVideo(ctx, cfg, a.started, a.frame)
 }
 
 // close ends s because the host cannot go on with it.
