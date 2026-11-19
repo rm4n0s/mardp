@@ -288,7 +288,7 @@ How the rectangles are sent as fast-path Bitmap Updates (MS-RDPBCGR 2.2.9.1.2.1.
 - Each rectangle is cut into tiles of at most 64×63 pixels (4032, so that a tile fits in one Bitmap Data and in one fast-path PDU whatever its compression). Tiles are packed into updates as large as the client's largest fast-path update (§5.2); a client without multifragment updates gets one PDU per update.
 - Each tile is 32 bpp, compressed with RDP 6.0 Planar (MS-RDPEGDI 2.2.2.5.1), lossless: ARGB, color loss level 0, no chroma subsampling. Its planes are run-length encoded when that is smaller, sent plain when that is smaller, and the tile goes uncompressed when even that is not smaller than its pixels.
 - A client that sets `DRAW_ALLOW_SKIP_ALPHA` (`Client.SkipAlpha`) gets no alpha plane; otherwise the alpha plane is 0xFF everywhere, since the screen is opaque.
-- Planar scan lines go bottom-up, as in an uncompressed bitmap; the real client confirms this in step 1.13.
+- Planar scan lines go bottom-up, as in an uncompressed bitmap; FreeRDP decodes them so (step 1.13, `docs/INTEROP.md`).
 
 ## 10. Sound, input, pointer
 
@@ -485,4 +485,4 @@ The ten questions of the first draft were answered by the owner on 2026-11-19 an
 
 | # | Question | Recommendation, and what is built until it is answered |
 |---|---|---|
-| Q1 | Which Set Error Info code does a failed login send? MS-RDPBCGR 2.2.5.1.1 has no "logon failure" code; §8.2 only says Remmina should ask again | ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED (0x0A, "the server requires that the user enter their credentials"), followed by the Disconnect Provider Ultimatum. Built so in step 1.6; step 1.13 checks what FreeRDP and Remmina do with it (`docs/INTEROP.md`), and the answer moves here into §3 or changes the code |
+| Q1 | Which Set Error Info code does a failed login send? MS-RDPBCGR 2.2.5.1.1 has no "logon failure" code; §8.2 only says Remmina should ask again | ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED (0x0A, "the server requires that the user enter their credentials"), followed by the Disconnect Provider Ultimatum. Built so in step 1.6. Step 1.13 found that FreeRDP 3.33 does not set RNS_UD_CS_SUPPORT_ERRINFO_PDU, so it gets the ultimatum alone and reports ERRINFO_RPC_INITIATED_DISCONNECT for a wrong password as for any other ending (`docs/INTEROP.md`). What Remmina shows is the manual check of step 1.13; the answer then moves here into §3 or changes the code |

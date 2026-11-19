@@ -140,6 +140,12 @@ type testServer struct {
 // Serve then returns nil.
 func start(t *testing.T, cfg Config) *testServer {
 	t.Helper()
+	return startAt(t, cfg, "127.0.0.1:0")
+}
+
+// startAt is start listening on addr.
+func startAt(t *testing.T, cfg Config, addr string) *testServer {
+	t.Helper()
 	p := certs(t)
 	rec := &recorder{}
 	cfg.Certificate = p.server
@@ -154,7 +160,7 @@ func start(t *testing.T, cfg Config) *testServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}

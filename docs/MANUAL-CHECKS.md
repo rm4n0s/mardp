@@ -66,3 +66,26 @@ At the Mac (or over Screen Sharing), in the project folder (if `build/m0/Probe.a
    ```
 
 If macOS asks again later whether "mardp probe" (or later "mardp") may record the screen, tell me the date, the exact wording and buttons, and whether a capture or session was running at the time.
+
+## 1.13 Remmina in the test machine's window (SPEC §15.3, §20 Q1)
+
+The test machine's own desktop (Xfce) shows in its UTM window. Nothing here touches your Mac's desktop.
+
+1. Start the machine if it is not running, and open its window in UTM:
+
+   ```bash
+   scripts/vm.sh start
+   ```
+
+2. On the Mac, in the project folder, serve the test pattern for 10 minutes. It prints the address, user and password to use:
+
+   ```bash
+   MARDP_SERVE=10m TMPDIR=$(cd "$TMPDIR" && pwd -P)/ go test -tags mardp_freerdp -run TestServe -v -timeout 15m ./rdp/
+   ```
+
+3. In the machine's window, open Remmina and make an RDP profile with that address and user name.
+4. Connect with a **wrong** password first. Note what Remmina says, and whether it asks for the password again.
+5. Connect with the right password. Expected: eight bars of colour on the top half (white, yellow, cyan, green, magenta, red, blue, dark grey) and colour gradients on the bottom half. Type a few letters, move the mouse and click, then close the connection.
+6. When the 10 minutes are over, stop the machine if you started it (`scripts/vm.sh stop`).
+
+Tell me what Remmina said in step 4, whether step 5 looked as expected, and send me the lines the test printed ("session opened", "session ended; input: …").

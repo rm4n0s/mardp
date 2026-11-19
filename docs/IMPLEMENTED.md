@@ -261,3 +261,20 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - The sweep lives in `rdp`, the one package whose tests can import every parser, rather than in a new helper package. The per-package hostile tests of `input`, `mcs`, `gcc`, `bitmap` and `pointer` stay.
   - SPEC §5.4 (replacement) and §15.4 (the sweep) are updated.
 - **Manual checks:** none.
+
+## 1.13 A real client (2026-11-19)
+- **Built:**
+  - `rdp/freerdp_test.go` (tag `mardp_freerdp`): the library's server listens on the Mac's address in the test machine's network and shows a 1024×768 test pattern whose top and bottom halves differ. The guest runs `xfreerdp` under Xvfb through `scripts/vm.sh sh`, each run under `timeout 60`. The test is skipped with a message when the machine is not running.
+  - `TestServe` (`MARDP_SERVE=<duration>`) serves the pattern for Remmina in the machine's window, the manual check below. `MARDP_FREERDP_LOGS=<folder>` keeps FreeRDP's logs, the screenshot and the server's log.
+  - `docs/INTEROP.md`: what FreeRDP 3.33.1 did that the documents do not say.
+  - `startAt` in `rdp/server_test.go` starts the test server on a given address.
+- **Proved:** `go test -tags mardp_freerdp -run TestFreeRDP ./rdp/` passes against the guest in 12 s:
+  - **password:** one session opens. The screenshot of FreeRDP's window matches the pattern pixel for pixel, so the Planar bottom-up rows are right (SPEC §9.6). Keys a, b and Return typed with xdotool arrive as scancodes 0x1E, 0x30 and 0x1C, down and up. Moves to 300,400 and 100,200 arrive, and so do a left button down and up at 100,200.
+  - **wrong password:** xfreerdp exits nonzero (131), and the server logs "login failed".
+  - **without TLS** (`/sec:rdp`): xfreerdp exits nonzero (133), and the server ends the connection on `conn.negotiate.ConnTLSRequired`.
+  - FreeRDP's log has no warning or error about the server. The server's log has no warning but the two expected ones.
+- **Differs from the plan:**
+  - **SPEC §20 Q1 stays open.** FreeRDP does not set RNS_UD_CS_SUPPORT_ERRINFO_PDU, so for a wrong password it never sees ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED. It reports ERRINFO_RPC_INITIATED_DISCONNECT, as for every ending. The code is unchanged (Set Error Info only to clients that ask for it), and Q1's row records this. What Remmina shows decides the rest; that is the manual check.
+  - **FreeRDP sends each pointer move one event late** under Xvfb with xdotool, so the test makes one more move at the end. The server delivers single moves at once (`TestInput`).
+  - The test checks the screenshot, input and exit status, not the video path or sound format that §15.3 also lists: those paths come in M2 and later milestones, with their own tests.
+- **Manual checks:** pending, see docs/MANUAL-CHECKS.md (Remmina in the machine's window, and what it shows for a wrong password).
