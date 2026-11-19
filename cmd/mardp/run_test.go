@@ -61,7 +61,11 @@ func (s *syncBuffer) String() string {
 
 // fakeMac is a machine of fakes: a test pattern, an input recorder.
 type fakeMac struct {
-	sys      *host.FakeSystem
+	sys *host.FakeSystem
+	// out, when set, is the system's sound output; sound gives the
+	// sessions a tone.
+	out      *host.FakeOutput
+	sound    bool
 	sysErr   error
 	partsErr error
 	noScreen bool
@@ -81,6 +85,12 @@ func (f *fakeMac) system() (host.System, error) {
 	if f.sysErr != nil {
 		return nil, f.sysErr
 	}
+	if f.out != nil {
+		return struct {
+			*host.FakeSystem
+			*host.FakeOutput
+		}{f.sys, f.out}, nil
+	}
 	return f.sys, nil
 }
 
@@ -97,6 +107,9 @@ func (f *fakeMac) parts(sys host.System, _ config.Settings, post bool, _ *slog.L
 	}
 	if post {
 		p.Input = f.in
+	}
+	if f.sound {
+		p.Sound = &host.ToneSource{}
 	}
 	return p, nil
 }
@@ -551,5 +564,67 @@ func TestMac(t *testing.T) {
 		if p.Screen == nil || p.Pointer == nil || p.System == nil || (p.Input != nil) != post {
 			t.Errorf("post %v: parts %+v", post, p)
 		}
+	}
+}
+
+// TestServeMute: the server unmutes the output a mardp that ended left
+// muted, then mutes it while a client gets the sound when it plays on the
+// client only, and leaves it alone when it plays on both (SPEC §10.1).
+func TestServeMute(t *testing.T) {
+	tests := []struct {
+		name  string
+		sound config.Sound
+		muted bool
+	}{
+		{"on the client only", config.SoundClient, true},
+		{"on both", config.SoundBoth, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			h := newHome(t, func(s *config.Settings) { s.Sound = tt.sound })
+			folder, err := config.Open(ctx, h.dir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := newFakeMac(host.ScreenRecording, host.Accessibility)
+			m.out, m.sound = host.NewFakeOutput("Speakers"), true
+			m.out.Mute("Speakers", true)
+			if err := folder.MarkMuted(ctx, "Speakers"); err != nil {
+				t.Fatal(err)
+			}
+			r := start(t, h, m, "-headless")
+			if _, ok, err := folder.MutedMark(ctx); ok || err != nil || m.out.Muted("Speakers") {
+				t.Fatalf("not recovered: marked %v (%v), muted %v", ok, err, m.out.Muted("Speakers"))
+			}
+			c, err := connect(t, h, testUser, testPassword)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Activate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			a, err := c.NegotiateAudio(ctx, rdptest.AudioOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := a.ReadBlock(ctx); err != nil {
+				t.Fatal(err)
+			}
+			for m.out.Muted("Speakers") != tt.muted {
+				if ctx.Err() != nil {
+					t.Fatalf("muted %v, want %v", m.out.Muted("Speakers"), tt.muted)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if uid, _, _ := folder.MutedMark(ctx); tt.muted != (uid == "Speakers") {
+				t.Errorf("marked %q", uid)
+			}
+			r.stop(t)
+			if _, ok, _ := folder.MutedMark(ctx); ok || m.out.Muted("Speakers") {
+				t.Errorf("after the server: marked %v, muted %v", ok, m.out.Muted("Speakers"))
+			}
+		})
 	}
 }

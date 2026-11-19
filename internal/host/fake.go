@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rm4n0s/errors"
+
 	"github.com/rm4n0s/mardp/rdp"
 )
 
@@ -388,4 +390,115 @@ func (s *FakeSystem) Awake() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.awake
+}
+
+// TagFakeOutputUnknown: a FakeOutput has no device of the UID.
+const TagFakeOutputUnknown = "FakeOutputUnknown"
+
+// FakeOutput is an Output of devices that are muted or not; its calls can
+// be made to fail.
+type FakeOutput struct {
+	mu     sync.Mutex
+	def    string
+	muted  map[string]bool
+	fail   map[string]error
+	writes int
+}
+
+// NewFakeOutput makes a FakeOutput of the devices, none muted, whose
+// default is the first.
+func NewFakeOutput(devices ...string) *FakeOutput {
+	o := &FakeOutput{muted: map[string]bool{}, fail: map[string]error{}}
+	for _, d := range devices {
+		o.muted[d] = false
+	}
+	if len(devices) > 0 {
+		o.def = devices[0]
+	}
+	return o
+}
+
+// SetDefault makes uid the default device.
+func (o *FakeOutput) SetDefault(uid string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.def = uid
+}
+
+// Mute sets whether uid is muted, as the owner would.
+func (o *FakeOutput) Mute(uid string, muted bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.muted[uid] = muted
+}
+
+// Remove unplugs the device uid.
+func (o *FakeOutput) Remove(uid string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	delete(o.muted, uid)
+}
+
+// Fail makes the calls of op ("default", "muted" or "set") fail with err;
+// nil makes them work again.
+func (o *FakeOutput) Fail(op string, err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.fail[op] = err
+}
+
+// Muted says whether uid is muted.
+func (o *FakeOutput) Muted(uid string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.muted[uid]
+}
+
+// Writes counts the SetOutputMuted calls that changed a device.
+func (o *FakeOutput) Writes() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.writes
+}
+
+// DefaultOutput implements Output.
+func (o *FakeOutput) DefaultOutput() (string, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if err := o.fail["default"]; err != nil {
+		return "", err
+	}
+	return o.def, nil
+}
+
+// OutputMuted implements Output.
+func (o *FakeOutput) OutputMuted(uid string) (bool, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if err := o.fail["muted"]; err != nil {
+		return false, err
+	}
+	m, ok := o.muted[uid]
+	if !ok {
+		return false, errors.New(TagFakeOutputUnknown, "no such output device", "device", uid)
+	}
+	return m, nil
+}
+
+// SetOutputMuted implements Output.
+func (o *FakeOutput) SetOutputMuted(uid string, muted bool) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if err := o.fail["set"]; err != nil {
+		return err
+	}
+	m, ok := o.muted[uid]
+	if !ok {
+		return errors.New(TagFakeOutputUnknown, "no such output device", "device", uid)
+	}
+	if m != muted {
+		o.writes++
+	}
+	o.muted[uid] = muted
+	return nil
 }

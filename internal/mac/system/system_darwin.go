@@ -203,12 +203,13 @@ func realMacOS() macOS {
 
 // System is macOS.
 type System struct {
-	mac macOS
+	mac   macOS
+	audio coreAudio
 }
 
 // New returns the system.
 func New() (*System, error) {
-	return &System{mac: realMacOS()}, nil
+	return &System{mac: realMacOS(), audio: realCoreAudio()}, nil
 }
 
 // Granted says whether p is granted, without asking.

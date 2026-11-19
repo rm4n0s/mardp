@@ -24,4 +24,9 @@ func TestUnsupported(t *testing.T) {
 	assertRoute(t, err, "System.Displays.SystemUnsupported")
 	_, err = s.KeepAwake()
 	assertRoute(t, err, "System.KeepAwake.SystemUnsupported")
+	_, err = s.DefaultOutput()
+	assertRoute(t, err, "System.DefaultOutput.SystemUnsupported")
+	_, err = s.OutputMuted("x")
+	assertRoute(t, err, "System.OutputMuted.SystemUnsupported")
+	assertRoute(t, s.SetOutputMuted("x", true), "System.SetOutputMuted.SystemUnsupported")
 }

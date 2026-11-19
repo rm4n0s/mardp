@@ -49,6 +49,10 @@ type Parts struct {
 	// takes AAC; nil offers PCM alone. An encoder that implements
 	// io.Closer is closed when the session's sound ends.
 	AAC func() (SoundEncoder, error)
+	// Output is the Mac's sound output, muted while a client gets the
+	// sound, so that it plays on the client only (SPEC §10.1); nil plays
+	// it on both.
+	Output Output
 }
 
 // Options tune a Host. The zero value is the defaults.
@@ -71,6 +75,10 @@ type Options struct {
 	// DefaultDoubleClickDistance.
 	DoubleClickTime     time.Duration
 	DoubleClickDistance float64
+	// MuteMarker keeps which output device the host muted, so that a
+	// mardp that ends without unmuting it unmutes it at its next start
+	// (RecoverOutput); nil keeps no marker.
+	MuteMarker MuteMarker
 
 	// now is the clock of the double clicks; nil is time.Now.
 	now func() time.Time
@@ -88,6 +96,8 @@ type Host struct {
 	open atomic.Int64
 	// video is the video of the session that opened last, while it runs.
 	video atomic.Pointer[rdp.Video]
+	// mute mutes Parts.Output while sessions get the sound.
+	mute muter
 }
 
 // New makes a Host of the parts.
@@ -124,7 +134,8 @@ func New(parts Parts, opts Options) (*Host, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Host{parts: parts, opts: opts, log: log}, nil
+	return &Host{parts: parts, opts: opts, log: log,
+		mute: muter{out: parts.Output, marker: opts.MuteMarker, log: log}}, nil
 }
 
 // DesktopSize decides a session's desktop size (SPEC §9.2): the display's

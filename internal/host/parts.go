@@ -164,6 +164,29 @@ type SoundEncoder interface {
 	Encode(buf *SoundBuffer, packet func(data []byte, t time.Duration)) error
 }
 
+// Output is the Mac's sound output (SPEC §10.1): its devices are named by
+// their Core Audio UID, which stays the same across restarts.
+type Output interface {
+	// DefaultOutput is the UID of the default output device.
+	DefaultOutput() (uid string, err error)
+	// OutputMuted says whether the device uid is muted.
+	OutputMuted(uid string) (bool, error)
+	// SetOutputMuted mutes or unmutes the device uid; its volume is never
+	// touched.
+	SetOutputMuted(uid string, muted bool) error
+}
+
+// MuteMarker keeps, across a crash, which output device the host muted
+// (SPEC §10.1).
+type MuteMarker interface {
+	// MarkMuted records the device uid as muted by mardp.
+	MarkMuted(ctx context.Context, uid string) error
+	// MutedMark is the device recorded, ok unset when there is none.
+	MutedMark(ctx context.Context) (uid string, ok bool, err error)
+	// ClearMuted removes the record.
+	ClearMuted(ctx context.Context) error
+}
+
 // Injector posts the client's input on the Mac (SPEC §10.4, §10.5).
 // Positions are in the display's points. A failure, such as a missing
 // Accessibility permission, is logged by the session and the input dropped.

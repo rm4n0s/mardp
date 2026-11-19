@@ -43,3 +43,18 @@ func (s *System) Displays() ([]host.Display, error) {
 func (s *System) KeepAwake() (func(), error) {
 	return nil, errors.New(TagSystemUnsupported, "mardp's host runs only on macOS")
 }
+
+// DefaultOutput fails.
+func (s *System) DefaultOutput() (string, error) {
+	return "", errors.New(TagSystemUnsupported, "mardp's host runs only on macOS")
+}
+
+// OutputMuted fails.
+func (s *System) OutputMuted(uid string) (bool, error) {
+	return false, errors.New(TagSystemUnsupported, "mardp's host runs only on macOS", "device", uid)
+}
+
+// SetOutputMuted fails.
+func (s *System) SetOutputMuted(uid string, muted bool) error {
+	return errors.New(TagSystemUnsupported, "mardp's host runs only on macOS", "device", uid)
+}

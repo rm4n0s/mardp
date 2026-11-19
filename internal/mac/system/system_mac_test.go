@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rm4n0s/errors"
+
 	"github.com/rm4n0s/mardp/internal/host"
 )
 
@@ -101,4 +103,26 @@ func TestMacKeepAwake(t *testing.T) {
 	if after != before {
 		t.Errorf("%d assertions left after release, %d before", after, before)
 	}
+}
+
+// TestMacOutput reads the default output device and its mute; it never
+// sets the mute (the owner's sound stays as it is).
+func TestMacOutput(t *testing.T) {
+	s, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid, err := s.DefaultOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	muted, err := s.OutputMuted(uid)
+	if e, ok := errors.FromError(err); ok && e.Tag == TagOutputMuteUnsupported {
+		t.Logf("the default output %q has no mute", uid)
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("the default output %q, muted %v", uid, muted)
+	_, err = s.OutputMuted("mardp-no-such-device")
+	assertRoute(t, err, "System.OutputMuted->System.device.OutputUnknown")
 }

@@ -617,3 +617,39 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - `aacenc.Format` became `host.AACFormat`: `internal/mac` packages may not import `rdp` (archtest).
   - Not planned: AudioToolbox, given less room than a packet, takes the frames and returns nothing, with no error. The encoder now fails instead (it never gives too little room).
 - **Manual checks:** none (a real client plays it in 4.6).
+
+## 4.5 Where the sound plays (2026-11-19)
+- **Built:**
+  - `internal/host`:
+    - the `Output` interface (the default device's UID, reading and setting its mute) and `MuteMarker`;
+    - `Parts.Output`, `Options.MuteMarker`;
+    - the muter: it mutes the default device when the first session's sound starts, unless it is muted already, and unmutes it when the last ends, with the marker written before and removed after;
+    - `RecoverOutput` unmutes the device a marker names, at start;
+    - `FakeOutput`.
+  - `internal/mac/system`: Core Audio's default output device, its UID, the device of a UID, and its mute (`OutputFailed`, `OutputUnknown`, `OutputMuteUnsupported`).
+  - `internal/config`: the marker `muted.json` (`MarkMuted`, `MutedMark`, `ClearMuted`, `ConfigMuteMarkCorrupt`).
+  - `cmd/mardp`: each start of the server recovers a marker; with "On the client only" and sound, the host gets the system as its output.
+  - SPEC §10.1 as built; the `internal/mac/system` row of §4.1.
+- **Proved:**
+  - The muter with fakes:
+    - mutes and unmutes, with the marker;
+    - leaves a muted device alone;
+    - no default device, no mute to read or to set, and no marker: nothing muted;
+    - the default changing during a session: the device muted is the one unmuted;
+    - the owner unmuting during a session;
+    - an unplugged device, or a marker that cannot be removed, keeps the marker;
+    - two sessions mute once and unmute when the last ends, with two writes in all.
+  - `RecoverOutput`: no marker, a muted device unmuted, an unplugged device, an unreadable marker, a marker that cannot be removed.
+  - Sessions in `host`: a client that plays the sound mutes the output and leaves it unmuted, marker gone, when it leaves; one that plays nothing changes nothing.
+  - `cmd/mardp` (TestServeMute): a marker left with the device muted is recovered when the server starts; with "On the client only" a client's sound mutes the output, and stopping the server unmutes it and removes the marker; with "On both" nothing is muted.
+  - Core Audio:
+    - with fakes, every route of the three tags;
+    - `mardp_mac`, read-only (it never sets the mute): the default output `BuiltInSpeakerDevice` (muted, as the owner left it), and `OutputUnknown` for a UID no device has;
+    - the routes of `SystemUnsupported` on other systems.
+  - The marker: written with the folder's file mode, read, cleared, and every failure route.
+- **Differs from the plan:**
+  - The output is muted when a session's sound starts, not when a client connects: a client that plays no sound would otherwise leave the sound nowhere.
+  - A device muted before mardp is never touched.
+  - "On both" still recovers a marker left from before.
+- **Manual checks:** the muting itself, the crash recovery and "on both": pending, see docs/MANUAL-CHECKS.md (4.5).
+

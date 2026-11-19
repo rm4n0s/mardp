@@ -148,7 +148,9 @@ type server struct {
 // prepare makes a server of the settings and listens where they say: it
 // checks that a user name and a password are set and that Screen Recording
 // is granted, and makes the session's parts of m, view-only without
-// Accessibility or with viewOnly (SPEC §7.1, §7.3, §8, §13). Logins are
+// Accessibility or with viewOnly (SPEC §7.1, §7.3, §8, §13). It unmutes
+// the output a mardp that ended left muted, and, when the sound plays on
+// the client only, gives the host the output to mute (SPEC §10.1). Logins are
 // checked against what settings returns at the time.
 func prepare(ctx context.Context, folder *config.Folder, settings func() config.Settings, sys host.System,
 	m machine, viewOnly bool, log *slog.Logger) (*server, error) {
@@ -172,11 +174,19 @@ func prepare(ctx context.Context, folder *config.Folder, settings func() config.
 		return nil, err
 	}
 	log.Info("certificate", "fingerprint", cert.Fingerprint, "created", created)
+	out, _ := sys.(host.Output)
+	if out != nil {
+		host.RecoverOutput(ctx, out, folder, log)
+	}
 	parts, err := m.parts(sys, s, post, log)
 	if err != nil {
 		return nil, err
 	}
-	hst, err := host.New(parts, host.Options{VideoFPS: s.MaxFPS, MaxBitrate: s.MaxBitrate, MaxHeight: s.MaxHeight, Logger: log})
+	if out != nil && parts.Sound != nil && s.Sound == config.SoundClient {
+		parts.Output = out
+	}
+	hst, err := host.New(parts, host.Options{VideoFPS: s.MaxFPS, MaxBitrate: s.MaxBitrate, MaxHeight: s.MaxHeight,
+		MuteMarker: folder, Logger: log})
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 // Package system is mardp's view of macOS outside a session's pipeline: the
-// two permissions and their panes of System Settings, the displays, and
-// keeping the display awake (SPEC §7.1, §7.2). It implements host.System.
+// two permissions and their panes of System Settings, the displays,
+// keeping the display awake (SPEC §7.1, §7.2), and the sound output's mute
+// (SPEC §10.1). It implements host.System and host.Output.
 package system
 
 import (
@@ -21,6 +22,14 @@ const (
 	TagDisplaysFailed = "DisplaysFailed"
 	// TagKeepAwakeFailed: the display could not be woken or kept awake.
 	TagKeepAwakeFailed = "KeepAwakeFailed"
+	// TagOutputFailed: Core Audio failed to tell or change the sound
+	// output.
+	TagOutputFailed = "OutputFailed"
+	// TagOutputUnknown: no output device has the UID.
+	TagOutputUnknown = "OutputUnknown"
+	// TagOutputMuteUnsupported: the output device has no mute that can
+	// be set.
+	TagOutputMuteUnsupported = "OutputMuteUnsupported"
 )
 
 // The panes of System Settings for the permissions.
@@ -42,3 +51,6 @@ func paneURL(p host.Permission) (string, error) {
 
 // System implements host.System.
 var _ host.System = (*System)(nil)
+
+// System implements host.Output.
+var _ host.Output = (*System)(nil)
