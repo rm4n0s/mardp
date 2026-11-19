@@ -2,6 +2,7 @@ package caps
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"math/rand/v2"
 	"os"
@@ -238,6 +239,8 @@ func TestMicrosoftFinalization(t *testing.T) {
 		mask  []int
 		type2 uint8
 		check func(t *testing.T, body []byte)
+		// share is the example's shareID when it is not exShareID.
+		share uint32
 	}{
 		{
 			file:  "client-synchronize.bin",
@@ -343,6 +346,23 @@ func TestMicrosoftFinalization(t *testing.T) {
 				}
 			},
 		},
+		{
+			// The Shutdown examples come from another connection, with
+			// shareID 0x000203ea.
+			file:  "shutdown-request.bin",
+			write: func(w *wire.Writer) error { return WriteShutdownRequest(w, 0x000203ea, exClient) },
+			type2: Type2ShutdownRequest,
+			check: noBody,
+			share: 0x000203ea,
+		},
+		{
+			file:  "shutdown-denied.bin",
+			write: func(w *wire.Writer) error { return WriteShutdownDenied(w, 0x000203ea, exServer) },
+			mask:  serverHeaderMask,
+			type2: Type2ShutdownDenied,
+			check: noBody,
+			share: 0x000203ea,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
@@ -361,7 +381,8 @@ func TestMicrosoftFinalization(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if d.ShareID != exShareID || d.Type2 != tt.type2 {
+				share := cmp.Or(tt.share, exShareID)
+				if d.ShareID != share || d.Type2 != tt.type2 {
 					t.Fatalf("share %#x type2 %#x", d.ShareID, d.Type2)
 				}
 				tt.check(t, d.Body)
@@ -371,6 +392,13 @@ func TestMicrosoftFinalization(t *testing.T) {
 				t.Errorf("pad1 %d streamID %d uncompressedLength %d", got[10], got[11], binary.LittleEndian.Uint16(got[12:]))
 			}
 		})
+	}
+}
+
+// noBody checks that a PDU has nothing after its Share Data Header.
+func noBody(t *testing.T, body []byte) {
+	if len(body) != 0 {
+		t.Errorf("body % x", body)
 	}
 }
 
@@ -515,6 +543,7 @@ func parseAll(b []byte) error {
 				_, err = ParseSynchronize(d.Body)
 			case Type2Control:
 				_, err = ParseControl(d.Body)
+			case Type2ShutdownRequest, Type2ShutdownDenied:
 			default:
 				_, err = ParseFonts(d.Body)
 			}
@@ -531,6 +560,7 @@ func TestTruncatedAndHostile(t *testing.T) {
 		"demand-active.bin", "confirm-active.bin", "client-synchronize.bin", "client-control-cooperate.bin",
 		"client-control-request.bin", "client-font-list.bin", "server-synchronize.bin",
 		"server-control-cooperate.bin", "server-control-granted.bin", "server-font-map.bin",
+		"shutdown-request.bin", "shutdown-denied.bin",
 	}
 	rng := rand.New(rand.NewPCG(1, 8))
 	for _, f := range files {
@@ -585,6 +615,7 @@ func TestAllocations(t *testing.T) {
 			return WriteControl(&w, exShareID, exServer, Control{Action: ActionCooperate})
 		}},
 		{"font map", func() error { w.Reset(); return WriteFontMap(&w, exShareID, exServer) }},
+		{"shutdown denied", func() error { w.Reset(); return WriteShutdownDenied(&w, exShareID, exServer) }},
 		{"parse confirm active", func() error {
 			r := wire.NewReader(confirm)
 			p, err := ReadPDU(&r)

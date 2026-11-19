@@ -126,3 +126,16 @@ func ParseFonts(body []byte) (Fonts, error) {
 	f.EntrySize, err = r.U16LE()
 	return f, err
 }
+
+// WriteShutdownRequest appends a Shutdown Request PDU (2.2.2.1.1), which
+// has no body, from source.
+func WriteShutdownRequest(w *wire.Writer, shareID uint32, source uint16) error {
+	return EndData(w, BeginData(w, shareID, source, Type2ShutdownRequest))
+}
+
+// WriteShutdownDenied appends a Shutdown Request Denied PDU (2.2.2.2.1),
+// which has no body, from source: the server's answer to a Shutdown Request
+// while a user is logged on.
+func WriteShutdownDenied(w *wire.Writer, shareID uint32, source uint16) error {
+	return EndData(w, BeginData(w, shareID, source, Type2ShutdownDenied))
+}

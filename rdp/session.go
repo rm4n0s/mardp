@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rm4n0s/errors"
@@ -14,7 +15,6 @@ import (
 	"github.com/rm4n0s/mardp/rdp/internal/sec"
 	"github.com/rm4n0s/mardp/rdp/internal/tpkt"
 	"github.com/rm4n0s/mardp/rdp/internal/wire"
-	"github.com/rm4n0s/mardp/rdp/internal/x224"
 )
 
 // Tags of the errors that end a connection in the capability exchange and
@@ -179,6 +179,15 @@ type Session struct {
 	reason CloseReason
 	// ended is set when the connection is over.
 	ended bool
+	// input and flow are the sinks the application set; inputGen and
+	// flowGen count the times they were set.
+	input    InputSink
+	inputGen uint64
+	flow     FlowSink
+	flowGen  uint64
+
+	// suppressed is set while the client wants no output.
+	suppressed atomic.Bool
 }
 
 // Client returns what the server knows about the client.
@@ -528,9 +537,10 @@ func (c *conn) runSession(ctx context.Context, s *Session, h Handler) error {
 }
 
 // readSession reads the client's PDUs until it disconnects or, after
-// Session.Close, hangs up or lets closeWait pass. What the client sends in
-// the session is read and dropped; input comes in step 1.9.
+// Session.Close, hangs up or lets closeWait pass. It delivers the client's
+// input and requests (SPEC §5.3).
 func (c *conn) readSession(s *Session) error {
+	sr := sessionReader{c: c, s: s}
 	for {
 		k, f, err := tpkt.ReadFrame(c.rw, c.buf)
 		if err != nil {
@@ -545,20 +555,16 @@ func (c *conn) readSession(s *Session) error {
 			}
 			return err
 		}
-		if k != tpkt.TPKT {
-			continue
-		}
-		r := wire.NewReader(f[tpkt.HeaderLen:])
-		if err := x224.ReadDataHeader(&r); err != nil {
-			return err
-		}
-		if b := r.Rest(); len(b) > 0 && mcs.Choice(b[0]) == mcs.ChoiceDisconnectProviderUltimatum {
-			reason, err := mcs.ReadDisconnectProviderUltimatum(&r)
-			if err != nil {
+		sr.takeSinks()
+		if k == tpkt.FastPath {
+			if err := sr.fastPath(f); err != nil {
 				return err
 			}
-			c.log.Info("session closed by the client", "reason", reason)
-			return nil
+			continue
+		}
+		over, err := sr.tpkt(f)
+		if err != nil || over {
+			return err
 		}
 	}
 }

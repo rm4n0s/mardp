@@ -153,7 +153,7 @@ What the server's Demand Active holds (from user 1002, share 0x000103ea, source 
 
 ### 5.3 What the client may send during a session
 
-Input events (fast-path, and the slow-path form too), Suppress Output (the client's window is minimized: capture pauses; it resumes with a key frame), Refresh Rect (the server sends a key frame), Shutdown Request, a disconnect. Every other PDU is parsed as far as its header and ignored.
+Input events (fast-path, and the slow-path form too), Suppress Output (the client's window is minimized: capture pauses; it resumes with a key frame), Refresh Rect (the server sends a key frame), Shutdown Request (answered with Shutdown Request Denied: the session goes on, MS-RDPBCGR 2.2.2.2), a disconnect. Every Data PDU in a Send Data Request is handled, not only the first. Every other PDU is parsed as far as its header and ignored (relative mouse and QoE timestamps among them); malformed input ends the session with the parser's tagged error.
 
 ### 5.4 Ending a session
 
@@ -170,10 +170,14 @@ The exact Go names are decided in the implementation; this is the shape.
 - **Video.** `Session.Video()` gives one of two things, chosen by the library from the client's capabilities:
   - *H.264*: `SendFrame(annexB, keyFrame)`. The library wraps it as a GFX frame (Start Frame, Wire To Surface with the AVC420 stream, End Frame).
   - *Bitmaps*: `SendRects(image, rects)`. The library compresses the rectangles (Planar) and sends them through GFX, or as fast-path Bitmap Updates when the client has no graphics pipeline.
-  - Both report flow: `Backlog()` (frames sent and not yet acknowledged, and the age of the oldest) and callbacks for "the client wants a key frame" and "output suppressed / resumed".
+  - Both report flow: `Backlog()` (frames sent and not yet acknowledged, and the age of the oldest). The callbacks come through a `FlowSink` the app sets on the session with `Session.SetFlowSink`: `KeyFrameWanted()` (on Refresh Rect, and after output resumes) and `OutputSuppressed(bool)` (only when the state changes; a resume is followed by `KeyFrameWanted`). `Session.OutputSuppressed()` reports the state at any time.
 - **Sound.** `Session.Audio()`: the negotiated format (AAC, PCM or none) and `Write(data, timestamp)`. It reports the delay the client's confirmations show.
 - **Pointer.** `SetShape(image, hotspot)` (the library caches shapes and sends a cached index when a shape repeats), `Hide()`, `Move(x, y)`.
-- **Input.** The app gives an `InputSink` with `Key(scancode, extended, down)`, `Unicode(rune, down)`, `MouseMove(x, y)`, `MouseButton(button, down, x, y)`, `Wheel(dx, dy)`, `SyncLocks(caps, num, scroll)`. Calls arrive in the order the client sent them, on one goroutine.
+- **Input.** The app sets an `InputSink` with `Session.SetInputSink` (nil drops input): `Key(scancode, extended, down)`, `Unicode(rune, down)`, `MouseMove(x, y)`, `MouseButton(button, down, x, y)`, `Wheel(dx, dy)`, `SyncLocks(caps, num, scroll)`. Calls arrive in the order the client sent them, on the session's reading goroutine, so a sink must not block.
+  - `extended` is an `Extended` prefix, `NotExtended`, `ExtendedE0` or `ExtendedE1`, not a bool: Pause is the one key sent with the E1 prefix.
+  - `Unicode` gets whole runes: a UTF-16 surrogate pair is joined, and a surrogate without its pair arrives as `utf8.RuneError`.
+  - `Wheel` is in 120ths of a notch; `dy` is positive away from the user, `dx` positive to the right.
+  - Input that arrives before a sink is set is dropped. A sink set later first gets the last `SyncLocks` the client sent; a flow sink set while output is suppressed first gets `OutputSuppressed(true)`. A sink takes effect before the next frame the session reads.
 - Every method that does I/O takes a `ctx`. Every failure is an `errors` Tag of its own with a route test (CLAUDE.md).
 - `Write` and `SendFrame` do not block on the network: they queue for the session's writer (§4.2) and fail with a tagged error when the queue is full, which is the app's signal to skip (§9.5).
 

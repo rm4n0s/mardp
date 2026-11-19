@@ -160,3 +160,31 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - `conn.disconnect` now writes Set Error Info and the ultimatum in one write. The route of a sequence write failure is now `conn.send->conn.write`.
   - SPEC §4.2 (queue sizes and behavior), §5.2 (PDU size and fragmentation) and §5.4 (`Close` through the writer) are updated.
 - **Manual checks:** none.
+
+## 1.9 Input and the client's requests (2026-11-19)
+- **Built:** `rdp/internal/input`:
+  - Fast-path input (MS-RDPBCGR 2.2.8.1.2) and the slow-path Input Event PDU (2.2.8.1.1.3), read as iterators (`ParseFastPath`/`ParseSlowPath`, then `Next`), so reading allocates nothing. Every event kind: scancode, Unicode, mouse, extended mouse, relative mouse, synchronize, QoE timestamp (fast-path) and unused (slow-path). Encrypted fast-path input is refused.
+  - Refresh Rect (2.2.11.2) and Suppress Output (2.2.11.3), and for `rdptest` the writers of all of them.
+  - 7 tags.
+
+  `rdp/internal/caps`: `WriteShutdownRequest` and `WriteShutdownDenied` (2.2.2.1, 2.2.2.2).
+
+  In `rdp` (`input.go`):
+  - `InputSink` and `FlowSink`, set with `Session.SetInputSink` and `Session.SetFlowSink`, and `Session.OutputSuppressed`. The reading goroutine picks up a new sink before each frame (a generation counter, so no lock on the path of each event) and replays the last lock state and the suppressed state to it.
+  - The session's reader turns events into sink calls: keys with their `Extended` prefix, Unicode with surrogate pairs joined, pointer flags into moves, five buttons and both wheels (9-bit rotation in 120ths of a notch). Refresh Rect gives `KeyFrameWanted`; Suppress Output gives `OutputSuppressed` on a change, and a resume gives a key frame too. Shutdown Request is answered with Shutdown Request Denied on the control queue. Every Data PDU in a Send Data Request is handled. A Disconnect Provider Ultimatum from the client ends the session cleanly.
+  - Ignored with a debug log: relative mouse, QoE and unused events, share PDUs that are not Data PDUs, unknown Data PDU types, static-channel data, FlowPDUs.
+
+  `rdptest`: `SendInput` (fast-path), `SendSlowInput`, `SendRefreshRect`, `SendSuppressOutput`, `SendShutdownRequest` and `ReadShareData`.
+- **Proved:**
+  - **Every kind reaches the sink in order:** `TestInput` sends every key (E0 and E1 among them), Unicode, move, five buttons up and down, both wheels both ways, and lock states, first all fast-path, then all slow-path, then alternating the two forms; the sink records the same calls in the same order. `TestSurrogates` joins a pair and reports lone surrogates as `utf8.RuneError`.
+  - **Requests:** `TestRequests` sends refresh, suppress twice, allow twice and refresh: the flow sink gets one key frame, one `OutputSuppressed(true)`, one `OutputSuppressed(false)` plus a key frame, and one key frame. Shutdown Request gets Shutdown Request Denied and the session goes on. `TestSinksSetLate` drops early input and replays the lock and suppressed states to sinks set later. `TestSessionIgnores` sends everything the server skips, then input that still arrives.
+  - **Microsoft's examples:** the decrypted parts of the Shutdown Request, Shutdown Request Denied (4.2.1, 4.2.2) and fast-path input (4.7) examples are in `testdata/ms-rdpbcgr`, and are parsed and written byte for byte.
+  - **Hostile input:** `TestHostileInput` ends a session with 13 malformed inputs (encrypted fast-path, unknown and cut events in both forms, a bad Suppress Output value, a cut Refresh Rect, another share ID, another channel, a cut share PDU, compressed data, a TPDU that is not Data, and an Attach User Request mid-session), each with its route. `input.TestHostile` tries every cut and 5000 mutations per seed, plus random bytes, without a panic.
+  - **0 allocations:** reading a fast-path frame of several events into a sink, through the session (`TestInputAllocations`) and in the parser (`input.TestAllocations`). `TestSenders` checks each `rdptest` sender against the fake server.
+  - Every new tag has a route test. Three repeated `-race` runs pass. Coverage: `rdp` 93.7%, `input` 95.1%, `caps` 94.2%, `rdptest` 75.0%.
+- **Differs from the plan:**
+  - `Key` takes an `Extended` prefix (none, E0, E1) instead of a bool, since Pause carries E1.
+  - The sinks are set on the `Session` (`SetInputSink`, `SetFlowSink`), not given in `Config`, and the flow callbacks are a `FlowSink` now rather than part of the `Video()` interface that comes in 1.10, so Suppress Output and Refresh Rect are delivered from this step on.
+  - Shutdown Request is answered with Shutdown Request Denied, as 2.2.2.2 says for a logged-on session; the plan only named the request.
+  - SPEC §5.3 (what the session reads) and §6 (input and flow) are updated.
+- **Manual checks:** none.
