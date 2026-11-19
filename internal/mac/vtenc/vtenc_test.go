@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/rm4n0s/errors"
 )
@@ -57,6 +58,10 @@ func (f *fakeVT) setBitrate(bps int) int {
 func (f *fakeVT) forceKeyFrame() { f.mu.Lock(); f.forced++; f.mu.Unlock() }
 func (f *fakeVT) setSkip(s bool) { f.mu.Lock(); f.skip = s; f.mu.Unlock() }
 func (f *fakeVT) close()         { f.mu.Lock(); f.closed++; f.mu.Unlock() }
+
+func (f *fakeVT) submitter() (fn, arg unsafe.Pointer) {
+	return unsafe.Pointer(f), unsafe.Pointer(&f.forced)
+}
 
 func TestNewEncoder(t *testing.T) {
 	frame := func(*Frame) {}
@@ -116,6 +121,9 @@ func TestEncoderControls(t *testing.T) {
 	f.refuse = 0
 	e.ForceKeyFrame()
 	e.SetSkip(true)
+	if fn, arg := e.Submitter(); fn != unsafe.Pointer(f) || arg != unsafe.Pointer(&f.forced) {
+		t.Error("Submitter is not the session's")
+	}
 	if len(f.bitrates) != 1 || f.bitrates[0] != 3e6 || f.forced != 1 || !f.skip {
 		t.Errorf("session got bitrates %v, %d forced, skip %v", f.bitrates, f.forced, f.skip)
 	}

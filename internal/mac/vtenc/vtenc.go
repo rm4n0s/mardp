@@ -31,6 +31,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/rm4n0s/errors"
 
@@ -164,6 +165,9 @@ type session interface {
 	// close waits for the frames being encoded and invalidates the
 	// session; no output reaches the encoder after it returns.
 	close()
+	// submitter returns the C function frames are submitted to and its
+	// first argument.
+	submitter() (fn, arg unsafe.Pointer)
 }
 
 // backend is VideoToolbox, or a fake.
@@ -260,6 +264,17 @@ func (e *Encoder) SetSkip(skip bool) {
 		e.s.setSkip(skip)
 	}
 }
+
+// Submitter returns the C function the capture hands its frames to, and
+// the argument it passes first (SPEC §4.2):
+//
+//	long fn(void *arg, CVPixelBufferRef pb, CMTime pts)
+//
+// fn encodes the NV12 pixel buffer pb at pts unless the encoder skips; it
+// returns VideoToolbox's OSStatus, or 1 for a skipped frame, and may be
+// called from any thread. Both stay valid until Close, which the capture
+// must not outlive.
+func (e *Encoder) Submitter() (fn, arg unsafe.Pointer) { return e.s.submitter() }
 
 // Stats returns the counts so far.
 func (e *Encoder) Stats() Stats {

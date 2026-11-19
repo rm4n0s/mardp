@@ -69,7 +69,7 @@ func (f *fakeMac) alive(id uint32, uuid string) bool {
 	return !f.dead[id] && f.displays[uuid] == id
 }
 
-func (f *fakeMac) start(id uint32, cfg host.ScreenConfig, sk *sink) (stream, *startFailure) {
+func (f *fakeMac) start(id uint32, cfg host.ScreenConfig, sk *sink, mode streamMode) (stream, *startFailure) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.fails) > 0 {
@@ -79,7 +79,7 @@ func (f *fakeMac) start(id uint32, cfg host.ScreenConfig, sk *sink) (stream, *st
 	}
 	f.started = append(f.started, id)
 	f.live++
-	st := &fakeStream{f: f, id: id, cfg: cfg, sk: sk}
+	st := &fakeStream{f: f, id: id, cfg: cfg, sk: sk, mode: mode}
 	f.streams <- st
 	return st, nil
 }
@@ -102,16 +102,19 @@ type fakeStream struct {
 	id      uint32
 	cfg     host.ScreenConfig
 	sk      *sink
+	mode    streamMode
 	stopped bool
+	stats   VideoStats // what stop returns
 }
 
-func (s *fakeStream) stop() {
+func (s *fakeStream) stop() VideoStats {
 	s.f.mu.Lock()
 	defer s.f.mu.Unlock()
 	if !s.stopped {
 		s.stopped = true
 		s.f.live--
 	}
+	return s.stats
 }
 
 // next waits for the next stream started.
@@ -364,16 +367,16 @@ func TestCaptureErrors(t *testing.T) {
 		stop  *stopEvent // sent to the first stream
 		route string
 	}{
-		{"not granted", func(f *fakeMac) { f.denied = true }, nil, "Source.Capture.CapturePermissionDenied"},
+		{"not granted", func(f *fakeMac) { f.denied = true }, nil, "Source.Capture->Source.run.CapturePermissionDenied"},
 		{"refused at the start", func(f *fakeMac) { f.fails = []*startFailure{{code: errUserDeclined}} }, nil,
-			"Source.Capture.CapturePermissionDenied"},
-		{"withdrawn while running", nil, &stopEvent{code: errUserDeclined}, "Source.Capture->Source.watch.CapturePermissionDenied"},
-		{"stopped by the user", nil, &stopEvent{code: -3817, message: "stopped"}, "Source.Capture->Source.watch.CaptureStopped"},
+			"Source.Capture->Source.run.CapturePermissionDenied"},
+		{"withdrawn while running", nil, &stopEvent{code: errUserDeclined}, "Source.Capture->Source.run->Source.watch.CapturePermissionDenied"},
+		{"stopped by the user", nil, &stopEvent{code: -3817, message: "stopped"}, "Source.Capture->Source.run->Source.watch.CaptureStopped"},
 		{"never starts", func(f *fakeMac) {
 			for range maxAttempts {
 				f.fails = append(f.fails, &startFailure{code: errFailedToStart})
 			}
-		}, nil, "Source.Capture.CaptureStartFailed"},
+		}, nil, "Source.Capture->Source.run.CaptureStartFailed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -399,7 +402,7 @@ func TestCaptureKeepsStopping(t *testing.T) {
 	for range maxAttempts {
 		f.next(t).sk.stop(errSystemStopped, "stopped by the system")
 	}
-	assertRoute(t, wait(t, done), "Source.Capture.CaptureStopped")
+	assertRoute(t, wait(t, done), "Source.Capture->Source.run.CaptureStopped")
 }
 
 func TestCaptureConfigInvalid(t *testing.T) {

@@ -55,9 +55,17 @@ func (macOS) alive(id uint32, uuid string) bool {
 	return C.mardpCapAlive(C.uint32_t(id), cu) == 1
 }
 
-func (macOS) start(id uint32, cfg host.ScreenConfig, sk *sink) (stream, *startFailure) {
+func (macOS) start(id uint32, cfg host.ScreenConfig, sk *sink, mode streamMode) (stream, *startFailure) {
 	h := cgo.NewHandle(sk)
-	r := C.mardpCapStart(C.uintptr_t(h), C.uint32_t(id), C.int(cfg.Width), C.int(cfg.Height), C.int(cfg.MaxFPS))
+	var video, full C.int
+	if mode.video {
+		video = 1
+	}
+	if mode.fullRange {
+		full = 1
+	}
+	r := C.mardpCapStart(C.uintptr_t(h), C.uint32_t(id), C.int(cfg.Width), C.int(cfg.Height), C.int(cfg.MaxFPS),
+		video, full, mode.fn, mode.arg, C.uint32_t(mode.window))
 	if r.code != 0 {
 		// mardpCapStart tore down what it made: no callback holds h.
 		h.Delete()
@@ -72,10 +80,12 @@ type macStream struct {
 	h       cgo.Handle
 }
 
-func (m *macStream) stop() {
-	C.mardpCapStop(m.st, m.out)
+func (m *macStream) stop() VideoStats {
+	var c C.mardpCapCounts
+	C.mardpCapStop(m.st, m.out, &c)
 	// 4. No callback can reach Go any more.
 	m.h.Delete()
+	return VideoStats{Encoded: int64(c.encoded), Skipped: int64(c.skipped), Refused: int64(c.refused), Crossings: int64(c.crossings)}
 }
 
 //export mardpCapFrame

@@ -1,6 +1,8 @@
-// Package capture captures a display with ScreenCaptureKit for the bitmap
-// path (SPEC §7.2, §9.2, §9.6, D9): BGRA frames at the session's size,
-// without the pointer, with the rectangles that changed. It implements
+// Package capture captures a display with ScreenCaptureKit (SPEC §7.2,
+// §9.2, D9), at the session's size and without the pointer: BGRA frames
+// with the rectangles that changed for the bitmap paths (§9.6), which
+// Capture hands to Go, and NV12 frames for the H.264 path (§9.3, §4.2),
+// which CaptureVideo hands to the encoder in C. It implements
 // host.ScreenSource.
 //
 // # The display
@@ -31,12 +33,23 @@
 // The callback for a stopped stream only posts to a buffered channel, never
 // waits, so retiring cannot deadlock with it.
 //
+// # Video
+//
+// CaptureVideo asks ScreenCaptureKit for NV12 in the range the encoder is
+// set to, with the BT.709 matrix, and its frame callback calls the
+// encoder's submit function directly, under the output's lock, so a frame
+// costs no crossing into Go on the way in; the encoder's skip flag is read
+// in that function. Retiring the output (step 1) is also what guarantees
+// that no frame reaches the encoder after CaptureVideo returns, so the
+// encoder may be closed then.
+//
 // # Pausing and skipping
 //
 // SetPaused (the client minimized its window) and SetSkip (the session's
 // queue is full) drop frames before they reach the frame function; the next
 // frame after either is a whole frame. Capture never waits for the network:
-// it sees only these flags (SPEC §4.2).
+// it sees only these flags (SPEC §4.2). They do not touch CaptureVideo,
+// whose frames the encoder's own skip flag drops.
 package capture
 
 import (
@@ -45,6 +58,7 @@ import (
 	"log/slog"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/rm4n0s/errors"
 
@@ -97,6 +111,9 @@ const (
 	displayWait = time.Second
 	// DefaultMaxFPS is the frame rate of a ScreenConfig without one (§9.6).
 	DefaultMaxFPS = 30
+	// DefaultVideoFPS is the frame rate of CaptureVideo's ScreenConfig
+	// without one (§9.4).
+	DefaultVideoFPS = 60
 	// maxDirty is the most rectangles a frame lists; a frame with more is
 	// sent whole.
 	maxDirty = 64
@@ -129,11 +146,51 @@ type stopEvent struct {
 	message string
 }
 
+// VideoSink is an encoder that takes frames in C, as vtenc.Encoder does.
+type VideoSink interface {
+	// Submitter returns the C function a frame goes to and its first
+	// argument: long fn(void *arg, CVPixelBufferRef pb, CMTime pts), which
+	// returns 0 for a frame encoded, 1 for one skipped, and otherwise
+	// VideoToolbox's OSStatus.
+	Submitter() (fn, arg unsafe.Pointer)
+}
+
+// VideoOutput is where CaptureVideo sends its frames.
+type VideoOutput struct {
+	// Encoder takes the frames.
+	Encoder VideoSink
+	// FullRange asks for full range NV12 (420f) instead of video range
+	// (420v); it is the range the encoder was made for.
+	FullRange bool
+}
+
+// VideoStats count the frames CaptureVideo handed to the encoder.
+type VideoStats struct {
+	// Encoded, Skipped and Refused are the frames the encoder took, skipped
+	// and refused.
+	Encoded, Skipped, Refused int64
+	// Crossings are the calls the capture made into Go with a frame; on the
+	// H.264 path there are none.
+	Crossings int64
+}
+
+// streamMode is what a stream delivers: BGRA frames to the sink, or NV12
+// frames to the submit function fn with arg.
+type streamMode struct {
+	video     bool
+	fullRange bool
+	fn, arg   unsafe.Pointer
+	// window, when not 0, is the only window captured (a CGWindowID), for
+	// tests that need a still picture on a screen that is not still.
+	window uint32
+}
+
 // stream is one running ScreenCaptureKit stream.
 type stream interface {
 	// stop tears it down in the order of the package documentation; no
-	// callback reaches the sink after it returns.
-	stop()
+	// callback reaches the sink after it returns. It returns what the
+	// stream did with its frames.
+	stop() VideoStats
 }
 
 // backend is ScreenCaptureKit and Core Graphics, or a fake.
@@ -146,8 +203,9 @@ type backend interface {
 	// alive says whether display id is still active and still the display
 	// with the UUID.
 	alive(id uint32, uuid string) bool
-	// start starts a stream of display id at cfg that delivers to sink.
-	start(id uint32, cfg host.ScreenConfig, sink *sink) (stream, *startFailure)
+	// start starts a stream of display id at cfg that delivers to sink, or
+	// to the encoder of mode.
+	start(id uint32, cfg host.ScreenConfig, sink *sink, mode streamMode) (stream, *startFailure)
 }
 
 // Source captures one display. One Capture runs at a time.
@@ -162,6 +220,12 @@ type Source struct {
 	paused, skip atomic.Bool
 	// gap says frames were dropped since the last one delivered.
 	gap atomic.Bool
+
+	// The VideoStats of the streams that ended.
+	encoded, skipped, refused, crossings atomic.Int64
+
+	// onlyWindow is streamMode.window; only tests set it.
+	onlyWindow uint32
 }
 
 var _ host.ScreenSource = (*Source)(nil)
@@ -208,6 +272,38 @@ func (s *Source) Capture(ctx context.Context, cfg host.ScreenConfig, frame func(
 		cfg.MaxFPS = DefaultMaxFPS
 	}
 	sk := &sink{src: s, frame: frame, width: cfg.Width, height: cfg.Height, stopped: make(chan stopEvent, 1)}
+	return s.run(ctx, cfg, sk, streamMode{window: s.onlyWindow})
+}
+
+// CaptureVideo captures the display at cfg in NV12 until ctx ends,
+// following it through display changes, and hands each frame that changed
+// to out's encoder in C (see the package documentation). The encoder must
+// stay open until CaptureVideo returns.
+func (s *Source) CaptureVideo(ctx context.Context, cfg host.ScreenConfig, out VideoOutput) error {
+	var fn, arg unsafe.Pointer
+	if out.Encoder != nil {
+		fn, arg = out.Encoder.Submitter()
+	}
+	if cfg.Width < 2 || cfg.Height < 2 || cfg.Width > host.MaxDesktopSide || cfg.Height > host.MaxDesktopSide || fn == nil {
+		return errors.New(TagCaptureConfigInvalid, "the capture's size is out of range, or it has no encoder",
+			"width", cfg.Width, "height", cfg.Height, "encoder", fn != nil)
+	}
+	if cfg.MaxFPS <= 0 {
+		cfg.MaxFPS = DefaultVideoFPS
+	}
+	sk := &sink{src: s, width: cfg.Width, height: cfg.Height, stopped: make(chan stopEvent, 1)}
+	return s.run(ctx, cfg, sk, streamMode{video: true, fullRange: out.FullRange, fn: fn, arg: arg, window: s.onlyWindow})
+}
+
+// VideoStats returns what the streams of CaptureVideo that ended did with
+// their frames.
+func (s *Source) VideoStats() VideoStats {
+	return VideoStats{Encoded: s.encoded.Load(), Skipped: s.skipped.Load(), Refused: s.refused.Load(), Crossings: s.crossings.Load()}
+}
+
+// run captures until ctx ends, starting a stream of mode for each display
+// it follows.
+func (s *Source) run(ctx context.Context, cfg host.ScreenConfig, sk *sink, mode streamMode) error {
 	uuid := s.opts.Display
 	attempts := 0
 	noDisplay := false
@@ -236,7 +332,7 @@ func (s *Source) Capture(ctx context.Context, cfg host.ScreenConfig, frame func(
 			uuid = d.info.ID
 		}
 		sk.whole.Store(true)
-		st, fail := s.mac.start(d.id, cfg, sk)
+		st, fail := s.mac.start(d.id, cfg, sk, mode)
 		if fail != nil {
 			if fail.code == errUserDeclined {
 				return errors.New(TagCapturePermissionDenied, "macOS refused the capture", "code", fail.code, "reason", fail.message)
@@ -251,7 +347,8 @@ func (s *Source) Capture(ctx context.Context, cfg host.ScreenConfig, frame func(
 			}
 			continue
 		}
-		s.log.Info("capturing", "display", d.info.ID, "id", d.id, "width", cfg.Width, "height", cfg.Height, "fps", cfg.MaxFPS)
+		s.log.Info("capturing", "display", d.info.ID, "id", d.id, "width", cfg.Width, "height", cfg.Height, "fps", cfg.MaxFPS,
+			"video", mode.video)
 		started := time.Now()
 		restart, err := s.watch(ctx, sk, st, d, tick)
 		if err != nil || !restart {
@@ -273,7 +370,13 @@ func (s *Source) Capture(ctx context.Context, cfg host.ScreenConfig, frame func(
 // watch waits while stream st of display d runs, and stops it. restart says
 // a new stream should start; err ends the capture.
 func (s *Source) watch(ctx context.Context, sk *sink, st stream, d rawDisplay, tick *time.Ticker) (restart bool, err error) {
-	defer st.stop()
+	defer func() {
+		v := st.stop()
+		s.encoded.Add(v.Encoded)
+		s.skipped.Add(v.Skipped)
+		s.refused.Add(v.Refused)
+		s.crossings.Add(v.Crossings)
+	}()
 	for {
 		select {
 		case <-ctx.Done():

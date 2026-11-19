@@ -57,6 +57,10 @@ func (s *vtSession) forceKeyFrame() { C.mardpEncForceKey(s.enc) }
 
 func (s *vtSession) setSkip(skip bool) { C.mardpEncSetSkip(s.enc, cBool(skip)) }
 
+func (s *vtSession) submitter() (fn, arg unsafe.Pointer) {
+	return C.mardpEncSubmit, unsafe.Pointer(s.enc)
+}
+
 func (s *vtSession) close() {
 	C.mardpEncClose(s.enc)
 	// No output can reach Go any more.

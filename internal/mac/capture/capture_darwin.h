@@ -30,9 +30,19 @@ typedef struct {
 } mardpCapStarted;
 
 // mardpCapStart starts a stream of display id; handle is passed back to
-// Go in each callback.
-mardpCapStarted mardpCapStart(uintptr_t handle, uint32_t id, int width, int height, int fps);
+// Go in each callback. With video set the stream is NV12 (full range with
+// fullRange set) and each frame goes to submit(arg, pixelBuffer, pts), a
+// long (*)(void *, CVPixelBufferRef, CMTime), instead of Go.
+// With window not 0 only that window is captured.
+mardpCapStarted mardpCapStart(uintptr_t handle, uint32_t id, int width, int height, int fps,
+	int video, int fullRange, void *submit, void *arg, uint32_t window);
+
+// mardpCapCounts is what a stream did with its frames: handed to the
+// encoder, which took, skipped or refused them, and handed to Go.
+typedef struct {
+	long encoded, skipped, refused, crossings;
+} mardpCapCounts;
 
 // mardpCapStop tears a stream down in the order of the package
-// documentation and releases it.
-void mardpCapStop(void *stream, void *output);
+// documentation, releases it, and fills counts unless it is NULL.
+void mardpCapStop(void *stream, void *output, mardpCapCounts *counts);

@@ -106,6 +106,7 @@ TCP ─► TLS ─► rdp: input events ─► host ─► Core Graphics events
 
 - A captured frame never enters Go memory on the H.264 path. ScreenCaptureKit gives an IOSurface, the C side hands it to the encoder, and only the encoded bytes cross into Go: one callback per frame.
 - Whether a frame is encoded or skipped is one atomic flag that Go writes and the C callback reads, so skipping costs nothing.
+- On this path the capture asks ScreenCaptureKit for NV12 (`420f` or `420v`, the encoder's range) with the BT.709 colour matrix, and its C callback calls the encoder's C submit function directly while the stream is live; a frame whose dirty rectangles are none is not submitted. Measured in 3.7: no crossing into Go from the capture, one from the encoder per frame, as many frames encoded as the capture handed over.
 - Each session has one writer goroutine that owns the TLS connection. It takes from two queues: control, input replies and sound first, video second. Sound never waits behind a large video frame. Each queue has a fixed number of packets made at the start of the session (control 32, video 4); a packet is whole frames built by the sender, written in one write, and goes back to its queue's free list after it, keeping the room it grew to. A send that finds no free packet fails at once with a tagged error (the queue is full) instead of waiting. A failed write ends the session with its error. When the session ends, what is still queued is dropped.
 
 ## 5. Protocol scope
@@ -281,7 +282,7 @@ GFX data is wrapped in RDP 8 segments as the protocol requires, without compress
 ### 9.4 Frame rate
 
 - The cap is 60 frames a second (a setting: 30 or 60).
-- ScreenCaptureKit delivers a frame only when the screen changed. A still screen sends nothing.
+- ScreenCaptureKit delivers a frame only when the screen changed. A still screen sends nothing. Measured in 3.7 with a window captured alone: 1 frame in 2 s while it was still, against 110 a second while it moved. A capture of the whole display reports the display's changes even when its filter includes only one window.
 
 ### 9.5 Flow control and rate control
 

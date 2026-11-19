@@ -4,14 +4,31 @@ package capture
 
 import (
 	"context"
-	"image"
+	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/rm4n0s/mardp/internal/host"
+	"github.com/rm4n0s/mardp/internal/mac/vtenc"
 )
+
+// The main goroutine stays on the main thread, which runs the run loop that
+// AppKit needs for the tests' window while the tests run on other
+// goroutines.
+func init() { runtime.LockOSThread() }
+
+func TestMain(m *testing.M) {
+	code := 0
+	go func() {
+		code = m.Run()
+		stopMainLoop()
+	}()
+	runMainLoop()
+	os.Exit(code)
+}
 
 // These tests use ScreenCaptureKit. They never ask for Screen Recording:
 // without it the ones that need frames are skipped, so no question shows.
@@ -46,7 +63,7 @@ func TestMacWithoutPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = s.Capture(t.Context(), host.ScreenConfig{Width: 640, Height: 360}, func(*host.Frame) {})
-	assertRoute(t, err, "Source.Capture.CapturePermissionDenied")
+	assertRoute(t, err, "Source.Capture->Source.run.CapturePermissionDenied")
 }
 
 func TestMacFrames(t *testing.T) {
@@ -135,13 +152,15 @@ func TestMacStillScreen(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := size(t, s)
-	// While a stream runs, macOS animates its capture indicator in the menu
-	// bar: those frames change only the top of the screen. Frames that
-	// change anything below it mean the screen was not still.
-	menuBar := cfg.Height / 30
+	// The owner's screen is not still while they work, so the test captures
+	// its own still window alone (a display filter would report the
+	// display's changes even with only this window in it).
+	w := openTestWindow()
+	defer w.close()
+	time.Sleep(200 * time.Millisecond) // ScreenCaptureKit lists it
+	s.onlyWindow = w.id()
 	var mu sync.Mutex
-	frames, top := 0, 0
-	var below image.Rectangle
+	frames, whole := 0, 0
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	err = s.Capture(ctx, cfg, func(f *host.Frame) {
@@ -149,17 +168,7 @@ func TestMacStillScreen(t *testing.T) {
 		defer mu.Unlock()
 		frames++
 		if f.Dirty == nil {
-			return
-		}
-		onlyTop := true
-		for _, r := range f.Dirty {
-			if r.Max.Y > menuBar {
-				onlyTop = false
-				below = below.Union(r)
-			}
-		}
-		if onlyTop {
-			top++
+			whole++
 		}
 	})
 	if err != nil {
@@ -167,13 +176,12 @@ func TestMacStillScreen(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	t.Logf("%d frames in 3 s: the whole first, %d that change only the top %d rows, %d other (changed %v)",
-		frames, top, menuBar, frames-1-top, below)
-	if frames == 0 {
-		t.Error("no frame")
+	t.Logf("%d frames in 3 s of a still window, %d whole", frames, whole)
+	if frames == 0 || whole == 0 {
+		t.Error("no whole first frame")
 	}
-	if frames > 3*cfg.MaxFPS/2 {
-		t.Errorf("%d frames in 3 s: more than half the cap on a nearly still screen", frames)
+	if frames > 3 {
+		t.Errorf("%d frames in 3 s of a still window", frames)
 	}
 }
 
@@ -213,5 +221,97 @@ func TestMacStopThousand(t *testing.T) {
 	t.Logf("%d starts and stops in %v, %d frames", runs, time.Since(begin), framesSeen.Load())
 	if late.Load() != 0 {
 		t.Errorf("%d callbacks after Capture returned", late.Load())
+	}
+}
+
+func TestMacVideo(t *testing.T) {
+	needScreen(t)
+	s, err := New(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := size(t, s)
+	cfg.MaxFPS = 60
+	var frames, keys, bad atomic.Int64
+	var first atomic.Bool
+	first.Store(true)
+	enc, err := vtenc.New(vtenc.Options{Width: cfg.Width, Height: cfg.Height, FullRange: true, FPS: 60}, func(f *vtenc.Frame) {
+		frames.Add(1)
+		if f.Key {
+			keys.Add(1)
+		}
+		if first.Swap(false) && !f.Key {
+			bad.Add(1)
+		}
+		if len(f.Data) < 5 || f.Data[0] != 0 || f.Data[1] != 0 || f.Data[2] != 0 || f.Data[3] != 1 {
+			bad.Add(1)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := openTestWindow()
+	defer w.close()
+	// Only the test's window is captured: the rest of the screen need not
+	// be still (the owner's apps may be drawing), and a display filter
+	// would report its changes even with only this window in it.
+	time.Sleep(200 * time.Millisecond) // ScreenCaptureKit lists it
+	s.onlyWindow = w.id()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.CaptureVideo(ctx, cfg, VideoOutput{Encoder: enc, FullRange: true}) }()
+	// count returns the frames encoded during d.
+	count := func(d time.Duration) int64 {
+		n := frames.Load()
+		time.Sleep(d)
+		return frames.Load() - n
+	}
+	w.animate(true)
+	time.Sleep(time.Second) // the stream starts, the capture indicator settles
+	moving := count(2 * time.Second)
+	enc.SetSkip(true)
+	time.Sleep(100 * time.Millisecond)
+	skipping := count(time.Second)
+	enc.SetSkip(false)
+	resumed := count(time.Second)
+	w.animate(false)
+	time.Sleep(time.Second)
+	still := count(2 * time.Second)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	enc.Close()
+	v, es := s.VideoStats(), enc.Stats()
+	t.Logf("frames encoded: %d in 2 s moving, %d in 1 s skipping, %d in 1 s after, %d in 2 s still; capture %+v; encoder %+v",
+		moving, skipping, resumed, still, v, es)
+	if moving < 60 {
+		t.Errorf("%d frames in 2 s of motion", moving)
+	}
+	if skipping != 0 {
+		t.Errorf("%d frames encoded while skipping", skipping)
+	}
+	if resumed < 20 {
+		t.Errorf("%d frames in 1 s after skipping", resumed)
+	}
+	// ScreenCaptureKit sends the odd frame of an unchanged window (one in
+	// 2 s here); a picture that changes would give 120.
+	if still > 2 {
+		t.Errorf("%d frames encoded in 2 s of a still window", still)
+	}
+	// One crossing into Go a frame: the encoder's output. The capture
+	// makes none.
+	if v.Crossings != 0 {
+		t.Errorf("the capture crossed into Go %d times", v.Crossings)
+	}
+	if outputs := es.Frames + es.Dropped + es.Failed; outputs != v.Encoded || es.Frames != frames.Load() {
+		t.Errorf("%d frames went to the encoder, %d came out to Go (%d delivered)", v.Encoded, outputs, frames.Load())
+	}
+	if v.Skipped == 0 || v.Refused != 0 || es.Failed != 0 {
+		t.Errorf("capture %+v, encoder %+v", v, es)
+	}
+	if keys.Load() != 1 || bad.Load() != 0 {
+		t.Errorf("%d key frames, %d bad frames", keys.Load(), bad.Load())
 	}
 }

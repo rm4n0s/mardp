@@ -81,10 +81,19 @@ int mardpCapAlive(uint32_t id, const char *uuid) {
 	return CGDisplayIsActive(id) && displayUUID(id, u, sizeof(u)) && strcmp(u, uuid) == 0;
 }
 
-// MardpOutput takes the stream's callbacks to Go while it is live.
+// mardpSubmitFn is the encoder's submit function (vtenc's mardpEncSubmit).
+typedef long (*mardpSubmitFn)(void *arg, CVPixelBufferRef pb, CMTime pts);
+
+// MardpOutput takes the stream's callbacks to Go, or its frames to the
+// encoder, while it is live. Its counters change under its lock.
 @interface MardpOutput : NSObject <SCStreamOutput, SCStreamDelegate>
 @property(nonatomic) uintptr_t handle;
 @property(nonatomic) BOOL live;
+@property(nonatomic) BOOL video;
+@property(nonatomic) OSType format;
+@property(nonatomic) mardpSubmitFn submit;
+@property(nonatomic) void *arg;
+@property(nonatomic) mardpCapCounts counts;
 @end
 
 @implementation MardpOutput
@@ -103,7 +112,32 @@ int mardpCapAlive(uint32_t id, const char *uuid) {
 		return;
 	}
 	CVPixelBufferRef pb = CMSampleBufferGetImageBuffer(sb);
-	if (pb == NULL || CVPixelBufferGetPixelFormatType(pb) != kCVPixelFormatType_32BGRA) {
+	if (pb == NULL || CVPixelBufferGetPixelFormatType(pb) != self.format) {
+		return;
+	}
+	if (self.video) {
+		// A frame whose dirty rectangles are none changed nothing: ScreenCaptureKit
+		// sends them, for example, when only content outside the filter moved.
+		NSArray *changed = info[SCStreamFrameInfoDirtyRects];
+		if ([changed isKindOfClass:[NSArray class]] && changed.count == 0) {
+			return;
+		}
+		// Straight to the encoder, in C (SPEC §4.2).
+		CMTime pts = CMSampleBufferGetPresentationTimeStamp(sb);
+		@synchronized(self) {
+			if (self.live) {
+				long st = self.submit(self.arg, pb, pts);
+				mardpCapCounts c = self.counts;
+				if (st == 0) {
+					c.encoded++;
+				} else if (st == 1) {
+					c.skipped++;
+				} else {
+					c.refused++;
+				}
+				self.counts = c;
+			}
+		}
 		return;
 	}
 	NSArray *dirty = info[SCStreamFrameInfoDirtyRects];
@@ -140,6 +174,9 @@ int mardpCapAlive(uint32_t id, const char *uuid) {
 	}
 	@synchronized(self) {
 		if (self.live) {
+			mardpCapCounts c = self.counts;
+			c.crossings++;
+			self.counts = c;
 			mardpCapFrame(self.handle, CVPixelBufferGetBaseAddress(pb), (int)CVPixelBufferGetBytesPerRow(pb),
 				(int)CVPixelBufferGetWidth(pb), (int)CVPixelBufferGetHeight(pb), rects, n);
 		}
@@ -164,8 +201,8 @@ static long fail(NSError *e, char *message, int len) {
 }
 
 // start starts a stream; see mardpCapStart.
-static long start(uintptr_t handle, uint32_t displayID, int width, int height, int fps,
-	void **streamOut, void **outputOut, char *message, int len) {
+static long start(uintptr_t handle, uint32_t displayID, int width, int height, int fps, int video, int fullRange,
+	void *submit, void *arg, uint32_t windowID, void **streamOut, void **outputOut, char *message, int len) {
 	@autoreleasepool {
 		dispatch_semaphore_t done = dispatch_semaphore_create(0);
 		__block SCShareableContent *content = nil;
@@ -194,17 +231,43 @@ static long start(uintptr_t handle, uint32_t displayID, int width, int height, i
 			snprintf(message, len, "ScreenCaptureKit does not list display %u", displayID);
 			return SCStreamErrorNoCaptureSource;
 		}
-		SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+		SCContentFilter *filter = nil;
+		if (windowID != 0) {
+			SCWindow *window = nil;
+			for (SCWindow *w in content.windows) {
+				if (w.windowID == windowID) {
+					window = w;
+				}
+			}
+			if (window == nil) {
+				snprintf(message, len, "ScreenCaptureKit does not list window %u", windowID);
+				return SCStreamErrorNoCaptureSource;
+			}
+			// The window alone: a display filter that includes it still
+			// reports the whole display's changes.
+			filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:window];
+		} else {
+			filter = [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+		}
 		SCStreamConfiguration *cfg = [[SCStreamConfiguration alloc] init];
 		cfg.width = width;
 		cfg.height = height;
-		cfg.pixelFormat = kCVPixelFormatType_32BGRA;
+		OSType format = kCVPixelFormatType_32BGRA;
+		if (video) {
+			format = fullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+			cfg.colorMatrix = kCGDisplayStreamYCbCrMatrix_ITU_R_709_2;
+		}
+		cfg.pixelFormat = format;
 		cfg.colorSpaceName = kCGColorSpaceSRGB;
 		cfg.showsCursor = NO;
 		cfg.minimumFrameInterval = CMTimeMake(1, fps);
 		cfg.queueDepth = 3;
 		MardpOutput *output = [[MardpOutput alloc] init];
 		output.handle = handle;
+		output.video = video != 0;
+		output.format = format;
+		output.submit = (mardpSubmitFn)submit;
+		output.arg = arg;
 		output.live = YES;
 		SCStream *stream = [[SCStream alloc] initWithFilter:filter configuration:cfg delegate:output];
 		dispatch_queue_t queue = dispatch_queue_create("mardp.capture", DISPATCH_QUEUE_SERIAL);
@@ -223,7 +286,7 @@ static long start(uintptr_t handle, uint32_t displayID, int width, int height, i
 			if (wait != 0) {
 				snprintf(message, len, "the stream did not start in time");
 			}
-			mardpCapStop((__bridge_retained void *)stream, (__bridge_retained void *)output);
+			mardpCapStop((__bridge_retained void *)stream, (__bridge_retained void *)output, NULL);
 			return code;
 		}
 		*streamOut = (__bridge_retained void *)stream;
@@ -232,19 +295,24 @@ static long start(uintptr_t handle, uint32_t displayID, int width, int height, i
 	}
 }
 
-mardpCapStarted mardpCapStart(uintptr_t handle, uint32_t displayID, int width, int height, int fps) {
+mardpCapStarted mardpCapStart(uintptr_t handle, uint32_t displayID, int width, int height, int fps,
+	int video, int fullRange, void *submit, void *arg, uint32_t window) {
 	mardpCapStarted r = {0};
-	r.code = start(handle, displayID, width, height, fps, &r.stream, &r.output, r.message, sizeof(r.message));
+	r.code = start(handle, displayID, width, height, fps, video, fullRange, submit, arg, window, &r.stream, &r.output,
+		r.message, sizeof(r.message));
 	return r;
 }
 
-void mardpCapStop(void *streamRef, void *outputRef) {
+void mardpCapStop(void *streamRef, void *outputRef, mardpCapCounts *counts) {
 	@autoreleasepool {
 		SCStream *stream = (__bridge_transfer SCStream *)streamRef;
 		MardpOutput *output = (__bridge_transfer MardpOutput *)outputRef;
 		// 1. Retire the output: no callback is in Go after this.
 		@synchronized(output) {
 			output.live = NO;
+			if (counts != NULL) {
+				*counts = output.counts;
+			}
 		}
 		// 2. Stop the stream and wait for the answer.
 		dispatch_semaphore_t done = dispatch_semaphore_create(0);

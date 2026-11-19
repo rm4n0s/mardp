@@ -468,3 +468,24 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - `mardp_mac` tests with VideoToolbox and generated frames (`go test -tags mardp_mac ./internal/mac/vtenc`; no permission needed): for 720p and 1080p, both ranges, and each profile, the first frame is a key frame (SPS, PPS, IDR) and the next ones P-frames with no B-slice and in order; the SPS has `profile_idc` 100 with `constraint_set4/5` (77 for Main, 66 with `constraint_set1` for Constrained Baseline), `max_num_reorder_frames = 0`, BT.709, the input's range and the size; a forced key frame comes with the same SPS; skipped frames encode nothing and a key frame forced meanwhile comes with the first frame encoded; nothing comes after `Close`. The bitrate follows 2, 8, 6, 4.5, 3.4 and 6 Mbit/s within 10% (1.83, 7.68, 6.06, 4.54, 3.19, 5.97) without a dropped frame or a new key frame; also under the race detector.
 - **Differs from the plan:** two findings went into the spec: a frame that does not fit the bitrate even at the coarsest quantizer is dropped by VideoToolbox (pure noise at 720p, 1 to 8 Mbit/s), and a fall of the bitrate to an eighth at once drops about half the frames for three seconds, so §9.5 falls by a quarter at a time. The tests make their own NV12 frames from the session's pixel buffer pool instead of capturing the screen; capture into the encoder is 3.7.
 - **Manual checks:** none.
+
+## 3.7 Capture straight into the encoder (2026-11-19)
+- **Built:**
+  - `internal/mac/capture`:
+    - `CaptureVideo(ctx, cfg, VideoOutput)` runs the same restartable stream as `Capture`, but in NV12 (`420f` or `420v` as the encoder is set) with the BT.709 colour matrix.
+    - Its ObjC callback calls the encoder's C submit function under the output's lock while the stream is live, so a stopped stream never reaches the encoder; frames with no dirty rectangle are not submitted.
+    - `VideoSink`, `VideoOutput`, `VideoStats` (encoded, skipped, refused, crossings into Go) and `DefaultVideoFPS` (60).
+  - `internal/mac/vtenc`: `Encoder.Submitter()`, the C function and its argument.
+  - Tests only: a `mardp_mac` AppKit test window that animates on demand, and capture of that window alone.
+  - SPEC §4.2 (the NV12 path) and §9.4 (what was measured).
+- **Proved:**
+  - Fakes: `CaptureVideo` passes the encoder's submit function, the range and 60 fps to the stream; no Go frame callback is made; it restarts after a stream error; the stats of every stream are summed. Refusals with their routes: no submit function or a bad size (`Source.CaptureVideo.CaptureConfigInvalid`), no permission.
+  - `mardp_mac` TestMacVideo, ScreenCaptureKit into VideoToolbox, capturing the test's own window:
+    - 113 frames encoded in 2 s of motion, 0 while skipped, 55 in the second after resuming, and 1 in 2 s while the window was still;
+    - 0 crossings into Go from the capture, and the encoder's outputs equal the frames the capture submitted (224), so the encoder's callback is the frame's only crossing;
+    - one key frame, nothing dropped or failed.
+  - TestMacStillScreen now captures its still window: 2 frames in 3 s, the first whole.
+- **Differs from the plan:**
+  - The still-screen proof captures the test's own window alone. The owner's display changed all the time during the runs (something redrew one small area about 60 times in 3 s). A display filter that includes only the test window still reported those changes as dirty rectangles, so only a window filter shows a still picture. The same change made TestMacStillScreen pass on a busy screen.
+  - "Nothing" is at most one or two frames: ScreenCaptureKit sends the odd frame of an unchanged window.
+- **Manual checks:** none.
