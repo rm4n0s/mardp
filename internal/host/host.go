@@ -79,6 +79,8 @@ type Host struct {
 	log   *slog.Logger
 	// open counts the sessions running now.
 	open atomic.Int64
+	// video is the video of the session that opened last, while it runs.
+	video atomic.Pointer[rdp.Video]
 }
 
 // New makes a Host of the parts.
@@ -140,6 +142,15 @@ func (h *Host) DesktopSize(c *rdp.Client) (width, height int) {
 // (SPEC §12.2).
 func (h *Host) Sessions() int { return int(h.open.Load()) }
 
+// VideoPath is the video path of the session running now (SPEC §9.1), for
+// the window; 0 when none runs.
+func (h *Host) VideoPath() rdp.VideoPath {
+	if v := h.video.Load(); v != nil {
+		return v.Path()
+	}
+	return 0
+}
+
 // fitSize fits a display of dw×dh inside a client's cw×ch.
 func fitSize(dw, dh, cw, ch, maxHeight int) (width, height int) {
 	if cw <= 0 || ch <= 0 {
@@ -160,6 +171,9 @@ func fitSize(dw, dh, cw, ch, maxHeight int) (width, height int) {
 func (h *Host) SessionOpened(ctx context.Context, s *rdp.Session) {
 	h.open.Add(1)
 	defer h.open.Add(-1)
+	v := s.Video()
+	h.video.Store(v)
+	defer h.video.CompareAndSwap(v, nil)
 	c := s.Client()
 	log := h.log.With("client", c.Name, "remote", c.Remote)
 	d, err := h.parts.Screen.Display(ctx)

@@ -15,6 +15,7 @@ import (
 	"github.com/rm4n0s/mardp/internal/config"
 	"github.com/rm4n0s/mardp/internal/host"
 	"github.com/rm4n0s/mardp/internal/ui"
+	"github.com/rm4n0s/mardp/rdp"
 )
 
 // newTestApp is the backend of h's folder on m.
@@ -88,7 +89,7 @@ func TestWindow(t *testing.T) {
 	if st := seen[1]; st.Server != ui.ServerListening || !slices.Equal(st.Addresses, []string{addr}) || st.Fingerprint == "" || st.ViewOnly {
 		t.Errorf("after Start %+v", st)
 	}
-	if st := seen[2]; st.Server != ui.ServerConnected {
+	if st := seen[2]; st.Server != ui.ServerConnected || st.Video != ui.TextVideoBitmaps {
 		t.Errorf("with a client %+v", st)
 	}
 	if nc, err := net.Dial("tcp", addr); err == nil {
@@ -343,5 +344,19 @@ func TestAddresses(t *testing.T) {
 				t.Errorf("addresses %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestVideoText(t *testing.T) {
+	for _, tt := range []struct {
+		p    rdp.VideoPath
+		want string
+	}{
+		{rdp.VideoAVC420, ui.TextVideoAVC420}, {rdp.VideoPlanar, ui.TextVideoPlanar},
+		{rdp.VideoBitmaps, ui.TextVideoBitmaps}, {0, ""},
+	} {
+		if got := videoText(tt.p); got != tt.want {
+			t.Errorf("videoText(%v) = %q, want %q", tt.p, got, tt.want)
+		}
 	}
 }

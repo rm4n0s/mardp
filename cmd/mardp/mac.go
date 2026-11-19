@@ -9,6 +9,7 @@ import (
 	"github.com/rm4n0s/mardp/internal/mac/capture"
 	"github.com/rm4n0s/mardp/internal/mac/input"
 	"github.com/rm4n0s/mardp/internal/mac/system"
+	"github.com/rm4n0s/mardp/internal/mac/video"
 	"github.com/rm4n0s/mardp/internal/ui"
 )
 
@@ -38,7 +39,7 @@ func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger
 	if err != nil {
 		return host.Parts{}, err
 	}
-	parts := host.Parts{Screen: screen, Pointer: pointer, System: sys}
+	parts := host.Parts{Screen: screen, Video: video.New(screen, video.Options{Logger: log}), Pointer: pointer, System: sys}
 	if post {
 		in, err := input.New(input.Options{Display: s.Display, SwapCtrlCommand: s.SwapCtrlCommand, Logger: log})
 		if err != nil {

@@ -176,7 +176,7 @@ func prepare(ctx context.Context, folder *config.Folder, settings func() config.
 	if err != nil {
 		return nil, err
 	}
-	hst, err := host.New(parts, host.Options{MaxFPS: s.MaxFPS, MaxHeight: s.MaxHeight, Logger: log})
+	hst, err := host.New(parts, host.Options{VideoFPS: s.MaxFPS, MaxBitrate: s.MaxBitrate, MaxHeight: s.MaxHeight, Logger: log})
 	if err != nil {
 		return nil, err
 	}

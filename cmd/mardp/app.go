@@ -14,6 +14,7 @@ import (
 	"github.com/rm4n0s/mardp/internal/config"
 	"github.com/rm4n0s/mardp/internal/host"
 	"github.com/rm4n0s/mardp/internal/ui"
+	"github.com/rm4n0s/mardp/rdp"
 )
 
 // The failures of the window's backend.
@@ -100,6 +101,7 @@ func (a *app) Status() ui.Status {
 	st.Server = ui.ServerListening
 	if r.hst.Sessions() > 0 {
 		st.Server = ui.ServerConnected
+		st.Video = videoText(r.hst.VideoPath())
 	}
 	st.Fingerprint, st.ViewOnly = r.fingerprint, !r.post
 	port := r.l.Addr().(*net.TCPAddr).Port
@@ -109,6 +111,19 @@ func (a *app) Status() ui.Status {
 	}
 	st.Addresses = addresses(addrs, s.Address, port)
 	return st
+}
+
+// videoText names the video path p for the window; "" for none.
+func videoText(p rdp.VideoPath) string {
+	switch p {
+	case rdp.VideoAVC420:
+		return ui.TextVideoAVC420
+	case rdp.VideoPlanar:
+		return ui.TextVideoPlanar
+	case rdp.VideoBitmaps:
+		return ui.TextVideoBitmaps
+	}
+	return ""
 }
 
 // Start implements ui.Backend: the server runs until Stop, on a context of

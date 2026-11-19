@@ -49,7 +49,7 @@ const (
 	FolderMode fs.FileMode = 0o700
 	FileMode   fs.FileMode = 0o600
 	// Version is the version of config.json this mardp writes.
-	Version = 1
+	Version = 2
 )
 
 // Sound says where the sound plays (SPEC §10.1).
@@ -65,7 +65,7 @@ const (
 // The defaults of the settings (SPEC §6, §9.5, §10.1).
 const (
 	DefaultPort       = 3389
-	DefaultMaxFPS     = 30
+	DefaultMaxFPS     = 60
 	DefaultMaxBitrate = 20_000_000
 )
 
@@ -88,7 +88,7 @@ type Settings struct {
 	Display string `json:"display"`
 	// MaxHeight caps the desktop's height; 0 is no cap.
 	MaxHeight int `json:"maxHeight"`
-	// MaxFPS is 30 or 60.
+	// MaxFPS caps the frame rate of the H.264 path (SPEC §9.4): 30 or 60.
 	MaxFPS int `json:"maxFps"`
 	// MaxBitrate caps the H.264 bitrate, in bits a second.
 	MaxBitrate int `json:"maxBitrate"`
@@ -159,8 +159,19 @@ type Folder struct {
 }
 
 // upgrades are the upgrades of config.json, one per version after the
-// first: none yet.
-var upgrades []func(map[string]json.RawMessage) error
+// first.
+var upgrades = []func(map[string]json.RawMessage) error{upgradeTo2}
+
+// upgradeTo2 upgrades version 1, whose frame-rate cap of 30 was the
+// default of the bitmap paths and could not be set in the window: from
+// version 2 the setting caps the H.264 path, whose default is 60 (SPEC
+// §9.4), so a 30 becomes 60.
+func upgradeTo2(m map[string]json.RawMessage) error {
+	if string(m["maxFps"]) == "30" {
+		m["maxFps"] = json.RawMessage("60")
+	}
+	return nil
+}
 
 // Open makes the folder at path when it is missing and sets the modes of
 // the folder and its files to FolderMode and FileMode, logging each one it

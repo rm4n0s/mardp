@@ -511,3 +511,20 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - The skip needed `Backlog.Queued` and a ticker beside the check after each send: right after a send the frame just queued is in the queue, so that check counts only unacknowledged frames; and a skip shorter than a frame interval (the writer finishing a frame) does not lower the bitrate.
   - The real `VideoSource` (capture into vtenc) is wired into the app in 3.9.
 - **Manual checks:** none.
+
+## 3.9 A real client decodes it (2026-11-19)
+- **Built:**
+  - `internal/mac/video`: the host's `VideoSource` on macOS. For each capture it makes a VideoToolbox encoder of the session's size, frame rate and bitrate, full range, and runs `capture.CaptureVideo` into it; the encoder is closed after the capture stops. The app's parts use it, and `host.Options` take `VideoFPS` and `MaxBitrate` from the settings.
+  - `internal/mac/vtenc`: `Close` no longer holds the setters' lock while VideoToolbox finishes its last frames, because their frame function (the H.264 path) may call `ForceKeyFrame` or `SetSkip` meanwhile, which deadlocked; `SubmitNV12`, under the build tag `mardp_freerdp`, encodes a picture made in Go.
+  - The window shows the connected session's video path: `host.Host.VideoPath()`, named in `cmd/mardp`, shown as "Video: …".
+  - `internal/config`: version 2 of `config.json`. The `maxFps` setting caps the H.264 path, default 60; a 30 written by version 1 (its default, which the window could not change) becomes 60.
+  - SPEC §4.1 (`internal/mac/video`), §9.3 (the colour and profile results), §9.4 (`maxFps`), §15.3 (how the H.264 tests get their picture).
+- **Proved:**
+  - `mardp_freerdp` TestFreeRDPAVC, FreeRDP 3.33.1 in the test machine against colour bars served by the test through the host and VideoToolbox: the session takes the AVC420 path (GFX 8.1 with AVC420), FreeRDP gets 160 to 165 AVC420 frames in 5 s at 30 fps, which needs its acknowledgements (without them the flow control stops after 3), logs no codec, drawing or channel error, and its screenshot has the bars within 2 levels of their colours for Constrained High, Main and Constrained Baseline at full range. The same bars at video range come back with white at 235 and black at 16: FreeRDP converts with BT.709 at full range whatever the SPS says.
+  - `mardp_freerdp` TestFreeRDPHeadless now runs twice: as before (bitmaps), and with `/gfx:AVC420`, where `mardp -headless` sends the Mac's real screen through ScreenCaptureKit into VideoToolbox (`path=avc420`, encoder 1024×576 at 60 fps, a screenshot of over 1000 colours, no stopped capture).
+  - Fakes: the video source's options, the encoder handed to the session and to the capture, frames passed through, the encoder closed after the capture, an encoder or capture failure with its route; `Close` with the setters called from the frames it waits for; `Host.VideoPath` through bitmaps, AVC420, Planar and the end of the session; the window's text; the config upgrade.
+- **Differs from the plan:**
+  - The colour-bar test serves its own picture instead of going through `mardp -headless`: the real app shows the owner's screen, which has no colour bars. The real app's H.264 path is checked by the second run of TestFreeRDPHeadless.
+  - The colour result removed a choice: the capture and the encoder are always full range.
+  - Not planned but needed: the encoder's `Close` deadlock, the config upgrade, and FreeRDP's flag (`/gfx:AVC420` advertises GFX 8.0, 8.1 and FreeRDP's own set, so 8.1 is confirmed).
+- **Manual checks:** pending, see docs/MANUAL-CHECKS.md (3.9, a 1080p video in Remmina).

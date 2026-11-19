@@ -27,6 +27,12 @@ const (
 	TextFingerprint = "Certificate fingerprint (SHA-256), as Remmina shows it on the first connection:"
 	TextViewOnly    = "View only: the client's keyboard and mouse are dropped, because Accessibility was not granted when the server started. Stop and Start the server to use it."
 	TextWhyStopped  = "The server stopped: "
+	TextVideo       = "Video: "
+
+	// The video paths' names (SPEC §9.1).
+	TextVideoAVC420  = "H.264 (AVC420) through the graphics pipeline"
+	TextVideoPlanar  = "Planar through the graphics pipeline"
+	TextVideoBitmaps = "bitmap updates"
 
 	textScreenRecordingNeeded = "Needed to show the screen; the server does not start without it. macOS asks again from time to time (\"… is requesting to bypass the system private window picker …\"): answer it at the Mac. A running session goes on while the question waits."
 	textAccessibilityNeeded   = "Needed for the client's keyboard and mouse; without it the sessions are view only."
@@ -72,6 +78,8 @@ type ViewModel struct {
 	ViewOnly bool
 	// Problem is why the server stopped by itself.
 	Problem string
+	// Video names the connected session's video path; "" when none.
+	Video string
 	// CanStart and CanStop say which of Start and Stop is shown enabled.
 	CanStart, CanStop bool
 	// Checklist is shown until everything is done; nil then.
@@ -94,6 +102,9 @@ func NewViewModel(st Status) ViewModel {
 		vm.Addresses, vm.Fingerprint, vm.ViewOnly = st.Addresses, st.Fingerprint, st.ViewOnly
 	}
 	vm.CanStop = running
+	if st.Server == ServerConnected {
+		vm.Video = st.Video
+	}
 	vm.CanStart = !running && st.ScreenRecording && st.LoginSet
 	checks := []Check{
 		permissionCheck(TextScreenRecording, textScreenRecordingNeeded, host.ScreenRecording, st.ScreenRecording),

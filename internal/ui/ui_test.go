@@ -159,7 +159,11 @@ func TestViewModel(t *testing.T) {
 		}(), TextStopped, true, false, false, false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.st.Video = TextVideoPlanar
 			vm := NewViewModel(tt.st)
+			if want := tt.state == TextConnected; (vm.Video == TextVideoPlanar) != want || (vm.Video == "") == want {
+				t.Errorf("video path %q", vm.Video)
+			}
 			if vm.State != tt.state || vm.CanStart != tt.canStart || vm.CanStop != tt.canStop ||
 				(vm.Checklist != nil) != tt.checklist || (len(vm.Addresses) > 0) != tt.addresses || vm.ViewOnly != tt.viewOnl {
 				t.Errorf("view model %+v", vm)
@@ -339,10 +343,10 @@ func TestStartStop(t *testing.T) {
 		t.Error("Start can be pressed, or Stop cannot, while listening")
 	}
 
-	b.set(func(st *Status) { st.Server = ServerConnected })
+	b.set(func(st *Status) { st.Server, st.Video = ServerConnected, TextVideoAVC420 })
 	ts.Pump(PollInterval)
-	if !shows(ts, TextConnected) {
-		t.Error("the window does not show the connection")
+	if !shows(ts, TextConnected) || !shows(ts, TextVideo+TextVideoAVC420) {
+		t.Error("the window does not show the connection and its video path")
 	}
 
 	ts.Tap(gluttertest.ByKey(KeyStop))

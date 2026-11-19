@@ -33,6 +33,8 @@ type fakeVT struct {
 	forced   int
 	skip     bool
 	closed   int
+	// onClose runs in close, as VideoToolbox's last frames do.
+	onClose func()
 }
 
 func (f *fakeVT) create(cfg config, enc *Encoder) (session, *createFailure) {
@@ -57,7 +59,14 @@ func (f *fakeVT) setBitrate(bps int) int {
 
 func (f *fakeVT) forceKeyFrame() { f.mu.Lock(); f.forced++; f.mu.Unlock() }
 func (f *fakeVT) setSkip(s bool) { f.mu.Lock(); f.skip = s; f.mu.Unlock() }
-func (f *fakeVT) close()         { f.mu.Lock(); f.closed++; f.mu.Unlock() }
+func (f *fakeVT) close() {
+	if f.onClose != nil {
+		f.onClose()
+	}
+	f.mu.Lock()
+	f.closed++
+	f.mu.Unlock()
+}
 
 func (f *fakeVT) submitter() (fn, arg unsafe.Pointer) {
 	return unsafe.Pointer(f), unsafe.Pointer(&f.forced)
@@ -137,6 +146,35 @@ func TestEncoderControls(t *testing.T) {
 	e.SetSkip(false)
 	if f.forced != 1 || !f.skip {
 		t.Error("a closed encoder reached its session")
+	}
+}
+
+// TestCloseCallsBack: the frames Close waits for may call the setters from
+// the frame function, on another thread, as the H.264 path does; Close
+// returns, and the setters do nothing.
+func TestCloseCallsBack(t *testing.T) {
+	f := &fakeVT{}
+	e, err := newEncoder(Options{Width: 64, Height: 64}, func(*Frame) {}, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.onClose = func() {
+		done := make(chan error, 1)
+		go func() {
+			e.ForceKeyFrame()
+			e.SetSkip(true)
+			done <- e.SetBitrate(2e6)
+		}()
+		select {
+		case err := <-done:
+			assertRoute(t, err, "Encoder.SetBitrate."+TagEncoderClosed)
+		case <-time.After(5 * time.Second):
+			t.Error("the setters wait for Close")
+		}
+	}
+	e.Close()
+	if f.closed != 1 || f.forced != 0 || f.skip {
+		t.Errorf("closed %d times, %d forced, skip %v", f.closed, f.forced, f.skip)
 	}
 }
 

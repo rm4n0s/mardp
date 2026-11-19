@@ -215,7 +215,7 @@ func TestLoad(t *testing.T) {
 		{"all settings", string(customJSON), custom, ""},
 		{"missing settings are the defaults", `{"version":1,"user":"a"}`, partial, ""},
 		{"unknown settings are ignored", `{"version":1,"user":"a","later":true}`, partial, ""},
-		{"newer version", `{"version":2,"user":"a"}`, Settings{}, "Folder.Load." + TagTooNew},
+		{"newer version", `{"version":3,"user":"a"}`, Settings{}, "Folder.Load." + TagTooNew},
 		{"no version", `{"user":"a"}`, Settings{}, "Folder.Load." + TagVersionMissing},
 		{"version not a number", `{"version":"one"}`, Settings{}, "Folder.Load." + TagCorrupt},
 		{"version 0", `{"version":0}`, Settings{}, "Folder.Load." + TagCorrupt},
@@ -224,6 +224,8 @@ func TestLoad(t *testing.T) {
 		{"port out of range", `{"version":1,"port":70000}`, Settings{}, "Settings.Validate." + TagInvalid},
 		{"address", `{"version":1,"address":"nowhere"}`, Settings{}, "Settings.Validate." + TagInvalid},
 		{"frame rate", `{"version":1,"maxFps":45}`, Settings{}, "Settings.Validate." + TagInvalid},
+		{"version 1's frame rate of 30 becomes 60", `{"version":1,"user":"a","maxFps":30}`, partial, ""},
+		{"version 2 keeps 30", `{"version":2,"user":"a","maxFps":30}`, func() Settings { s := partial; s.MaxFPS = 30; return s }(), ""},
 		{"height cap", `{"version":1,"maxHeight":-1}`, Settings{}, "Settings.Validate." + TagInvalid},
 		{"bitrate", `{"version":1,"maxBitrate":5}`, Settings{}, "Settings.Validate." + TagInvalid},
 		{"sound", `{"version":1,"sound":"loud"}`, Settings{}, "Settings.Validate." + TagInvalid},
@@ -258,7 +260,7 @@ func mustJSON(t *testing.T, v any) string {
 func TestTooNewMessage(t *testing.T) {
 	_, err := folderWith(t, `{"version":7}`).Load(context.Background())
 	e, ok := errors.FromError(err)
-	if !ok || !strings.Contains(e.Message, "newer mardp (version 7; this mardp reads up to 1)") {
+	if !ok || !strings.Contains(e.Message, "newer mardp (version 7; this mardp reads up to 2)") {
 		t.Errorf("message %v", err)
 	}
 }

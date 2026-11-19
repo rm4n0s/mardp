@@ -178,15 +178,15 @@ func stopApp(t *testing.T, exe string) {
 const guestDir = "/tmp/mardp-headless"
 
 // shotScript runs xfreerdp in the guest under a virtual X display against
-// addr, takes a screenshot of its window after a few seconds and prints
-// xfreerdp's exit status as "exit N".
-func shotScript(addr string, port int) string {
+// addr, with the extra arguments args, takes a screenshot of its window
+// after a few seconds and prints xfreerdp's exit status as "exit N".
+func shotScript(addr string, port int, args string) string {
 	return fmt.Sprintf(`set -u
 D=%s; rm -rf "$D"; mkdir -p "$D"; cd "$D"; export HOME="$D"
 Xvfb :98 -screen 0 1280x1024x24 -nolisten tcp >xvfb.log 2>&1 & X=$!
 export DISPLAY=:98
 i=0; while ! xdotool getdisplaygeometry >/dev/null 2>&1; do i=$((i+1)); [ $i -gt 100 ] && break; sleep 0.1; done
-timeout 60 xfreerdp /v:%s:%d '/u:%s' '/p:%s' /cert:ignore /size:1024x768 /bpp:32 /log-level:DEBUG >freerdp.log 2>&1 & F=$!
+timeout 60 xfreerdp /v:%s:%d '/u:%s' '/p:%s' /cert:ignore /size:1024x768 /bpp:32 %s /log-level:DEBUG >freerdp.log 2>&1 & F=$!
 W=$(timeout 30 xdotool search --sync --onlyvisible --class freerdp | head -n 1)
 echo "window $W"
 if [ -n "$W" ]; then
@@ -197,7 +197,7 @@ kill $F 2>/dev/null
 wait $F; echo "exit $?"
 kill $X 2>/dev/null; wait 2>/dev/null
 true
-`, guestDir, addr, port, testUser, testPassword)
+`, guestDir, addr, port, testUser, testPassword, args)
 }
 
 // colors counts the distinct colors of the image at path, up to limit.
@@ -225,6 +225,22 @@ func colors(t *testing.T, path string, limit int) (int, image.Rectangle) {
 
 func TestFreeRDPHeadless(t *testing.T) {
 	addr := requireVM(t)
+	for _, tt := range []struct {
+		name, args, path string
+	}{
+		{"bitmaps", "", "session opened"}, // no graphics pipeline: no switch
+		// The H.264 path from the screen: ScreenCaptureKit into VideoToolbox
+		// (step 3.9).
+		{"h264", "/gfx:AVC420", "path=avc420"},
+	} {
+		t.Run(tt.name, func(t *testing.T) { freeRDPHeadless(t, addr, tt.args, tt.path) })
+	}
+}
+
+// freeRDPHeadless runs mardp -headless and xfreerdp with args against it,
+// and checks the screenshot and that mardp's log has path (the line it
+// logs when the session takes its video path).
+func freeRDPHeadless(t *testing.T, addr, args, path string) {
 	dir := logDir(t)
 	l, err := net.Listen("tcp", net.JoinHostPort(addr, "0"))
 	if err != nil {
@@ -239,7 +255,7 @@ func TestFreeRDPHeadless(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	out, err := vm(ctx, "sh", shotScript(addr, port))
+	out, err := vm(ctx, "sh", shotScript(addr, port, args))
 	for _, f := range []string{"freerdp.log", "shot.png"} {
 		if _, perr := vm(ctx, "pull", guestDir+"/"+f, filepath.Join(dir, f)); perr != nil {
 			t.Logf("pulling %s: %v", f, perr)
@@ -262,10 +278,13 @@ func TestFreeRDPHeadless(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"logged in", "session opened", "view-only (-view-only)"} {
+	for _, want := range []string{"logged in", "session opened", "view-only (-view-only)", path} {
 		if !bytes.Contains(b, []byte(want)) {
 			t.Errorf("mardp's log has no %q:\n%s", want, b)
 		}
+	}
+	if bytes.Contains(b, []byte("the capture stopped")) {
+		t.Errorf("the capture stopped:\n%s", b)
 	}
 	if bytes.Contains(b, []byte(testPassword)) {
 		t.Error("mardp's log has the password")

@@ -189,9 +189,12 @@ type Encoder struct {
 	buf []byte
 	out Frame
 
-	// closeMu orders Close against the setters.
-	closeMu sync.Mutex
-	closed  bool
+	// closeMu orders Close against the setters; it is not held while the
+	// session closes, since the frames it waits for may call the setters
+	// from the frame function.
+	closeMu   sync.Mutex
+	closed    bool
+	closeOnce sync.Once
 
 	frames, keys, dropped, failed atomic.Int64
 }
@@ -282,15 +285,13 @@ func (e *Encoder) Stats() Stats {
 }
 
 // Close waits for the frames being encoded and ends the session. It may be
-// called more than once.
+// called more than once. The frame function may call the setters while
+// Close waits; they do nothing then.
 func (e *Encoder) Close() {
 	e.closeMu.Lock()
-	defer e.closeMu.Unlock()
-	if e.closed {
-		return
-	}
 	e.closed = true
-	e.s.close()
+	e.closeMu.Unlock()
+	e.closeOnce.Do(e.s.close)
 }
 
 // deliver turns an output into a Frame for the frame function.

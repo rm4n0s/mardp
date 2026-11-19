@@ -45,13 +45,16 @@ type Status struct {
 	LoginSet bool
 	// Problem is why the server stopped by itself; "" when it did not.
 	Problem string
+	// Video names the connected session's video path (SPEC §9.1), one of
+	// the TextVideo texts; "" when no client is connected.
+	Video string
 }
 
 // Equal says whether s and o are the same status.
 func (s Status) Equal(o Status) bool {
 	return s.Server == o.Server && slices.Equal(s.Addresses, o.Addresses) && s.Fingerprint == o.Fingerprint &&
 		s.ViewOnly == o.ViewOnly && s.ScreenRecording == o.ScreenRecording && s.Accessibility == o.Accessibility &&
-		s.User == o.User && s.LoginSet == o.LoginSet && s.Problem == o.Problem
+		s.User == o.User && s.LoginSet == o.LoginSet && s.Problem == o.Problem && s.Video == o.Video
 }
 
 // Backend is what the window shows and does. Status is called on the UI

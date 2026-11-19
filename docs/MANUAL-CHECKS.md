@@ -161,3 +161,24 @@ With real clicks, at the Mac (not through scripted taps or screenshots of my own
 
 Tell me what differed at any step, and anything in the window that looked wrong (layout, light or dark mode).
 
+
+## 3.9 A 1080p video in Remmina (SPEC §9.1, §9.3, §9.5)
+
+Needs Remmina's profile set to H.264: Basic tab, "Colour depth" "GFX AVC420 (32 bpp)". Sound is not there yet (M4).
+
+1. Build the app, open it, and press Start (as in 2.8):
+
+   ```bash
+   scripts/build-app.sh
+   ```
+
+   ```bash
+   open -n build/mardp.app --args -log-file /tmp/mardp.log
+   ```
+
+2. On your Linux machine, connect with Remmina at a 1920×1080 size (or full screen on a 1080p monitor). Expected: the window on the Mac says Connected and "Video: H.264 (AVC420) through the graphics pipeline"; `/tmp/mardp.log` has `msg="video path" … path=avc420` and `msg="H.264 encoder" … fps=60`.
+3. On the Mac, play a 1080p video full screen (any video in Safari, or QuickTime). Expected in Remmina: smooth motion at about the video's frame rate, colours like the Mac's (white white, black black, not grey), no smearing or blocks that stay, and the pointer and clicks answering at once.
+4. Optional: the same in Remmina in the test machine's window (`scripts/vm.sh start`, then Remmina from its menu, with the Mac's address as the guest sees it: `scripts/vm.sh host-address`). Its decoding is in software on a busy Mac, so slower motion there is expected; only the colours and the absence of errors count.
+5. Press Stop and close the window.
+
+Tell me how smooth the video was, whether anything looked wrong, and any line of `/tmp/mardp.log` with `level=WARN` or `level=ERROR`.

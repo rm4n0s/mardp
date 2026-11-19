@@ -211,6 +211,9 @@ func (s *windowState) statusCard(bc m.BuildContext, vm ViewModel) m.Widget {
 	if vm.Fingerprint != "" {
 		rows = append(rows, m.NewText(TextFingerprint), m.NewText(vm.Fingerprint))
 	}
+	if vm.Video != "" {
+		rows = append(rows, m.NewText(TextVideo+vm.Video))
+	}
 	if vm.ViewOnly {
 		rows = append(rows, m.NewText(TextViewOnly))
 	}

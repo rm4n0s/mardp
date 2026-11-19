@@ -479,6 +479,9 @@ func TestSessionPathSwitch(t *testing.T) {
 	if n := video.Stats().Captures; n != 0 {
 		t.Errorf("%d video captures before the pipeline", n)
 	}
+	if p := s.h.VideoPath(); p != rdp.VideoBitmaps {
+		t.Errorf("path %v before the pipeline", p)
+	}
 	g, err := s.c.StartGFX(ctx, rdptest.AVC420Caps())
 	if err != nil {
 		t.Fatal(err)
@@ -494,6 +497,9 @@ func TestSessionPathSwitch(t *testing.T) {
 	}
 	if len(s.rec.find("video path")) == 0 {
 		t.Error("the switch was not logged")
+	}
+	if p := s.h.VideoPath(); p != rdp.VideoAVC420 {
+		t.Errorf("path %v", p)
 	}
 
 	// Without H.264 the session goes back to tiles through the pipeline.
@@ -519,6 +525,17 @@ func TestSessionPathSwitch(t *testing.T) {
 	}
 	if n := video.Stats().Captures; n != 1 {
 		t.Errorf("%d captures", n)
+	}
+	if p := s.h.VideoPath(); p != rdp.VideoPlanar {
+		t.Errorf("path %v", p)
+	}
+	if err := s.c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); s.h.VideoPath() != 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the path stays after the session")
+		}
 	}
 }
 
