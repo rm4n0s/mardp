@@ -314,3 +314,24 @@ The tests check the notifications on Glutter's fake desktop. This check sees the
 6. After the minute, log in with the right password. Expected: it connects.
 
 Tell me what did not look or behave as expected.
+
+## 5.5 Starting by itself (SPEC §7.3)
+
+The tests check the setting's logic with a fake of macOS's login items; no test changes your login items. This check does, and puts them back at the end.
+
+1. Build the app and open it:
+
+   ```bash
+   scripts/build-app.sh
+   ```
+
+   ```bash
+   open -n build/mardp.app --args -log-file /tmp/mardp.log
+   ```
+
+2. In Settings, turn on "Open the app at login" and "Start the server when the app opens", and press "Save settings". Expected: macOS shows a notification that a login item was added; System Settings › General › Login Items lists mardp under "Open at Login".
+3. Log out and log in again (the app quits at the logout). Expected: mardp opens by itself, and its window shows the server listening.
+4. In System Settings › General › Login Items, take mardp out of "Open at Login" with "−". Expected: within a few seconds the setting "Open the app at login" turns off in mardp's window.
+5. Turn "Open the app at login" on again and save; then turn it off and save. Expected: mardp is in the list, then gone. Turn "Start the server when the app opens" off and save if you do not want it.
+
+Tell me what did not look or behave as expected.

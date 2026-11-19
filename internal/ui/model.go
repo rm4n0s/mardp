@@ -27,6 +27,7 @@ const (
 	TextFingerprint = "Certificate fingerprint (SHA-256), as Remmina shows it on the first connection:"
 	TextViewOnly    = "View only: the client's keyboard and mouse are dropped, because Accessibility was not granted when the server started. Stop and Start the server to use it."
 	TextWhyStopped  = "The server stopped: "
+	TextStartFailed = "The server did not start when the app opened: "
 	TextVideo       = "Video: "
 
 	// The video paths' names (SPEC §9.1).
@@ -78,6 +79,8 @@ type ViewModel struct {
 	ViewOnly bool
 	// Problem is why the server stopped by itself.
 	Problem string
+	// StartProblem is why the server did not start when the app opened.
+	StartProblem string
 	// Video names the connected session's video path; "" when none.
 	Video string
 	// Session are the lines of the connected session's details and
@@ -96,7 +99,7 @@ type ViewModel struct {
 
 // NewViewModel makes the view model of st.
 func NewViewModel(st Status) ViewModel {
-	vm := ViewModel{Problem: st.Problem}
+	vm := ViewModel{Problem: st.Problem, StartProblem: st.StartProblem}
 	switch st.Server {
 	case ServerListening:
 		vm.State = TextListening

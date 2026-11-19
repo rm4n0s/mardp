@@ -312,6 +312,9 @@ func (s *windowState) statusCard(bc m.BuildContext, vm ViewModel) m.Widget {
 	if vm.Problem != "" {
 		rows = append(rows, errorText(bc, TextWhyStopped+vm.Problem))
 	}
+	if vm.StartProblem != "" {
+		rows = append(rows, errorText(bc, TextStartFailed+vm.StartProblem))
+	}
 	if s.actionErr != "" {
 		rows = append(rows, errorText(bc, s.actionErr, m.WidgetOpts{Key: KeyActionErr}))
 	}

@@ -24,12 +24,16 @@ type machine interface {
 	parts(sys host.System, s config.Settings, post bool, log *slog.Logger) (host.Parts, error)
 	// window shows the app's window on b until it is closed or ctx ends.
 	window(ctx context.Context, b ui.Backend, log *slog.Logger) error
+	// loginItem adds the app to the login items and takes it out.
+	loginItem() loginItem
 }
 
 // mac is the real Mac.
 type mac struct{}
 
 func (mac) system() (host.System, error) { return system.New() }
+
+func (mac) loginItem() loginItem { return system.LoginItem{} }
 
 func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger) (host.Parts, error) {
 	screen, err := capture.New(capture.Options{Display: s.Display, Logger: log})

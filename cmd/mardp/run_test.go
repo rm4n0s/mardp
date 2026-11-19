@@ -19,6 +19,7 @@ import (
 	"github.com/rm4n0s/errors"
 	"github.com/rm4n0s/mardp/internal/config"
 	"github.com/rm4n0s/mardp/internal/host"
+	"github.com/rm4n0s/mardp/internal/mac/system"
 	"github.com/rm4n0s/mardp/internal/ui"
 	"github.com/rm4n0s/mardp/rdp"
 	"github.com/rm4n0s/mardp/rdp/rdptest"
@@ -73,12 +74,60 @@ type fakeMac struct {
 	// win is the window; nil waits until ctx ends.
 	win func(ctx context.Context, b ui.Backend) error
 
+	login *fakeLogin
+
 	mu    sync.Mutex
 	posts []bool
 }
 
 func newFakeMac(granted ...host.Permission) *fakeMac {
-	return &fakeMac{sys: host.NewFakeSystem(nil, granted...), in: &host.RecordingInjector{}}
+	return &fakeMac{sys: host.NewFakeSystem(nil, granted...), in: &host.RecordingInjector{}, login: &fakeLogin{}}
+}
+
+func (f *fakeMac) loginItem() loginItem {
+	if f.login == nil {
+		f.login = &fakeLogin{}
+	}
+	return f.login
+}
+
+// fakeLogin is the login items of a test: it records what it is asked.
+type fakeLogin struct {
+	mu     sync.Mutex
+	status system.LoginItemStatus
+	err    error
+	sets   []bool
+}
+
+func (l *fakeLogin) Status() system.LoginItemStatus {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.status
+}
+
+func (l *fakeLogin) Set(on bool) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.sets = append(l.sets, on)
+	if l.err != nil {
+		return l.err
+	}
+	l.status = map[bool]system.LoginItemStatus{false: system.LoginItemOff, true: system.LoginItemOn}[on]
+	return nil
+}
+
+// set changes the state, as the user in System Settings.
+func (l *fakeLogin) set(st system.LoginItemStatus) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.status = st
+}
+
+// asked is what the app asked so far.
+func (l *fakeLogin) asked() []bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.sets)
 }
 
 func (f *fakeMac) system() (host.System, error) {

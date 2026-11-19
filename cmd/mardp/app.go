@@ -13,6 +13,7 @@ import (
 	"github.com/rm4n0s/errors"
 	"github.com/rm4n0s/mardp/internal/config"
 	"github.com/rm4n0s/mardp/internal/host"
+	"github.com/rm4n0s/mardp/internal/mac/system"
 	"github.com/rm4n0s/mardp/internal/ui"
 	"github.com/rm4n0s/mardp/rdp"
 )
@@ -38,6 +39,11 @@ const restartPoll = 250 * time.Millisecond
 // maxEvents is how many recent events the window shows (SPEC §12.2).
 const maxEvents = 50
 
+// loginPoll is how often the app asks macOS whether the login item waits
+// for the user's approval, while "open at login" is set: macOS takes a few
+// milliseconds to answer, too long for the window's thread.
+const loginPoll = 3 * time.Second
+
 // stopTimeout is how long the server may take to end its sessions when the
 // app quits.
 const stopTimeout = 10 * time.Second
@@ -54,7 +60,19 @@ func window(ctx context.Context, getenv func(string) string, m machine, viewOnly
 		return err
 	}
 	a := newApp(folder, s, sys, m, viewOnly, log)
+	a.syncLogin(s.OpenAtLogin)
+	if s.StartServer {
+		a.startOnOpen(ctx)
+	}
+	wctx, stopWatch := context.WithCancel(ctx)
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		a.watchLogin(wctx)
+	}()
 	err = m.window(ctx, a, log)
+	stopWatch()
+	<-watched
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
 	defer cancel()
 	if serr := a.close(sctx); err == nil {
@@ -71,6 +89,9 @@ type app struct {
 	viewOnly   bool
 	log        *slog.Logger
 	interfaces func() ([]net.Addr, error)
+	login      loginItem
+	// loginPoll is how often watchLogin asks for the login item's state.
+	loginPoll time.Duration
 	// poll is how often the app looks whether the server can start again
 	// with saved settings.
 	poll time.Duration
@@ -90,6 +111,11 @@ type app struct {
 	// event recorded.
 	events []ui.Event
 	total  int
+	// startProblem is why the server did not start when the app opened;
+	// loginStatus is the login item's state as last asked, and loginErr
+	// why the login item could not be changed.
+	startProblem, loginErr string
+	loginStatus            system.LoginItemStatus
 }
 
 // liveServer is a server that serves until cancel; done is closed when it
@@ -102,7 +128,7 @@ type liveServer struct {
 
 func newApp(folder *config.Folder, s config.Settings, sys host.System, m machine, viewOnly bool, log *slog.Logger) *app {
 	return &app{folder: folder, sys: sys, m: m, viewOnly: viewOnly, log: log, interfaces: net.InterfaceAddrs, poll: restartPoll, now: time.Now,
-		settings: s}
+		login: m.loginItem(), loginPoll: loginPoll, settings: s}
 }
 
 // current returns the settings now.
@@ -128,6 +154,8 @@ func (a *app) Status() ui.Status {
 	st.User, st.LoginSet, st.Problem = s.User, s.Ready(), a.problem
 	st.Settings, st.Pending = s, a.pending && r != nil
 	st.Events, st.EventTotal = slices.Clone(a.events), a.total
+	st.StartProblem, st.LoginProblem = a.startProblem, a.loginErr
+	st.LoginApproval = s.OpenAtLogin && a.loginStatus == system.LoginItemNeedsApproval
 	a.mu.Unlock()
 	if r == nil {
 		return st
@@ -169,7 +197,7 @@ func (a *app) Start(ctx context.Context) error {
 		a.mu.Unlock()
 		return nil
 	}
-	a.starting, a.problem = true, ""
+	a.starting, a.problem, a.startProblem = true, "", ""
 	a.mu.Unlock()
 	srv, err := prepare(ctx, a.folder, a.current, a.sys, a.m, a.viewOnly, observer{session: a.sessionEvent, refused: a.refused}, a.log)
 	a.mu.Lock()
@@ -315,10 +343,106 @@ func (a *app) SaveSettings(ctx context.Context, s config.Settings) error {
 	a.log.Info("the settings are saved", "port", s.Port, "address", s.Address, "display", s.Display,
 		"maxHeight", s.MaxHeight, "maxFps", s.MaxFPS, "maxBitrate", s.MaxBitrate, "sound", s.Sound,
 		"swapCtrlCommand", s.SwapCtrlCommand, "startServer", s.StartServer, "openAtLogin", s.OpenAtLogin)
+	if old.OpenAtLogin != s.OpenAtLogin {
+		a.syncLogin(s.OpenAtLogin)
+	}
 	if forSession(old) != forSession(s) {
 		a.restartWhenIdle()
 	}
 	return nil
+}
+
+// startOnOpen starts the server as the app opens, as "start the server when
+// the app opens" says, if it can start: a login is set and Screen Recording
+// is granted, else the checklist shows what is missing (SPEC §7.3). A
+// start that fails is shown in the window.
+func (a *app) startOnOpen(ctx context.Context) {
+	if !a.current().Ready() || !a.sys.Granted(host.ScreenRecording) {
+		a.log.Warn("the server does not start as the app opens: a login or Screen Recording is missing")
+		return
+	}
+	if err := a.Start(ctx); err != nil {
+		a.mu.Lock()
+		a.startProblem = err.Error()
+		a.mu.Unlock()
+		return
+	}
+	a.log.Info("the server started as the app opened")
+}
+
+// loginItem adds the app to the login items of macOS and takes it out.
+type loginItem interface {
+	// Status says whether the app opens at login.
+	Status() system.LoginItemStatus
+	// Set adds the app to the login items, or takes it out.
+	Set(on bool) error
+}
+
+// syncLogin makes the app a login item or not, as "open the app at login"
+// says (SPEC §7.3). It leaves an item the user turned off in System
+// Settings as it is: the window asks for the approval.
+func (a *app) syncLogin(want bool) {
+	st := a.login.Status()
+	var err error
+	if st.Registered() != want {
+		if err = a.login.Set(want); err != nil {
+			a.log.Error("the login item could not be changed", "on", want, "err", err)
+		} else {
+			a.log.Info("the login item is changed", "on", want)
+		}
+		st = a.login.Status()
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.loginStatus, a.loginErr = st, ""
+	if err != nil {
+		a.loginErr = err.Error()
+	}
+}
+
+// watchLogin asks for the login item's state every loginPoll while "open
+// at login" is set, until ctx ends, so the window sees the user approve it,
+// or take the app out of the login items.
+func (a *app) watchLogin(ctx context.Context) {
+	t := time.NewTicker(a.loginPoll)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if !a.current().OpenAtLogin {
+			continue
+		}
+		st := a.login.Status()
+		a.mu.Lock()
+		was := a.loginStatus
+		a.loginStatus = st
+		a.mu.Unlock()
+		if was.Registered() && st == system.LoginItemOff {
+			a.loginRemoved(ctx)
+		}
+	}
+}
+
+// loginRemoved turns "open the app at login" off when the user took the
+// app out of the login items in System Settings, so the next opening does
+// not add it again.
+func (a *app) loginRemoved(ctx context.Context) {
+	s := a.current()
+	if !s.OpenAtLogin {
+		return
+	}
+	s.OpenAtLogin = false
+	if err := a.folder.Save(ctx, s); err != nil {
+		a.log.Error("the settings could not be saved", "err", err)
+		return
+	}
+	a.mu.Lock()
+	a.settings.OpenAtLogin = false
+	a.mu.Unlock()
+	a.log.Info("the app was taken out of the login items in System Settings: open at login is off")
 }
 
 // forSession is s without what does not apply to a session: the login,

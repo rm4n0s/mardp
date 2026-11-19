@@ -65,6 +65,14 @@ type Status struct {
 	// of which Events are the last: the window notifies of those it has
 	// not seen.
 	EventTotal int
+	// StartProblem is why the server did not start when the app opened;
+	// "" when it did, or did not try (SPEC §7.3).
+	StartProblem string
+	// LoginApproval says that "open the app at login" is set but macOS
+	// waits for the user to allow it in System Settings; LoginProblem is
+	// why the app could not be added to the login items, or taken out.
+	LoginApproval bool
+	LoginProblem  string
 }
 
 // Equal says whether s and o are the same status.
@@ -73,7 +81,8 @@ func (s Status) Equal(o Status) bool {
 		s.ViewOnly == o.ViewOnly && s.ScreenRecording == o.ScreenRecording && s.Accessibility == o.Accessibility &&
 		s.User == o.User && s.LoginSet == o.LoginSet && s.Problem == o.Problem && s.Video == o.Video &&
 		s.Settings == o.Settings && slices.Equal(s.Displays, o.Displays) && s.Pending == o.Pending &&
-		s.Session == o.Session && slices.Equal(s.Events, o.Events) && s.EventTotal == o.EventTotal
+		s.Session == o.Session && slices.Equal(s.Events, o.Events) && s.EventTotal == o.EventTotal &&
+		s.StartProblem == o.StartProblem && s.LoginApproval == o.LoginApproval && s.LoginProblem == o.LoginProblem
 }
 
 // Backend is what the window shows and does. Status is called on the UI

@@ -21,6 +21,12 @@ const (
 	TextNextOpen    = "This applies the next time the app opens."
 
 	TextOpenAtLogin = "Open the app at login"
+	// TextLoginApproval is said while macOS waits for the user to allow
+	// the app to open at login.
+	TextLoginApproval = "macOS waits for you to allow it: System Settings › General › Login Items, under \"Open at Login\"."
+	// TextLoginFailed is said when the app could not be added to the login
+	// items, or taken out.
+	TextLoginFailed = "The login items could not be changed: "
 	TextStartServer = "Start the server when the app opens"
 	TextPort        = "Port"
 	TextAddress     = "Address"

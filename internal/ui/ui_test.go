@@ -265,6 +265,9 @@ func TestStatusEqual(t *testing.T) {
 		{"server", func(s *Status) { s.Server = ServerConnected }, false},
 		{"permission", func(s *Status) { s.Accessibility = false }, false},
 		{"problem", func(s *Status) { s.Problem = "p" }, false},
+		{"start problem", func(s *Status) { s.StartProblem = "p" }, false},
+		{"login approval", func(s *Status) { s.LoginApproval = true }, false},
+		{"login problem", func(s *Status) { s.LoginProblem = "p" }, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			b := a

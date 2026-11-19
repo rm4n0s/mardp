@@ -173,6 +173,14 @@ func (s *windowState) settingsCard(bc m.BuildContext) m.Widget {
 			Trailing: m.NewTextButton(onChange, m.NewText(TextChangeLogin), m.TextButtonOpts{Key: KeyChangeLogin}),
 		}),
 		toggle(KeyOpenAtLogin, TextOpenAtLogin, "", f.form.OpenAtLogin, func(f *Form, v bool) { f.OpenAtLogin = v }),
+	}
+	if s.status.LoginApproval {
+		rows = append(rows, m.NewText(TextLoginApproval, m.TextOpts{Style: theme.TextTheme.BodySmall}))
+	}
+	if s.status.LoginProblem != "" {
+		rows = append(rows, errorText(bc, TextLoginFailed+s.status.LoginProblem))
+	}
+	rows = append(rows,
 		header(TextNextSession),
 		field(KeyPort, TextPort, f.port, FieldPort, "", func(f *Form, v string) { f.Port = v }),
 		field(KeyAddress, TextAddress, f.address, FieldAddress, TextAddressHelp, func(f *Form, v string) { f.Address = v }),
@@ -189,7 +197,7 @@ func (s *windowState) settingsCard(bc m.BuildContext) m.Widget {
 		m.NewOutlinedButton(ifThen(idle, s.newCertificate), m.NewText(TextNewCertificate), m.OutlinedButtonOpts{Key: KeyNewCertificate}),
 		header(TextNextOpen),
 		toggle(KeyStartServer, TextStartServer, "", f.form.StartServer, func(f *Form, v bool) { f.StartServer = v }),
-	}
+	)
 	if e, ok := f.errs[FieldMaxHeight]; ok {
 		rows = append(rows, errorText(bc, e))
 	}

@@ -761,3 +761,17 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - `internal/config`: `Checked` at each step of the guard's table.
 - **Differs from the plan:** the plan's fake notifier is Glutter's fake desktop, which serves the notifications the window posts.
 - **Manual checks:** the notifications in macOS's notification center and the failed logins with Remmina: pending, see docs/MANUAL-CHECKS.md (5.4).
+
+## 5.5 Starting by itself (2026-11-19)
+- **Built:**
+  - `internal/mac/system`: `LoginItem`, which makes the running app a login item through `SMAppService.mainApp`, takes it out, and tells its state (off, on, waiting for the user's approval, app not found); a stub elsewhere.
+  - `cmd/mardp`: the app makes itself a login item, or takes itself out, as "open the app at login" says, when it opens and when the setting is saved, leaving an item that waits for approval; it asks for the item's state every 3 seconds while the setting is on, on a goroutine, and turns the setting off when the user takes the app out of the login items in System Settings. "Start the server when the app opens" starts the server before the window shows, if a login is set and Screen Recording granted.
+  - `internal/ui`: the settings card says when macOS waits for the user to allow the login item and when the login items could not be changed; the status card says why the server did not start as the app opened.
+  - SPEC §7.3: both settings as built.
+- **Proved:**
+  - `internal/mac/system`: reading the state from a test binary (not an app bundle) answers "not found" in about 4 ms; the errors of registering and unregistering by a fake call, with their routes. No test registers anything: that would change the owner's login items.
+  - `cmd/mardp`, with a fake of the login items: each pairing of the setting and the item's state, what is asked and what the window is told; the item set as the app opens; saving the setting changes the item and saving others does not; the window seeing an approval, and the setting turned off and saved when the item is taken out.
+  - `cmd/mardp`: the server started as the app opens, not started with the setting off, without Screen Recording or without a login, and a taken port said in the window.
+  - `gluttertest`: the three messages shown, and gone once over.
+- **Differs from the plan:** the plan names the two settings only. Also built: the setting follows an item the user takes out in System Settings, and an item waiting for approval is said in the window.
+- **Manual checks:** logging out and in with both settings on, and the login items in System Settings: pending, see docs/MANUAL-CHECKS.md (5.5).

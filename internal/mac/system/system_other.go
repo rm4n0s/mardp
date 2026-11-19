@@ -61,3 +61,11 @@ func (s *System) SetOutputMuted(uid string, muted bool) error {
 
 // WatchPowerOff does nothing on systems that are not macOS.
 func WatchPowerOff(fn func()) (stop func()) { return func() {} }
+
+// Status says that macOS does not find the app: there is none.
+func (LoginItem) Status() LoginItemStatus { return LoginItemNotFound }
+
+// Set fails.
+func (LoginItem) Set(on bool) error {
+	return errors.New(TagSystemUnsupported, "mardp's host runs only on macOS", "on", on)
+}

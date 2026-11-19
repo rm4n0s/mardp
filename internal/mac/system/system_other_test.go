@@ -30,4 +30,9 @@ func TestUnsupported(t *testing.T) {
 	assertRoute(t, err, "System.OutputMuted.SystemUnsupported")
 	assertRoute(t, s.SetOutputMuted("x", true), "System.SetOutputMuted.SystemUnsupported")
 	WatchPowerOff(func() { t.Error("a power off") })()
+	var li LoginItem
+	if li.Status() != LoginItemNotFound {
+		t.Error("a login item")
+	}
+	assertRoute(t, li.Set(true), "LoginItem.Set.SystemUnsupported")
 }
