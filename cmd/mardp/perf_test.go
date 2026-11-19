@@ -846,3 +846,84 @@ func TestPerfLong(t *testing.T) {
 		}
 	}
 }
+
+// A slow client (1.0.1): the moving pattern at 1920×1080 for a client that
+// takes 25 ms to show each frame, 40 frames a second at most, as a
+// software decoder does. It reports the frames and the bitrate the client
+// got in the watch's last third, and fails when the bitrate there is under
+// half the start bitrate: a slow client costs frames, not the picture
+// (SPEC §9.5). scripts/perf.sh slow runs it (default 45 s).
+func TestPerfSlow(t *testing.T) {
+	watch := perfSeconds(t, 45*time.Second)
+	const show = 25 * time.Millisecond
+	h := newHome(t, nil)
+	p := startPerf(t, h)
+	c, err := connectSized(t, h, testUser, testPassword, 1920, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), watch+time.Minute)
+	defer cancel()
+	if err := c.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c.KeepChannel(c.ChannelID("drdynvc"))
+	g, err := c.StartGFX(ctx, rdptest.AVC420Caps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var (
+		total         uint32
+		frames, bytes int
+		start         = time.Now()
+		last          = start.Add(watch * 2 / 3)
+		end           = start.Add(watch)
+	)
+	for time.Now().Before(end) {
+		f, err := c.ReadGFXFrame(ctx, g.ChannelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(show)
+		total++
+		if err := c.AckFrame(ctx, g.ChannelID, 0, f.ID, total); err != nil {
+			t.Fatal(err)
+		}
+		if time.Now().After(last) {
+			frames++
+			for _, u := range f.H264 {
+				bytes += len(u)
+			}
+		}
+	}
+	span := time.Since(last).Seconds()
+	if err := c.Disconnect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	p.stop(t)
+	b, err := os.ReadFile(p.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mbit := float64(bytes) * 8 / span / 1e6
+	t.Logf("a client that shows a frame in %v, for %v: in the last %.0f s, %.1f frames a second at %.1f Mbit/s", show, watch, span, float64(frames)/span, mbit)
+	for l := range bytes2Lines(b) {
+		if strings.Contains(l, "the client sets the pace") {
+			t.Logf("mardp: %s", l)
+		}
+	}
+	if mbit < 4 {
+		t.Errorf("%.1f Mbit/s for a slow client: the bitrate fell", mbit)
+	}
+}
+
+// bytes2Lines yields the lines of b.
+func bytes2Lines(b []byte) func(func(string) bool) {
+	return func(yield func(string) bool) {
+		for l := range bytes.Lines(b) {
+			if !yield(strings.TrimSpace(string(l))) {
+				return
+			}
+		}
+	}
+}

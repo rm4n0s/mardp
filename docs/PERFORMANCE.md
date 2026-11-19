@@ -71,7 +71,7 @@ What it fixed: the sound path made a method value of its packet function for eac
 
 ## The table of §14 (6.3)
 
-Each row with what is measured so far. "This Mac" is `scripts/perf.sh` (the test pattern through VideoToolbox, `rdptest` on the loopback; 20 and 60 second runs, 2026-11-19); "owner" is the manual check 6.3 of `docs/MANUAL-CHECKS.md`, with the owner's Mac and Linux machine on their LAN, still pending. The constants of SPEC §9.5 stay as they are until the owner's numbers show what to tune: on the loopback no frame is skipped and the bitrate never needs to fall.
+Each row with what is measured so far. "This Mac" is `scripts/perf.sh` (the test pattern through VideoToolbox, `rdptest` on the loopback; 20 and 60 second runs, 2026-11-19); "owner" is the manual check 6.3 of `docs/MANUAL-CHECKS.md`, with the owner's Mac and Linux machine on their LAN, still pending. On the loopback, with a client that acknowledges at once, no frame is skipped and the bitrate never needs to fall; the owner's first session with Remmina showed what that hid, and 1.0.1 changed the bitrate's rule (below).
 
 | What | Target | This Mac | Owner (LAN, Remmina) |
 |---|---|---|---|
@@ -137,3 +137,26 @@ Notes:
 
 - The memory rises once, by about 20 MB, over the first sessions in turn, and then stays: 99.7 MB after 10 sessions, 100.1 MB after 100. It is the Go heap the sessions grew (TLS, the session buffers, the encoder's start) that the collector has not given back yet, not a leak: it does not grow with the sessions.
 - The longest wait for sound, 52 ms, is a little over two AAC blocks (21.3 ms each).
+
+## A slow client (1.0.1, 2026-11-20)
+
+The owner's first sessions with Remmina: the picture was fine while still, and a smear as soon as a window moved. Remmina decodes H.264 in software and shows fewer frames than the Mac captures while the screen moves; the rule of SPEC §9.5 took every skipped frame as a slow network and dropped the bitrate a quarter each second, to 1 Mbit/s, where it stayed.
+
+```sh
+scripts/perf.sh slow      # 45 seconds; MARDP_PERF_SECONDS sets it
+```
+
+`scripts/perf.sh slow` runs `mardp -headless -test-pattern -measure` as in 6.1, with a client that takes 25 ms to show each frame (40 frames a second at most) before it acknowledges it, and reports what the client got in the last third of the watch. It fails under 4 Mbit/s.
+
+Apple M6, macOS 27.2, 1920×1080, the moving pattern, the last 15 of 45 seconds:
+
+| Rule | Frames a second | Bitrate at the client |
+|---|---|---|
+| Before (1.0.0): a skipped frame costs a quarter | 31.2 | 1.4 Mbit/s |
+| After (1.0.1): a fall is a trial, kept only if it brings frames back | 38.8 | 7.8 Mbit/s |
+
+Notes:
+
+- After: the bitrate tried 6 Mbit/s for one second three times in 45 seconds (after 0, 10 and 20 seconds of staying), found each time that no more frames went, and went back to 8 Mbit/s. The trials grow rarer: the stay doubles up to 320 seconds.
+- Before: at 1.4 Mbit/s the pattern's frames no longer fit, and VideoToolbox's low-latency rate control dropped some of them too, so the client got fewer frames as well as a worse picture.
+- A model of a network that carries 3 Mbit/s (`TestRateControlModels`): the bitrate comes down to between 1.9 and 3.75 Mbit/s within 10 seconds and stays there, as before.

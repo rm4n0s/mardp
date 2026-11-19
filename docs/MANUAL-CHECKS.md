@@ -414,3 +414,30 @@ The numbers of §14 that only your two machines can give. It takes about 25 minu
    ```
 
 Tell me (or paste): the time to the first picture (step 3), the last lines of step 8, `/tmp/mardp-top.txt` and `/tmp/mardp-top-idle.txt`, the 5 differences of step 5, what step 6 showed, and any dropout or stutter. With them I tune the constants of §9.5 and record every row of §14 in `docs/PERFORMANCE.md`.
+
+## 1.0.1 Motion with Remmina (SPEC §9.5)
+
+The picture smeared when a window moved, because the bitrate fell to 1 Mbit/s for a client slower than the capture. After the fix:
+
+1. Build and install the fixed app, and start it with a log:
+
+   ```bash
+   scripts/build-app.sh
+   ```
+
+   ```bash
+   ditto build/mardp.app /Applications/mardp.app
+   ```
+
+   ```bash
+   open -n /Applications/mardp.app --args -log-file /tmp/mardp.log
+   ```
+
+2. Connect with Remmina (the README's profile). Drag a window around for 10 seconds, then play a video (Apple TV) for a minute.
+3. Look at the status card in mardp's window while the video plays: the video path, the frames a second and the bitrate.
+
+Tell me: whether the picture is still distorted while things move, the three values of step 3, and the output of:
+
+```bash
+grep -E 'sets the pace|video path|bitrate' /tmp/mardp.log | tail -20
+```

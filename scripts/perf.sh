@@ -18,6 +18,9 @@
 #   scripts/perf.sh long   the test pattern for one session (default 1800 s),
 #                          then 100 sessions in turn: the memory, dropouts,
 #                          and what is left after the sessions end.
+#   scripts/perf.sh slow   the test pattern for a client that takes 25 ms to
+#                          show a frame (default 45 s): the frames and the
+#                          bitrate it gets; the bitrate must not fall.
 set -eu
 cd "$(dirname "$0")/.."
 TMPDIR=$(cd "${TMPDIR:-/tmp}" && pwd -P)/
@@ -27,8 +30,9 @@ case "${1:-}" in
 idle) test='^TestPerfIdle$' seconds=${MARDP_PERF_SECONDS:-300} ;;
 screen) test='^TestPerfScreen$' seconds=${MARDP_PERF_SECONDS:-300} ;;
 long) test='^TestPerfLong$' seconds=${MARDP_PERF_SECONDS:-1800} ;;
+slow) test='^TestPerfSlow$' seconds=${MARDP_PERF_SECONDS:-45} ;;
 *)
-	echo "usage: scripts/perf.sh [idle|screen|long]" >&2
+	echo "usage: scripts/perf.sh [idle|screen|long|slow]" >&2
 	exit 2
 	;;
 esac

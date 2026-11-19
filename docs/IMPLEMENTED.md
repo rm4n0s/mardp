@@ -867,3 +867,17 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
 - **Proved:** on a clean clone of the branch, `scripts/check.sh` (gofmt, vet, golangci-lint, the tests with and without `debug_mode`, with `-race`, the library on Linux) and the lints with the tags `mardp_mac`, `mardp_freerdp` and `mardp_perf` pass, and the tree stays clean.
 - **Differs from the plan:** none. The owner gave their word on 2026-11-20 ("Yes, publish v1.0.0"): milestone M6 is published as v1.0.0.
 - **Manual checks:** the ones of earlier steps that are still open: pending, see docs/MANUAL-CHECKS.md.
+
+## 1.0.1 The picture smears when the screen moves (2026-11-20)
+
+The owner, with Remmina: "the mardp works but when I move a window around the image is distorted and nothing can be watched".
+
+- **Cause:** the bitrate's rule (SPEC §9.5) took every second with a skipped frame as a slow network and dropped the bitrate a quarter, and raised it only while frames were acknowledged within 50 ms. A client that shows fewer frames than the Mac captures while the screen moves (Remmina decodes in software) skips frames every second, so the bitrate fell to 1 Mbit/s within seconds and stayed. The measurements of M6 use a client that acknowledges at once, so they never skipped a frame.
+- **Built:**
+  - `internal/host`: the rate control decides from the frames a second sent and missed (the time the backlog held the encoder back). A fall is a trial: a quarter less after a second that was held back, kept only if the next second sends a larger share of the frames or gets half of the missed ones back; otherwise the client sets the pace, the bitrate goes back to where the run of trials began and stays for 10 seconds, twice as long each time in a row, and the log says so. A frame lost to a full queue still costs a quarter; a second with fewer than 4 frames missed raises it a sixteenth.
+  - `scripts/perf.sh slow` (`TestPerfSlow`): the real encoder for a client that takes 25 ms a frame.
+  - SPEC §9.5 and §15.5; docs/PERFORMANCE.md.
+- **Proved:**
+  - `scripts/perf.sh slow` on the Apple M6: before, 31 frames a second at 1.4 Mbit/s; after, 39 frames a second at 7.8 Mbit/s.
+  - `internal/host`: the rule's table (network, slow client, motion that begins inside a second, a screen that stops, a lost frame), the stays of 10 to 320 periods, five minutes against a model of a 3 Mbit/s network (the bitrate settles there) and of a 40 frames a second client (the bitrate stays); the path counts the time held back, also across a period's end; a session whose client turns slow tries one fall, goes back, and never gets a frame older than its three frames on their way allow.
+- **Not proved here:** that this is all of what the owner saw. It is the only way found for motion to spoil the picture, and it must happen with any client slower than the capture; the owner's check with Remmina is pending, see docs/MANUAL-CHECKS.md (1.0.1).
