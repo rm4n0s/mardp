@@ -16,6 +16,34 @@ import (
 var aacFormat = AudioFormat{Tag: AudioTagAAC, Channels: 2, SamplesPerSec: 48000, AvgBytesPerSec: 16000,
 	BlockAlign: 1, BitsPerSample: 16, Extra: []byte{0, 0, 0xfe, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11, 0x90}}
 
+// TestAACFormat: the format block's fields and AudioSpecificConfig.
+func TestAACFormat(t *testing.T) {
+	tests := []struct {
+		rate, channels, bitrate int
+		asc                     []byte
+	}{
+		{48000, 2, 192000, []byte{0x11, 0x90}},
+		{44100, 2, 128000, []byte{0x12, 0x10}},
+		{48000, 1, 96000, []byte{0x11, 0x88}},
+		{96000, 6, 384000, []byte{0x10, 0x30}},
+		{50000, 2, 192000, []byte{0x17, 0x80, 0x61, 0xa8, 0x10}},
+	}
+	for _, tt := range tests {
+		f := AACFormat(tt.rate, tt.channels, tt.bitrate)
+		head := []byte{0, 0, 0xfe, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+		if f.Tag != AudioTagAAC || f.Channels != uint16(tt.channels) || f.SamplesPerSec != uint32(tt.rate) ||
+			f.AvgBytesPerSec != uint32(tt.bitrate/8) || f.BlockAlign != 1 || f.BitsPerSample != 16 {
+			t.Errorf("%d Hz %d channels: %+v", tt.rate, tt.channels, f)
+		}
+		if !bytes.Equal(f.Extra, append(head, tt.asc...)) {
+			t.Errorf("%d Hz %d channels: extra % x, want % x", tt.rate, tt.channels, f.Extra, append(head, tt.asc...))
+		}
+	}
+	if !aacFormat.wire().Equal(AACFormat(48000, 2, 128000).wire()) {
+		t.Error("the tests' AAC format is not AACFormat's")
+	}
+}
+
 // testAudioFormats are what the tests' servers offer, in this order.
 var testAudioFormats = []AudioFormat{PCMFormat(48000, 2), aacFormat}
 

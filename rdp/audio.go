@@ -62,6 +62,50 @@ func PCMFormat(samplesPerSec, channels int) AudioFormat {
 		AvgBytesPerSec: uint32(samplesPerSec) * uint32(block), BlockAlign: block, BitsPerSample: 16}
 }
 
+// aacRates are the sampling frequencies of an AudioSpecificConfig, by
+// their index (ISO/IEC 14496-3 1.6.3.4).
+var aacRates = [...]int{96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350}
+
+// AACFormat is AAC-LC at samplesPerSec frames a second of channels
+// channels and bitrate bits a second, in raw access units: WAVE_FORMAT_AAC_MS
+// whose extra bytes are a HEAACWAVEINFO (raw payload, no profile level
+// preference) followed by the AudioSpecificConfig, as Media Foundation's
+// HEAACWAVEFORMAT has them (SPEC §10.1). A rate that has no index of its
+// own is written with the explicit 24-bit frequency.
+func AACFormat(samplesPerSec, channels, bitrate int) AudioFormat {
+	extra := []byte{
+		0, 0, // wPayloadType: raw access units
+		0xfe, 0, // wAudioProfileLevelIndication: no preference
+		0, 0, // wStructType: an AudioSpecificConfig follows
+		0, 0, 0, 0, 0, 0, // wReserved1, dwReserved2
+	}
+	const objectLC = 2
+	idx := 15
+	for i, r := range aacRates {
+		if r == samplesPerSec {
+			idx = i
+		}
+	}
+	var bits uint64
+	n := 0
+	put := func(v uint64, width int) { bits = bits<<width | v; n += width }
+	put(objectLC, 5)
+	put(uint64(idx), 4)
+	if idx == 15 {
+		put(uint64(samplesPerSec)&0xffffff, 24)
+	}
+	put(uint64(channels)&0xf, 4)
+	put(0, 3) // GASpecificConfig: 1024 frames, no core coder, no extension
+	for pad := (8 - n%8) % 8; pad > 0; pad-- {
+		put(0, 1)
+	}
+	for i := n/8 - 1; i >= 0; i-- {
+		extra = append(extra, byte(bits>>(8*i)))
+	}
+	return AudioFormat{Tag: AudioTagAAC, Channels: uint16(channels), SamplesPerSec: uint32(samplesPerSec),
+		AvgBytesPerSec: uint32(bitrate / 8), BlockAlign: 1, BitsPerSample: 16, Extra: extra}
+}
+
 func (f AudioFormat) wire() rdpsnd.Format {
 	return rdpsnd.Format{Tag: f.Tag, Channels: f.Channels, SamplesPerSec: f.SamplesPerSec, AvgBytesPerSec: f.AvgBytesPerSec,
 		BlockAlign: f.BlockAlign, BitsPerSample: f.BitsPerSample, Extra: f.Extra}

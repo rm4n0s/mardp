@@ -6,6 +6,7 @@ import (
 
 	"github.com/rm4n0s/mardp/internal/config"
 	"github.com/rm4n0s/mardp/internal/host"
+	"github.com/rm4n0s/mardp/internal/mac/aacenc"
 	"github.com/rm4n0s/mardp/internal/mac/capture"
 	"github.com/rm4n0s/mardp/internal/mac/input"
 	"github.com/rm4n0s/mardp/internal/mac/system"
@@ -46,6 +47,7 @@ func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger
 			return host.Parts{}, err
 		}
 		parts.Sound = sound
+		parts.AAC = aacParts(log)
 	}
 	if post {
 		in, err := input.New(input.Options{Display: s.Display, SwapCtrlCommand: s.SwapCtrlCommand, Logger: log})
@@ -59,4 +61,24 @@ func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger
 
 func (mac) window(ctx context.Context, b ui.Backend, log *slog.Logger) error {
 	return ui.Run(ctx, b, log)
+}
+
+// aacParts is the host's AAC encoder (SPEC §10.1), nil, with a warning,
+// when AudioToolbox has none: the host then offers PCM alone.
+func aacParts(log *slog.Logger) func() (host.SoundEncoder, error) {
+	e, err := aacenc.New()
+	if err != nil {
+		log.Warn("no AAC encoder: the sound goes out as PCM", "err", err)
+		return nil
+	}
+	if err := e.Close(); err != nil {
+		log.Warn("closing the AAC encoder", "err", err)
+	}
+	return func() (host.SoundEncoder, error) {
+		e, err := aacenc.New()
+		if err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
 }

@@ -2,6 +2,7 @@ package rdptest
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/rm4n0s/errors"
@@ -28,6 +29,21 @@ type AudioOptions struct {
 	Quality uint16
 	// NoTraining leaves the server's Training unanswered.
 	NoTraining bool
+}
+
+// AudioTags is an AudioOptions.Formats that answers with the server's
+// formats whose tag is one of tags, in the server's order: a client that
+// takes PCM alone answers with AudioTags(rdp.AudioTagPCM).
+func AudioTags(tags ...uint16) func(server []rdpsnd.Format) []rdpsnd.Format {
+	return func(server []rdpsnd.Format) []rdpsnd.Format {
+		var fs []rdpsnd.Format
+		for _, f := range server {
+			if slices.Contains(tags, f.Tag) {
+				fs = append(fs, f)
+			}
+		}
+		return fs
+	}
 }
 
 // Audio is the client's end of the sound channel, set up by

@@ -45,6 +45,10 @@ type Parts struct {
 	// Sound captures the system sound; nil offers the client none. The
 	// server offers the formats of Host.AudioFormats.
 	Sound SoundSource
+	// AAC makes an AAC encoder (SPEC §10.1) for a session whose client
+	// takes AAC; nil offers PCM alone. An encoder that implements
+	// io.Closer is closed when the session's sound ends.
+	AAC func() (SoundEncoder, error)
 }
 
 // Options tune a Host. The zero value is the defaults.

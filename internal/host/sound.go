@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"math"
 	"time"
@@ -28,6 +29,16 @@ const pcmFrames = SoundRate * int(PCMPacket) / int(time.Second)
 // pcmGap is how far a buffer's time may be from where the one before it
 // ended before the encoder takes it as a gap in the sound.
 const pcmGap = 10 * time.Millisecond
+
+// AACBitrate is the bitrate of the AAC the host sends (SPEC §10.1).
+const AACBitrate = 192_000
+
+// AACPacket is how long an AAC packet is: 1024 frames.
+const AACPacket = 1024 * time.Second / SoundRate
+
+// AACFormat is the AAC format the host offers: AAC-LC, 48 kHz, two
+// channels, AACBitrate.
+func AACFormat() rdp.AudioFormat { return rdp.AACFormat(SoundRate, 2, AACBitrate) }
 
 // PCMFormat is the PCM format the host offers: 16 bits, 48 kHz, two
 // channels.
@@ -107,6 +118,8 @@ type soundPath struct {
 	log *slog.Logger
 	// stop ends the capture, when the session has no sound anymore.
 	stop func()
+	// length is how long a packet is.
+	length time.Duration
 	// dropping says the gap rule drops sound now; dropped counts the
 	// packets it dropped.
 	dropping bool
@@ -133,7 +146,7 @@ func (p *soundPath) packet(data []byte, t time.Duration) {
 	switch {
 	case p.dropping && oldest < gapEnd:
 		p.dropping = false
-		p.log.Info("sound resumed", "dropped", p.dropped, "dropTime", time.Duration(p.dropped)*PCMPacket)
+		p.log.Info("sound resumed", "dropped", p.dropped, "dropTime", time.Duration(p.dropped)*p.length)
 		p.dropped = 0
 	case p.dropping:
 		p.dropped++
@@ -173,16 +186,31 @@ func (h *Host) runSound(ctx context.Context, s *rdp.Session, log *slog.Logger) {
 		return
 	}
 	var enc SoundEncoder
-	switch f.Tag {
-	case rdp.AudioTagPCM:
+	length := PCMPacket
+	switch {
+	case f.Tag == rdp.AudioTagPCM:
 		enc = NewPCMEncoder()
+	case f.Tag == rdp.AudioTagAAC && h.parts.AAC != nil:
+		enc, err = h.parts.AAC()
+		if err != nil {
+			log.Warn("no AAC encoder", "err", err)
+			return
+		}
+		length = AACPacket
 	default:
 		log.Warn("no encoder for the sound format", "tag", f.Tag)
 		return
 	}
+	if c, ok := enc.(io.Closer); ok {
+		defer func() {
+			if err := c.Close(); err != nil {
+				log.Warn("closing the sound encoder", "err", err)
+			}
+		}()
+	}
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	p := &soundPath{out: a, enc: enc, log: log, stop: cancel}
+	p := &soundPath{out: a, enc: enc, log: log, stop: cancel, length: length}
 	log.Info("sending sound", "format", f.Tag)
 	if err := h.parts.Sound.Capture(sctx, p.buffer); err != nil && sctx.Err() == nil {
 		log.Warn("the sound capture stopped", "err", err)
@@ -190,10 +218,14 @@ func (h *Host) runSound(ctx context.Context, s *rdp.Session, log *slog.Logger) {
 }
 
 // AudioFormats are the sound formats the host offers, for the server's
-// Config.AudioFormats: none without a sound source.
+// Config.AudioFormats: none without a sound source, AAC first when the
+// host has an AAC encoder, then PCM.
 func (h *Host) AudioFormats() []rdp.AudioFormat {
-	if h.parts.Sound == nil {
+	switch {
+	case h.parts.Sound == nil:
 		return nil
+	case h.parts.AAC != nil:
+		return []rdp.AudioFormat{AACFormat(), PCMFormat()}
 	}
 	return []rdp.AudioFormat{PCMFormat()}
 }

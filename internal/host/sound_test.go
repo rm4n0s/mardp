@@ -189,7 +189,7 @@ func TestSoundPath(t *testing.T) {
 			rec := &recorder{}
 			out := &fakeSoundOut{}
 			stopped := false
-			p := &soundPath{out: out, enc: NewPCMEncoder(), log: slog.New(rec), stop: func() { stopped = true }}
+			p := &soundPath{out: out, enc: NewPCMEncoder(), log: slog.New(rec), stop: func() { stopped = true }, length: PCMPacket}
 			for i, s := range tt.steps {
 				out.oldest, out.err = s.oldest, s.err
 				before := len(out.writes)
@@ -357,6 +357,158 @@ func TestSessionNoSound(t *testing.T) {
 			}
 			if src.started.Load() != 0 {
 				t.Error("the sound capture started")
+			}
+		})
+	}
+}
+
+// fakeAAC is an AAC encoder of the tests: a packet of each 1024 frames,
+// "AAC" and its number.
+type fakeAAC struct {
+	pending int
+	packets int
+	closed  atomic.Bool
+}
+
+func (f *fakeAAC) Encode(b *SoundBuffer, packet func(data []byte, t time.Duration)) error {
+	f.pending += min(len(b.Left), len(b.Right))
+	for ; f.pending >= 1024; f.pending -= 1024 {
+		packet([]byte{'A', 'A', 'C', byte(f.packets)}, frameTime(f.packets*1024))
+		f.packets++
+	}
+	return nil
+}
+
+func (f *fakeAAC) Close() error {
+	f.closed.Store(true)
+	return nil
+}
+
+func TestAudioFormats(t *testing.T) {
+	aac := func() (SoundEncoder, error) { return &fakeAAC{}, nil }
+	tests := []struct {
+		name  string
+		parts Parts
+		want  []rdp.AudioFormat
+	}{
+		{"no sound", Parts{AAC: aac}, nil},
+		{"PCM", Parts{Sound: &ToneSource{}}, []rdp.AudioFormat{PCMFormat()}},
+		{"AAC and PCM", Parts{Sound: &ToneSource{}, AAC: aac}, []rdp.AudioFormat{AACFormat(), PCMFormat()}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.parts.Screen = &PatternScreen{}
+			h, err := New(tt.parts, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := h.AudioFormats()
+			if len(got) != len(tt.want) {
+				t.Fatalf("formats %+v, want %+v", got, tt.want)
+			}
+			for i := range got {
+				if got[i].Tag != tt.want[i].Tag || string(got[i].Extra) != string(tt.want[i].Extra) ||
+					got[i].AvgBytesPerSec != tt.want[i].AvgBytesPerSec {
+					t.Errorf("format %d %+v, want %+v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+	if f := AACFormat(); f.SamplesPerSec != SoundRate || f.Channels != 2 || f.AvgBytesPerSec != AACBitrate/8 {
+		t.Errorf("AAC format %+v", f)
+	}
+}
+
+// TestSessionAAC: a client that takes AAC gets the AAC encoder's packets,
+// one a block, and the encoder is closed when the session ends; a client
+// that takes PCM alone gets PCM; a host whose AAC encoder fails to start
+// sends nothing.
+func TestSessionAAC(t *testing.T) {
+	tests := []struct {
+		name    string
+		formats []uint16
+		fail    bool
+		want    uint16
+	}{
+		{"AAC and PCM", nil, false, rdp.AudioTagAAC},
+		{"AAC alone", []uint16{rdp.AudioTagAAC}, false, rdp.AudioTagAAC},
+		{"PCM alone", []uint16{rdp.AudioTagPCM}, false, rdp.AudioTagPCM},
+		{"no AAC encoder", nil, true, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var made atomic.Pointer[fakeAAC]
+			aac := func() (SoundEncoder, error) {
+				if tt.fail {
+					return nil, errors.New("FakeAACFailed", "no encoder")
+				}
+				f := &fakeAAC{}
+				made.Store(f)
+				return f, nil
+			}
+			src := &ToneSource{Frequency: 1000}
+			s := serve(t, Parts{Screen: &PatternScreen{Frames: 1}, Sound: src, AAC: aac}, Options{}, 640, 480)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			opts := rdptest.AudioOptions{}
+			if tt.formats != nil {
+				opts.Formats = rdptest.AudioTags(tt.formats...)
+			}
+			a, err := s.c.NegotiateAudio(ctx, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if f := a.Server.Formats; len(f) != 2 || f[0].Tag != rdp.AudioTagAAC || f[1].Tag != rdp.AudioTagPCM {
+				t.Fatalf("server formats %+v, want AAC then PCM", f)
+			}
+			if tt.fail {
+				deadline := time.Now().Add(5 * time.Second)
+				for len(s.rec.find("no AAC encoder")) == 0 {
+					if time.Now().After(deadline) {
+						t.Fatal("no log of the failed encoder")
+					}
+					time.Sleep(5 * time.Millisecond)
+				}
+				if len(s.rec.find("sending sound")) != 0 {
+					t.Error("sound sent")
+				}
+				return
+			}
+			for k := range 10 {
+				b, err := a.ReadBlock(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tag := a.Formats[b.FormatNo].Tag; tag != tt.want {
+					t.Fatalf("block %d in format %#x, want %#x", k, tag, tt.want)
+				}
+				if tt.want == rdp.AudioTagAAC {
+					if string(b.Data) != string([]byte{'A', 'A', 'C', byte(k)}) {
+						t.Errorf("block %d is % x", k, b.Data)
+					}
+				} else {
+					checkTone(t, b, 1000)
+				}
+				if err := a.Confirm(ctx, b, 20*time.Millisecond); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := s.c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			f := made.Load()
+			if (f != nil) != (tt.want == rdp.AudioTagAAC) {
+				t.Fatalf("an AAC encoder made: %v", f != nil)
+			}
+			if f == nil {
+				return
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for !f.closed.Load() {
+				if time.Now().After(deadline) {
+					t.Fatal("the AAC encoder was not closed")
+				}
+				time.Sleep(5 * time.Millisecond)
 			}
 		})
 	}

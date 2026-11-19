@@ -595,3 +595,25 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - Sound is dropped before it is queued, not taken out of the queue.
   - Not planned: carrying sound in TestSessionH264 exposed a race in `flowSwitch`. A key frame wanted between the picture choosing its path and setting it was lost, so the session stayed on bitmaps (about 1 run in 6 under load). `set` now ends a path at once when the path to run has changed. TestFlowSwitch covers it, and 12 loaded runs of `rdp` and `host` passed.
 - **Manual checks:** none (a real client plays it in 4.6).
+
+## 4.4 AAC (2026-11-19)
+- **Built:**
+  - `rdp.AACFormat(samplesPerSec, channels, bitrate)`: the WAVE_FORMAT_AAC_MS format block, its HEAACWAVEINFO and AudioSpecificConfig (an explicit rate for one that has no index).
+  - `internal/mac/aacenc`: AudioToolbox's AudioConverter from the capture's float format to AAC-LC at 192 kbit/s. It sends raw access units, one per packet, timed by the captured frame each decodes to (less the 2112-frame delay); short gaps are filled with silence, long or backward gaps bring the encoder's sound out and start again. It allocates nothing per buffer, and a stub stands in on other systems.
+  - `internal/host`: `Parts.AAC`, `AACFormat`, `AACBitrate`; `AudioFormats` offers AAC then PCM when the host has an AAC encoder; the sound path chooses the encoder by the negotiated format and closes it when the sound ends.
+  - `cmd/mardp`: tries AudioToolbox's encoder once at start; without it the host offers PCM alone, with a warning.
+  - `rdptest.AudioTags`: a client that takes some of the server's formats by tag.
+  - SPEC §10.1: AAC as built.
+- **Proved:**
+  - `mardp_mac` (`go test -tags mardp_mac ./internal/mac/aacenc`, no permission needed, nothing played): 1 s of a 1 kHz tone through AudioToolbox's encoder.
+    - priming 2112, bitrate 192000, largest packet 1536, a cookie holding `11 90`;
+    - every packet 1–1536 bytes, none starting with an ADTS sync word, each at the time of the frame it decodes to;
+    - the whole tone comes out when a long gap follows; decoded again with AudioToolbox, the tone past the delay is 38 dB above its error.
+    - The routes of `AACEncoderCreateFailed` (1 bit/s) and `AACEncodeFailed` (no room for a packet).
+  - Fakes: the delay, a start later than 0, chunks of 4096 frames, jitter, the longest gap filled, a long gap, a backward gap, empty buffers, channels of different lengths, a converter's error returned untouched, Close twice, `AACEncoderClosed`, no allocation per buffer. `AACEncoderUnsupported` on other systems.
+  - `rdp`: the format blocks for 48 kHz, 44.1 kHz, mono, six channels and a rate with no index.
+  - `host`: the formats offered with and without sound and AAC; a client with AAC and PCM, or AAC alone, gets the AAC encoder's packets, one a block, and the encoder is closed when the session ends; a client with PCM alone gets the tone in PCM; an AAC encoder that fails to start is logged and no sound is sent.
+- **Differs from the plan:**
+  - `aacenc.Format` became `host.AACFormat`: `internal/mac` packages may not import `rdp` (archtest).
+  - Not planned: AudioToolbox, given less room than a packet, takes the frames and returns nothing, with no error. The encoder now fails instead (it never gives too little room).
+- **Manual checks:** none (a real client plays it in 4.6).
