@@ -293,6 +293,16 @@ func TestFlowSwitch(t *testing.T) {
 	if !slices.Equal(h264.calls, []string{"key"}) || cancels != 1 {
 		t.Errorf("calls %q, cancels %d", h264.calls, cancels)
 	}
+	// The path changed while none ran, after the next was chosen: it ends
+	// as it is set.
+	f.set(nil, false, nil)
+	avc = false
+	f.KeyFrameWanted()
+	late := &recordSink{}
+	f.set(late, true, func() { cancels++ })
+	if cancels != 2 || len(late.calls) != 0 {
+		t.Errorf("a path set after the change: calls %q, cancels %d", late.calls, cancels)
+	}
 }
 
 // avcClient reads the frames of a session on the H.264 path like a client
@@ -302,6 +312,10 @@ type avcClient struct {
 	c     *rdptest.Client
 	ch    uint32
 	total uint32
+	// snd, when set, is the sound, whose blocks are read and confirmed
+	// between frames; stamps are their audio time stamps.
+	snd    *rdptest.Audio
+	stamps []uint32
 }
 
 // avcFrame is an H.264 frame of PatternVideo as the client got it.
@@ -327,6 +341,16 @@ func (a *avcClient) next(delay time.Duration) avcFrame {
 		a.total++
 		if err := a.c.AckFrame(ctx, a.ch, 0, f.ID, a.total); err != nil {
 			a.t.Fatal(err)
+		}
+		for a.snd != nil && a.snd.Pending() {
+			b, err := a.snd.ReadBlock(ctx)
+			if err != nil {
+				a.t.Fatal(err)
+			}
+			if err := a.snd.Confirm(ctx, b, 0); err != nil {
+				a.t.Fatal(err)
+			}
+			a.stamps = append(a.stamps, b.AudioTimeStamp)
 		}
 		if len(f.H264) == 0 {
 			continue // a frame of tiles, sent before the switch
@@ -362,19 +386,26 @@ func oldest(fs []avcFrame) time.Duration {
 // client that is fast, then slow, then fast again (SPEC §9.5): while it is
 // slow, frames are skipped before encoding so that none it gets is older
 // than its three frames on their way allow, and the bitrate falls a
-// quarter at a time; it recovers once the client is fast. A Refresh Rect
-// and a resume each bring a key frame.
+// quarter at a time; it recovers once the client is fast. The sound,
+// meanwhile, keeps flowing without a gap (SPEC §10.1). A Refresh Rect and
+// a resume each bring a key frame.
 func TestSessionH264(t *testing.T) {
 	video := &PatternVideo{}
-	parts := Parts{Screen: &PatternScreen{Frames: 1}, Video: video}
+	parts := Parts{Screen: &PatternScreen{Frames: 1}, Video: video, Sound: &ToneSource{}}
 	s := serve(t, parts, Options{rateEvery: 100 * time.Millisecond}, 1280, 720)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	s.c.KeepChannel(s.c.ChannelID("rdpsnd"))
+	s.c.KeepChannel(s.c.ChannelID("drdynvc"))
 	g, err := s.c.StartGFX(ctx, rdptest.AVC420Caps())
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &avcClient{t: t, c: s.c, ch: g.ChannelID}
+	snd, err := s.c.NegotiateAudio(ctx, rdptest.AudioOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &avcClient{t: t, c: s.c, ch: g.ChannelID, snd: snd}
 
 	first := a.next(0)
 	if !first.key || first.n != 0 {
@@ -401,7 +432,11 @@ func TestSessionH264(t *testing.T) {
 
 	// Slow: 20 frames a second. Each frame waits behind at most the two
 	// on their way, plus a frame time of the source and a tick.
+	soundBefore := len(a.stamps)
 	slow := a.run(1500*time.Millisecond, 50*time.Millisecond)
+	if n := len(a.stamps) - soundBefore; n < 60 {
+		t.Errorf("%d blocks of sound in 1.5 s of slow video, want about 75", n)
+	}
 	st = video.Stats()
 	limit := 3*50*time.Millisecond + 50*time.Millisecond
 	t.Logf("fast: %d frames, oldest %v; slow: %d frames, oldest %v, %d skipped; bitrates %v",
@@ -428,6 +463,18 @@ func TestSessionH264(t *testing.T) {
 	if back := st.Bitrates[len(st.Bitrates)-1]; back <= low {
 		t.Errorf("the bitrate did not recover: %d after %d", back, low)
 	}
+	if len(a.stamps) < 150 {
+		t.Errorf("%d blocks of sound in about 4 s", len(a.stamps))
+	}
+	for i := 1; i < len(a.stamps); i++ {
+		if a.stamps[i]-a.stamps[i-1] != 20 {
+			t.Errorf("a gap in the sound: %d ms then %d ms", a.stamps[i-1], a.stamps[i])
+		}
+	}
+	if n := len(s.rec.find("the sound is behind: dropping it")); n != 0 {
+		t.Errorf("the sound was dropped %d times", n)
+	}
+	a.snd = nil
 
 	// A Refresh Rect brings a key frame within a few frames.
 	if err := s.c.SendRefresh(ctx, 0, 0, 1280, 720); err != nil {

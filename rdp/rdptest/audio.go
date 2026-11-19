@@ -113,18 +113,33 @@ func (c *Client) NegotiateAudio(ctx context.Context, opts AudioOptions) (*Audio,
 	return a, err
 }
 
-// read reads the server's next PDU on rdpsnd.
+// read reads the server's next PDU on rdpsnd, and when it arrived.
 func (a *Audio) read(ctx context.Context) (rdpsnd.PDU, error) {
+	p, _, err := a.readAt(ctx)
+	return p, err
+}
+
+func (a *Audio) readAt(ctx context.Context) (rdpsnd.PDU, time.Time, error) {
 	m, err := a.c.ReadChannel(ctx, a.id)
 	if err != nil {
-		return rdpsnd.PDU{}, err
+		return rdpsnd.PDU{}, time.Time{}, err
 	}
-	return rdpsnd.ReadServerPDU(m.Data)
+	p, err := rdpsnd.ReadServerPDU(m.Data)
+	return p, m.Received, err
 }
 
 // Read reads the server's next PDU on rdpsnd, skipping what it sends
 // elsewhere. A WaveInfo's Wave is read with ReadBlock instead.
 func (a *Audio) Read(ctx context.Context) (rdpsnd.PDU, error) { return a.read(ctx) }
+
+// Pending says a PDU of the server's on rdpsnd has arrived that Read or
+// ReadBlock has not returned yet, when the client keeps rdpsnd
+// (Client.KeepChannel) while it reads another channel.
+func (a *Audio) Pending() bool { return a.c.ChannelPending(a.id) > 0 }
+
+// Keep keeps what the server sends on rdpsnd while the client reads
+// another channel (Client.KeepChannel).
+func (a *Audio) Keep() { a.c.KeepChannel(a.id) }
 
 // Send sends on rdpsnd the PDU that build appends.
 func (a *Audio) Send(ctx context.Context, build func(w *wire.Writer) error) error {
@@ -139,7 +154,7 @@ func (a *Audio) Send(ctx context.Context, build func(w *wire.Writer) error) erro
 // Wave after it. Another PDU fails it with TagPDUUnexpected (a Close
 // among them: its Type is in the error's metadata).
 func (a *Audio) ReadBlock(ctx context.Context) (AudioBlock, error) {
-	p, err := a.read(ctx)
+	p, at, err := a.readAt(ctx)
 	if err != nil {
 		return AudioBlock{}, err
 	}
@@ -159,10 +174,11 @@ func (a *Audio) ReadBlock(ctx context.Context) (AudioBlock, error) {
 			return AudioBlock{}, err
 		}
 		b.Data = append(b.Data, rest...)
+		at = m.Received
 	default:
 		return AudioBlock{}, errors.New(TagPDUUnexpected, "another sound PDU than a block", "type", p.Type)
 	}
-	b.Received = time.Now()
+	b.Received = at
 	return b, nil
 }
 

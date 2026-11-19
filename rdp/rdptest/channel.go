@@ -3,6 +3,7 @@ package rdptest
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/rm4n0s/errors"
 
@@ -24,7 +25,34 @@ type ChannelMessage struct {
 	// length of each chunk's data, in the order they came.
 	Chunks  []svc.Header
 	Lengths []int
+	// Received is when its last chunk arrived.
+	Received time.Time
 }
+
+// keptChunk is a chunk of a kept channel, as the Send Data Indication
+// carried it (its Channel PDU Header and data), and when it arrived.
+type keptChunk struct {
+	data []byte
+	at   time.Time
+}
+
+// KeepChannel makes ReadChannel keep what the server sends on the static
+// channel id while it reads another, instead of skipping it; the next
+// ReadChannel of id returns it first. A test that reads two channels, such
+// as the graphics pipeline's and the sound's, keeps both.
+func (c *Client) KeepChannel(id uint16) {
+	if c.kept == nil {
+		c.kept = make(map[uint16][]keptChunk)
+	}
+	if _, ok := c.kept[id]; !ok {
+		c.kept[id] = nil
+	}
+}
+
+// ChannelPending is the number of chunks kept for the static channel id
+// that ReadChannel has not returned yet: when it is more than 0, the next
+// ReadChannel of id has something to start from.
+func (c *Client) ChannelPending(id uint16) int { return len(c.kept[id]) }
 
 // ChannelID returns the MCS channel ID the server gave the static channel
 // name, 0 when the client did not ask for it.
@@ -77,7 +105,8 @@ func (c *Client) sendChunk(id uint16, h svc.Header, data []byte) error {
 // ReadChannel reads until the server has sent a whole message on the static
 // channel id, and returns it. Fast-path updates and what the server sends
 // on other channels before it are skipped; a Disconnect Provider Ultimatum
-// fails it with TagPDUUnexpected.
+// fails it with TagPDUUnexpected. What the server sent on a channel of
+// KeepChannel is kept instead.
 func (c *Client) ReadChannel(ctx context.Context, id uint16) (ChannelMessage, error) {
 	stop, err := c.watch(ctx)
 	if err != nil {
@@ -93,6 +122,37 @@ func (c *Client) ReadChannel(ctx context.Context, id uint16) (ChannelMessage, er
 		c.joiners[id] = j
 	}
 	var m ChannelMessage
+	// chunk adds a chunk, as a Send Data Indication carries it, to m;
+	// done says m is whole.
+	chunk := func(data []byte, at time.Time) (done bool, err error) {
+		cr := wire.NewReader(data)
+		h, err := svc.ReadHeader(&cr)
+		if err != nil {
+			return false, err
+		}
+		m.Chunks = append(m.Chunks, h)
+		m.Lengths = append(m.Lengths, cr.Remaining())
+		msg, ok, err := j.Add(h, cr.Rest())
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			m.Data = slices.Clone(msg)
+			m.Received = at
+		}
+		return ok, nil
+	}
+	for len(c.kept[id]) > 0 {
+		k := c.kept[id][0]
+		c.kept[id] = c.kept[id][1:]
+		done, err := chunk(k.data, k.at)
+		if err != nil {
+			return ChannelMessage{}, err
+		}
+		if done {
+			return m, nil
+		}
+	}
 	for {
 		k, f, err := tpkt.ReadFrame(c.rw, c.buf)
 		if err != nil {
@@ -117,21 +177,16 @@ func (c *Client) ReadChannel(ctx context.Context, id uint16) (ChannelMessage, er
 			return ChannelMessage{}, err
 		}
 		if d.ChannelID != id {
+			if q, ok := c.kept[d.ChannelID]; ok {
+				c.kept[d.ChannelID] = append(q, keptChunk{data: slices.Clone(d.Data), at: time.Now()})
+			}
 			continue
 		}
-		cr := wire.NewReader(d.Data)
-		h, err := svc.ReadHeader(&cr)
+		done, err := chunk(d.Data, time.Now())
 		if err != nil {
 			return ChannelMessage{}, err
 		}
-		m.Chunks = append(m.Chunks, h)
-		m.Lengths = append(m.Lengths, cr.Remaining())
-		msg, ok, err := j.Add(h, cr.Rest())
-		if err != nil {
-			return ChannelMessage{}, err
-		}
-		if ok {
-			m.Data = slices.Clone(msg)
+		if done {
 			return m, nil
 		}
 	}

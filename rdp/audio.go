@@ -1,6 +1,7 @@
 package rdp
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -17,6 +18,10 @@ import (
 // up, or the server closed it.
 const TagAudioUnavailable = "AudioUnavailable"
 
+// TagAudioWaitAbandoned: Wait's context ended before the sound channel was
+// set up.
+const TagAudioWaitAbandoned = "AudioWaitAbandoned"
+
 // The wFormatTag of the formats the server may offer (SPEC §10.1).
 const (
 	// AudioTagPCM is WAVE_FORMAT_PCM.
@@ -32,6 +37,10 @@ const audioVersion = rdpsnd.VersionWave2
 // audioLastBlock is the server's cLastBlockConfirmed: the first block is
 // one more, 0 (MS-RDPEA 3.3.5.2.1.1).
 const audioLastBlock uint8 = 0xff
+
+// audioLost is how long a block may stay unconfirmed before the server
+// takes its Wave Confirm to be lost (SPEC §10.1).
+const audioLost = 5 * time.Second
 
 // AudioFormat is a sound format (MS-RDPEA AUDIO_FORMAT): a WAVEFORMATEX
 // without its cbSize, whose extra bytes are Extra.
@@ -116,6 +125,12 @@ type Audio struct {
 	blocks      [256]audioBlock
 	unconfirmed int
 	delay       time.Duration
+	// lost is audioLost, shorter in tests.
+	lost time.Duration
+	// settled is closed when the channel is set up or the session is
+	// found to have no sound; done says it is.
+	settled chan struct{}
+	done    bool
 	// buf holds the PDUs of a block while it is queued.
 	buf wire.Writer
 }
@@ -127,14 +142,16 @@ func (s *Session) Audio() *Audio { return &s.audio }
 // it and the server offers formats.
 func (s *Session) startAudio(formats []AudioFormat) {
 	a := &s.audio
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.ch = s.channel("rdpsnd")
 	if a.ch == nil || len(formats) == 0 {
+		a.settle()
 		return
 	}
 	a.offered = formats
+	a.lost = audioLost
 	a.ch.setHandler(a.receive)
-	a.mu.Lock()
-	defer a.mu.Unlock()
 	wf := make([]rdpsnd.Format, len(formats))
 	for i, f := range formats {
 		wf[i] = f.wire()
@@ -142,10 +159,12 @@ func (s *Session) startAudio(formats []AudioFormat) {
 	a.buf.Reset()
 	if err := rdpsnd.AppendServerFormats(&a.buf, audioVersion, audioLastBlock, wf); err != nil {
 		s.c.log.Warn("the sound formats", "err", err)
+		a.settle()
 		return
 	}
 	if err := s.sendChannel(queueControl, a.ch, a.buf.Bytes()); err != nil {
 		s.c.log.Debug("sending the sound formats", "err", err)
+		a.settle()
 		return
 	}
 	a.start = time.Now()
@@ -177,6 +196,7 @@ func (a *Audio) receive(msg []byte) error {
 			return nil
 		}
 		a.state = audioReady
+		a.settle()
 		log.Info("sound ready", "format", a.format.Tag, "samplesPerSec", a.format.SamplesPerSec,
 			"channels", a.format.Channels, "clientVersion", a.version, "quality", a.quality,
 			"training", time.Duration(a.clock()-p.TimeStamp)*time.Millisecond)
@@ -189,6 +209,12 @@ func (a *Audio) receive(msg []byte) error {
 		b.pending = false
 		a.unconfirmed--
 		a.delay = time.Since(b.sent)
+		// A client plays the blocks in order: the blocks before this one
+		// whose confirms went missing are played too.
+		for n := p.Block - 1; a.blocks[n].pending && a.blocks[n].sent.Before(b.sent); n-- {
+			a.blocks[n].pending = false
+			a.unconfirmed--
+		}
 	default:
 		log.Debug("a sound PDU out of turn ignored", "type", p.Type, "state", int(a.state))
 	}
@@ -203,6 +229,7 @@ func (a *Audio) clientFormats(f rdpsnd.Formats) {
 	a.version = f.Version
 	if f.Flags&rdpsnd.CapsAlive == 0 {
 		a.state = audioOff
+		a.settle()
 		log.Info("no sound: the client plays none", "flags", f.Flags)
 		return
 	}
@@ -220,6 +247,7 @@ func (a *Audio) clientFormats(f rdpsnd.Formats) {
 	}
 	if !found {
 		a.state = audioOff
+		a.settle()
 		log.Info("no sound: the client has none of the server's formats", "formats", len(f.Formats))
 		return
 	}
@@ -228,10 +256,46 @@ func (a *Audio) clientFormats(f rdpsnd.Formats) {
 	rdpsnd.AppendTraining(&a.buf, a.training)
 	if err := a.s.sendChannel(queueControl, a.ch, a.buf.Bytes()); err != nil {
 		a.state = audioOff
+		a.settle()
 		log.Debug("sending Training", "err", err)
 		return
 	}
 	a.state = audioTraining
+}
+
+// settledChan returns settled, made on first use. The caller holds mu.
+func (a *Audio) settledChan() chan struct{} {
+	if a.settled == nil {
+		a.settled = make(chan struct{})
+	}
+	return a.settled
+}
+
+// settle closes settled once. The caller holds mu.
+func (a *Audio) settle() {
+	if !a.done {
+		close(a.settledChan())
+		a.done = true
+	}
+}
+
+// Wait waits until the sound channel is set up and returns the session's
+// format, like Format. It fails with TagAudioUnavailable when the session
+// has no sound (the cases of Format, and after Close), and with
+// TagAudioWaitAbandoned when ctx ends first.
+func (a *Audio) Wait(ctx context.Context) (AudioFormat, error) {
+	a.mu.Lock()
+	ch := a.settledChan()
+	a.mu.Unlock()
+	select {
+	case <-ch:
+	case <-ctx.Done():
+		return AudioFormat{}, errors.NewErr(TagAudioWaitAbandoned, ctx.Err())
+	}
+	if f, ok := a.Format(); ok {
+		return f, nil
+	}
+	return AudioFormat{}, errors.New(TagAudioUnavailable, "the session has no sound")
 }
 
 // clock is the time for wTimeStamp: milliseconds since the server's
@@ -308,6 +372,34 @@ func (a *Audio) Delay() (delay time.Duration, unconfirmed int) {
 	return a.delay, a.unconfirmed
 }
 
+// Backlog returns how many blocks are sent and not confirmed, and how long
+// ago the oldest of them was written: the age the sound path keeps under
+// its limit (SPEC §10.1). A block unconfirmed for 5 seconds is taken to
+// have lost its Wave Confirm and is no longer counted.
+func (a *Audio) Backlog() (unconfirmed int, oldest time.Duration) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.unconfirmed == 0 {
+		return 0, 0
+	}
+	now := time.Now()
+	for i := range a.blocks {
+		b := &a.blocks[i]
+		if !b.pending {
+			continue
+		}
+		age := now.Sub(b.sent)
+		if age >= a.lost {
+			b.pending = false
+			a.unconfirmed--
+			a.s.c.log.Debug("a block's Wave Confirm taken to be lost", "block", i, "age", age)
+			continue
+		}
+		oldest = max(oldest, age)
+	}
+	return a.unconfirmed, oldest
+}
+
 // Close tells the client the server stops sending sound (the Close PDU);
 // Write fails after it. It does nothing on a session without sound.
 func (a *Audio) Close() error {
@@ -317,6 +409,7 @@ func (a *Audio) Close() error {
 		return nil
 	}
 	a.state = audioClosed
+	a.settle()
 	a.buf.Reset()
 	rdpsnd.AppendClose(&a.buf)
 	return a.s.sendChannel(queueControl, a.ch, a.buf.Bytes())

@@ -556,3 +556,42 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - UTM's own sound was not played: the exclusion is proved with the test app standing in for UTM, through the same filter. Whether UTM plays the guest's sound from its windowed app (left out) or from its QEMU helper (which has no window, so ScreenCaptureKit cannot leave it out) is checked in 4.6 by ear-free measurement if the guest can play through its sound device, else by hand.
   - The sound is not wired into the session yet: the pipeline (`host.Parts.Sound`) is 4.3.
 - **Manual checks:** none.
+
+## 4.3 PCM, end to end (2026-11-19)
+- **Built:**
+  - `internal/host`:
+    - `Parts.Sound`, and `Host.AudioFormats` for the server's `Config.AudioFormats` (16-bit PCM, 48 kHz, stereo, when there is a sound source).
+    - `PCMEncoder`: 20 ms packets carrying their first frame's time; a gap pads the packet being filled.
+    - The sound path: it waits for the channel, then encodes and writes packets under the gap rule. A packet refused by a full queue is dropped, and the path stops when the session has no sound.
+  - `cmd/mardp`: the app offers sound and captures it with `capture.NewSound`, unless the setting is "off".
+  - `rdp`:
+    - `Audio.Wait`: waits for the channel to be set up, with `TagAudioWaitAbandoned`.
+    - `Audio.Backlog`: the age of the oldest block not yet confirmed.
+    - A Wave Confirm also confirms the blocks before it, and a block unconfirmed for 5 s is no longer counted.
+  - `rdptest`:
+    - `KeepChannel` and `ChannelPending`, so a test can read two static channels without losing either.
+    - `Audio.Keep` and `Audio.Pending`.
+    - A message's arrival time (`ChannelMessage.Received`, used as `AudioBlock.Received`).
+  - SPEC §10.1: the rule and the packets as built.
+- **Proved:**
+  - TestSessionSound runs ToneSource at 1 kHz through the host into `rdptest`.
+    - Every block is 20 ms of PCM whose samples are exactly the tone's at the block's time stamp.
+    - A client that holds 20 blocks unconfirmed and then stalls for 400 ms passes 500 ms. The host drops sound once and resumes after the client catches up. The time stamps show exactly one gap, at least 300 ms long, and otherwise run 20 ms apart.
+  - TestSessionH264 now carries sound as well. While the video is throttled to a client at a third of the rate, sound arrives at full pace: at least 60 blocks in 1.5 s, no gap in about 4 s, nothing dropped.
+  - Fakes:
+    - The gap rule at its edges: 500 ms is not over, 100 ms is not under, and the number dropped is reported.
+    - A full queue drops the packet; a session without sound stops the capture.
+  - The encoder:
+    - buffers of 441 and 960 frames, jitter under 10 ms, gaps forward and back, channels of different lengths, empty buffers;
+    - rounding, clipping and NaN;
+    - no allocation per buffer.
+  - A client that plays nothing gets no sound, and the capture never starts.
+  - `rdp`:
+    - `Wait`: set up, no `rdpsnd`, plays nothing, closed while training, abandoned.
+    - `Backlog`: a missing confirm covered by a later one, and a lost one dropped after the limit.
+    - `KeepChannel`: the DVC capabilities are kept while the sound is read, and lost without it.
+- **Differs from the plan:**
+  - The delay the rule uses is the age of the oldest block not yet confirmed, not the last confirmed delay. The confirmed delay goes stale exactly when a client stalls. SPEC §10.1 says so.
+  - Sound is dropped before it is queued, not taken out of the queue.
+  - Not planned: carrying sound in TestSessionH264 exposed a race in `flowSwitch`. A key frame wanted between the picture choosing its path and setting it was lost, so the session stayed on bitmaps (about 1 run in 6 under load). `set` now ends a path at once when the path to run has changed. TestFlowSwitch covers it, and 12 loaded runs of `rdp` and `host` passed.
+- **Manual checks:** none (a real client plays it in 4.6).

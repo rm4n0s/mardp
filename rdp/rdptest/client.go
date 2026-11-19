@@ -139,6 +139,9 @@ type Client struct {
 	reassembly fastpath.Reassembler
 	// joiners join the chunks of each static channel ReadChannel reads.
 	joiners map[uint16]*svc.Joiner
+	// kept holds, for each channel KeepChannel keeps, the chunks
+	// ReadChannel read while it read another.
+	kept map[uint16][]keptChunk
 	// dvcJoiners join the PDUs of each dynamic channel ReadDVCMessage
 	// reads.
 	dvcJoiners map[uint32]*dynvc.Joiner

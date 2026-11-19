@@ -42,6 +42,9 @@ type Parts struct {
 	// Video captures the display into the H.264 encoder; nil sends the
 	// picture on the bitmap paths only.
 	Video VideoSource
+	// Sound captures the system sound; nil offers the client none. The
+	// server offers the formats of Host.AudioFormats.
+	Sound SoundSource
 }
 
 // Options tune a Host. The zero value is the defaults.
@@ -221,6 +224,12 @@ func (h *Host) SessionOpened(ctx context.Context, s *rdp.Session) {
 			cancel()
 			wg.Wait()
 		}()
+	}
+
+	if h.parts.Sound != nil {
+		var wg sync.WaitGroup
+		wg.Go(func() { h.runSound(ctx, s, log) })
+		defer wg.Wait()
 	}
 
 	p := picture{h: h, s: s, log: log, width: width, height: height, poll: poll,

@@ -40,6 +40,13 @@ func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger
 		return host.Parts{}, err
 	}
 	parts := host.Parts{Screen: screen, Video: video.New(screen, video.Options{Logger: log}), Pointer: pointer, System: sys}
+	if s.Sound != config.SoundOff {
+		sound, err := capture.NewSound(capture.Options{Display: s.Display, Logger: log})
+		if err != nil {
+			return host.Parts{}, err
+		}
+		parts.Sound = sound
+	}
 	if post {
 		in, err := input.New(input.Options{Display: s.Display, SwapCtrlCommand: s.SwapCtrlCommand, Logger: log})
 		if err != nil {

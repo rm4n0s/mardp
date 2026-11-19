@@ -330,3 +330,183 @@ func TestAudioWriteAllocs(t *testing.T) {
 		}
 	}
 }
+
+// TestAudioWait: Wait returns the format once the channel is set up, and
+// fails when the session has no sound, after Close, and when its context
+// ends first.
+func TestAudioWait(t *testing.T) {
+	tests := []struct {
+		name  string
+		opts  rdptest.Options
+		audio *rdptest.AudioOptions
+		// closeIt closes the sound before Wait.
+		closeIt bool
+		route   string
+	}{
+		{"set up", rdptest.Options{}, &rdptest.AudioOptions{}, false, ""},
+		{"no rdpsnd", rdptest.Options{Channels: []string{"drdynvc"}}, nil, false, "Audio.Wait." + TagAudioUnavailable},
+		{"plays nothing", rdptest.Options{}, &rdptest.AudioOptions{Flags: rdpsnd.CapsVolume}, false, "Audio.Wait." + TagAudioUnavailable},
+		{"closed while training", rdptest.Options{}, &rdptest.AudioOptions{NoTraining: true}, true, "Audio.Wait." + TagAudioUnavailable},
+		{"training unconfirmed", rdptest.Options{}, &rdptest.AudioOptions{NoTraining: true}, false, "Audio.Wait." + TagAudioWaitAbandoned},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newSessions()
+			ts := start(t, Config{Handler: h, AudioFormats: testAudioFormats})
+			c, _ := ts.open(t, tt.opts)
+			s := h.next(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if tt.audio != nil {
+				a, err := c.NegotiateAudio(ctx, *tt.audio)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tt.audio.NoTraining {
+					if _, err := a.Read(ctx); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if tt.closeIt {
+				if err := s.Audio().Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wctx, wcancel := context.WithTimeout(ctx, 300*time.Millisecond)
+			defer wcancel()
+			f, err := s.Audio().Wait(wctx)
+			if tt.route == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !f.wire().Equal(testAudioFormats[0].wire()) {
+					t.Errorf("format %+v", f)
+				}
+				return
+			}
+			assertRoute(t, err, tt.route)
+		})
+	}
+}
+
+// TestAudioBacklog: Backlog counts the blocks not confirmed and the age of
+// the oldest; a confirm also confirms the blocks before it, whose confirms
+// went missing; a block unconfirmed for too long is no longer counted.
+func TestAudioBacklog(t *testing.T) {
+	h := newSessions()
+	ts := start(t, Config{Handler: h, AudioFormats: testAudioFormats})
+	c, _ := ts.open(t, rdptest.Options{})
+	s := h.next(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	a, err := c.NegotiateAudio(ctx, rdptest.AudioOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Audio().Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, oldest := s.Audio().Backlog(); n != 0 || oldest != 0 {
+		t.Errorf("before any block: %d unconfirmed, oldest %v", n, oldest)
+	}
+	var blocks []rdptest.AudioBlock
+	for i := range 3 {
+		if err := s.Audio().Write([]byte{1, 2, 3, 4}, 0); err != nil {
+			t.Fatal(err)
+		}
+		b, err := a.ReadBlock(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blocks = append(blocks, b)
+		if i == 0 {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if n, oldest := s.Audio().Backlog(); n != 3 || oldest < 20*time.Millisecond {
+		t.Errorf("3 blocks sent: %d unconfirmed, oldest %v", n, oldest)
+	}
+	// Only the second block's confirm arrives: the first is played too.
+	if err := a.Confirm(ctx, blocks[1], 0); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		n, oldest := s.Audio().Backlog()
+		if n == 1 {
+			if oldest >= 20*time.Millisecond {
+				t.Errorf("the third block's age %v is the first's", oldest)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d unconfirmed after the second block's confirm, want 1", n)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	// The third block's confirm never comes.
+	s.audio.mu.Lock()
+	s.audio.lost = 30 * time.Millisecond
+	s.audio.mu.Unlock()
+	time.Sleep(40 * time.Millisecond)
+	if n, oldest := s.Audio().Backlog(); n != 0 || oldest != 0 {
+		t.Errorf("a lost confirm: %d unconfirmed, oldest %v", n, oldest)
+	}
+	ts.log.find(t, "a block's Wave Confirm taken to be lost")
+	if _, n := s.Audio().Delay(); n != 0 {
+		t.Errorf("Delay counts %d unconfirmed", n)
+	}
+}
+
+// TestKeepChannel: a client that keeps drdynvc gets the server's DVC
+// capabilities, sent before the sound formats, after it has read the
+// sound; one that does not keep it loses them.
+func TestKeepChannel(t *testing.T) {
+	for _, keep := range []bool{true, false} {
+		t.Run(map[bool]string{true: "kept", false: "skipped"}[keep], func(t *testing.T) {
+			h := newSessions()
+			ts := start(t, Config{Handler: h, AudioFormats: testAudioFormats})
+			c, _ := ts.open(t, rdptest.Options{})
+			s := h.next(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			dvc := c.ChannelID("drdynvc")
+			if keep {
+				c.KeepChannel(dvc)
+			}
+			a, err := c.NegotiateAudio(ctx, rdptest.AudioOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.Keep()
+			waitAudio(t, s)
+			if got := c.ChannelPending(dvc) > 0; got != keep {
+				t.Fatalf("DVC chunks pending: %v, want %v", got, keep)
+			}
+			if !keep {
+				return
+			}
+			if err := s.Audio().Write([]byte{1, 2, 3, 4}, 0); err != nil {
+				t.Fatal(err)
+			}
+			m, err := c.ReadChannel(ctx, dvc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(m.Data) == 0 || m.Data[0]>>4 != 5 || m.Received.IsZero() {
+				t.Errorf("DVC message %x received %v, want the capabilities", m.Data, m.Received)
+			}
+			if a.Pending() {
+				t.Error("a sound PDU pending that the server has not sent")
+			}
+			b, err := a.ReadBlock(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(b.Data, []byte{1, 2, 3, 4}) || b.Received.Before(m.Received) {
+				t.Errorf("block %v received %v", b.Data, b.Received)
+			}
+		})
+	}
+}

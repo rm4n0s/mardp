@@ -261,12 +261,21 @@ type flowSwitch struct {
 }
 
 // set makes sink, of the H.264 path when avc, the running path, which
-// cancel ends.
+// cancel ends. When the path to run has changed already, since the caller
+// chose it, cancel is called at once: the key frame wanted when it changed
+// came while no path ran.
 func (f *flowSwitch) set(sink rdp.FlowSink, avc bool, cancel func()) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cur, f.avc, f.cancel = sink, avc, cancel
-	if f.suppressed && sink != nil {
+	if sink == nil {
+		return
+	}
+	if f.want() != avc {
+		cancel()
+		return
+	}
+	if f.suppressed {
 		sink.OutputSuppressed(true)
 	}
 }

@@ -185,6 +185,7 @@ func prepare(ctx context.Context, folder *config.Folder, settings func() config.
 		Authenticator: authenticator(settings, config.NewGuard(nil), log),
 		Handler:       hst,
 		DesktopSize:   hst.DesktopSize,
+		AudioFormats:  hst.AudioFormats(),
 		Logger:        log,
 	})
 	if err != nil {

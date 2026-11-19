@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -48,6 +49,20 @@ func (r *recorder) Handle(_ context.Context, rec slog.Record) error {
 	defer r.mu.Unlock()
 	r.recs = append(r.recs, rec.Clone())
 	return nil
+}
+
+// dump logs every record to t.
+func (r *recorder) dump(t *testing.T) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, rec := range r.recs {
+		var b strings.Builder
+		rec.Attrs(func(a slog.Attr) bool {
+			b.WriteString(" " + a.String())
+			return true
+		})
+		t.Logf("%s %s %s%s", rec.Time.Format("15:04:05.000"), rec.Level, rec.Message, b.String())
+	}
 }
 
 // find returns the records with the message.
@@ -193,6 +208,11 @@ func serve(t *testing.T, parts Parts, opts Options, w, h int) *session {
 		t.Fatal(err)
 	}
 	rec := &recorder{}
+	t.Cleanup(func() {
+		if t.Failed() {
+			rec.dump(t)
+		}
+	})
 	opts.Logger = slog.New(rec)
 	hst, err := New(parts, opts)
 	if err != nil {
@@ -200,7 +220,7 @@ func serve(t *testing.T, parts Parts, opts Options, w, h int) *session {
 	}
 	srv, err := rdp.NewServer(rdp.Config{
 		Certificate: cert, Authenticator: rdp.StaticAuthenticator(testUser, testPassword),
-		Handler: hst, DesktopSize: hst.DesktopSize, Logger: opts.Logger,
+		Handler: hst, DesktopSize: hst.DesktopSize, AudioFormats: hst.AudioFormats(), Logger: opts.Logger,
 	})
 	if err != nil {
 		t.Fatal(err)
