@@ -7,6 +7,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "vtenc_darwin.h"
 #include "_cgo_export.h"
@@ -26,7 +27,7 @@ enum { maxSets = 4 };
 static void encoded(void *ref, void *frameRef, OSStatus st, VTEncodeInfoFlags flags, CMSampleBufferRef sb) {
 	mardpEnc *e = ref;
 	if (st != noErr || sb == NULL) {
-		mardpEncOutput(e->handle, st != noErr ? st : -1, (flags & kVTEncodeInfo_FrameDropped) != 0, 0, NULL, NULL, 0, 4, NULL, 0, 0);
+		mardpEncOutput(e->handle, st != noErr ? st : -1, (flags & kVTEncodeInfo_FrameDropped) != 0, 0, NULL, NULL, 0, 4, NULL, 0, 0, -1);
 		return;
 	}
 	int key = 1;
@@ -41,7 +42,7 @@ static void encoded(void *ref, void *frameRef, OSStatus st, VTEncodeInfoFlags fl
 	int nalLen = 4;
 	OSStatus fs = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(fd, 0, NULL, NULL, &count, &nalLen);
 	if (fs != noErr) {
-		mardpEncOutput(e->handle, fs, 0, 0, NULL, NULL, 0, 4, NULL, 0, 0);
+		mardpEncOutput(e->handle, fs, 0, 0, NULL, NULL, 0, 4, NULL, 0, 0, -1);
 		return;
 	}
 	uint8_t *sets[maxSets];
@@ -52,7 +53,7 @@ static void encoded(void *ref, void *frameRef, OSStatus st, VTEncodeInfoFlags fl
 		size_t psz = 0;
 		fs = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(fd, i, &ps, &psz, NULL, NULL);
 		if (fs != noErr) {
-			mardpEncOutput(e->handle, fs, 0, 0, NULL, NULL, 0, 4, NULL, 0, 0);
+			mardpEncOutput(e->handle, fs, 0, 0, NULL, NULL, 0, 4, NULL, 0, 0, -1);
 			return;
 		}
 		sets[nsets] = (uint8_t *)ps;
@@ -65,7 +66,7 @@ static void encoded(void *ref, void *frameRef, OSStatus st, VTEncodeInfoFlags fl
 	if (bb != NULL && !CMBlockBufferIsRangeContiguous(bb, 0, total)) {
 		fs = CMBlockBufferCreateContiguous(NULL, bb, NULL, NULL, 0, total, 0, &flat);
 		if (fs != kCMBlockBufferNoErr) {
-			mardpEncOutput(e->handle, fs, 0, 0, NULL, NULL, 0, 4, NULL, 0, 0);
+			mardpEncOutput(e->handle, fs, 0, 0, NULL, NULL, 0, 4, NULL, 0, 0, -1);
 			return;
 		}
 		bb = flat;
@@ -76,17 +77,69 @@ static void encoded(void *ref, void *frameRef, OSStatus st, VTEncodeInfoFlags fl
 		fs = CMBlockBufferGetDataPointer(bb, 0, &len, NULL, &data);
 		if (fs != kCMBlockBufferNoErr) {
 			if (flat != NULL) CFRelease(flat);
-			mardpEncOutput(e->handle, fs, 0, 0, NULL, NULL, 0, 4, NULL, 0, 0);
+			mardpEncOutput(e->handle, fs, 0, 0, NULL, NULL, 0, 4, NULL, 0, 0, -1);
 			return;
 		}
 	}
 	CMTime pts = CMSampleBufferGetPresentationTimeStamp(sb);
-	int64_t ns = 0;
+	int64_t ns = 0, age = -1;
 	if (CMTIME_IS_NUMERIC(pts)) {
 		ns = CMTimeConvertScale(pts, 1000000000, kCMTimeRoundingMethod_Default).value;
+		// A capture stamps its frames with the host clock: the frame's age
+		// is how long ago it was captured (SPEC §14).
+		age = mardpHostNanos() - ns;
 	}
-	mardpEncOutput(e->handle, 0, 0, key, sets, setLens, nsets, nalLen, (uint8_t *)data, len, ns);
+	mardpEncOutput(e->handle, 0, 0, key, sets, setLens, nsets, nalLen, (uint8_t *)data, len, ns, age);
 	if (flat != NULL) CFRelease(flat);
+}
+
+int64_t mardpHostNanos(void) {
+	return CMTimeConvertScale(CMClockGetTime(CMClockGetHostTimeClock()), 1000000000, kCMTimeRoundingMethod_Default).value;
+}
+
+// patternNoise is the side of the noisy square of the test pattern, a
+// fraction of the picture's.
+enum { patternNoise = 3 };
+
+long mardpEncSubmitPattern(mardpEnc *e, uint32_t n) {
+	CVPixelBufferPoolRef pool = mardpEncPool(e);
+	CVPixelBufferRef pb = NULL;
+	if (pool == NULL || CVPixelBufferPoolCreatePixelBuffer(NULL, pool, &pb) != kCVReturnSuccess) {
+		return -1;
+	}
+	CVPixelBufferLockBaseAddress(pb, 0);
+	size_t w = CVPixelBufferGetWidthOfPlane(pb, 0), h = CVPixelBufferGetHeightOfPlane(pb, 0);
+	uint8_t *luma = CVPixelBufferGetBaseAddressOfPlane(pb, 0);
+	size_t ls = CVPixelBufferGetBytesPerRowOfPlane(pb, 0);
+	// Bands that move down 4 rows a frame.
+	for (size_t row = 0; row < h; row++) {
+		memset(luma + row * ls, (int)((row + n * 4) & 0xff), w);
+	}
+	// A square that moves across, a diagonal gradient with fresh noise of
+	// ±8 on it each frame, as a film's grain.
+	size_t sw = w / patternNoise, sh = h / patternNoise;
+	size_t x0 = (n * 8) % (w - sw + 1), y0 = h / 3;
+	uint32_t x = n * 2654435761u + 1;
+	for (size_t row = 0; row < sh; row++) {
+		uint8_t *line = luma + (y0 + row) * ls + x0;
+		for (size_t col = 0; col < sw; col++) {
+			x ^= x << 13;
+			x ^= x >> 17;
+			x ^= x << 5;
+			int v = 64 + (int)((col + row) / 4 % 128) + (int)(x & 15) - 8;
+			line[col] = (uint8_t)v;
+		}
+	}
+	uint8_t *chroma = CVPixelBufferGetBaseAddressOfPlane(pb, 1);
+	size_t cs = CVPixelBufferGetBytesPerRowOfPlane(pb, 1);
+	for (size_t row = 0; row < CVPixelBufferGetHeightOfPlane(pb, 1); row++) {
+		memset(chroma + row * cs, 128 + (int)((row + n) % 64) - 32, w);
+	}
+	CVPixelBufferUnlockBaseAddress(pb, 0);
+	// Stamped once drawn: a capture hands over a picture already made.
+	long st = mardpEncSubmit(e, pb, CMTimeMake(mardpHostNanos(), 1000000000));
+	CVPixelBufferRelease(pb);
+	return st;
 }
 
 mardpEncCreated mardpEncCreate(uintptr_t handle, int width, int height, int fullRange, int profile, int bitrate, int fps) {

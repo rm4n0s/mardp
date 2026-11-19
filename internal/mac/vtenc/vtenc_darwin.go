@@ -61,6 +61,14 @@ func (s *vtSession) submitter() (fn, arg unsafe.Pointer) {
 	return C.mardpEncSubmit, unsafe.Pointer(s.enc)
 }
 
+// SubmitPattern encodes picture n of a moving test pattern, made in C, as
+// if a capture had just handed it over (`mardp -test-pattern`, SPEC
+// §15.5). It returns VideoToolbox's OSStatus, 1 when the encoder skipped
+// the picture, and -1 when it had no buffer for it.
+func (e *Encoder) SubmitPattern(n uint32) int {
+	return int(C.mardpEncSubmitPattern(e.s.(*vtSession).enc, C.uint32_t(n)))
+}
+
 func (s *vtSession) close() {
 	C.mardpEncClose(s.enc)
 	// No output can reach Go any more.
@@ -69,9 +77,9 @@ func (s *vtSession) close() {
 
 //export mardpEncOutput
 func mardpEncOutput(h C.uintptr_t, status C.int, dropped C.int, key C.int, sets **C.uint8_t, setLens *C.size_t, nsets C.int,
-	nalLen C.int, data *C.uint8_t, n C.size_t, pts C.int64_t) {
+	nalLen C.int, data *C.uint8_t, n C.size_t, pts C.int64_t, age C.int64_t) {
 	e := cgo.Handle(h).Value().(*Encoder)
-	o := output{status: int(status), dropped: dropped != 0, key: key != 0, nalLen: int(nalLen), pts: time.Duration(pts)}
+	o := output{status: int(status), dropped: dropped != 0, key: key != 0, nalLen: int(nalLen), pts: time.Duration(pts), age: time.Duration(age)}
 	var buf [4][]byte
 	if nsets > 0 {
 		ps := unsafe.Slice(sets, int(nsets))

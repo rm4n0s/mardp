@@ -1,8 +1,11 @@
 package video
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/rm4n0s/errors"
@@ -13,11 +16,23 @@ import (
 )
 
 // fakeEncoder records what it was asked; frame is its frame function.
+// SubmitPattern records the pictures and answers picture n with
+// statuses[n], 0 beyond them.
 type fakeEncoder struct {
-	opts   vtenc.Options
-	frame  func(*vtenc.Frame)
-	closed int
-	forced int
+	opts     vtenc.Options
+	frame    func(*vtenc.Frame)
+	closed   int
+	forced   int
+	pictures []uint32
+	statuses []int
+}
+
+func (e *fakeEncoder) SubmitPattern(n uint32) int {
+	e.pictures = append(e.pictures, n)
+	if int(n) < len(e.statuses) {
+		return e.statuses[n]
+	}
+	return 0
 }
 
 func (e *fakeEncoder) SetBitrate(int) error { return nil }
@@ -59,7 +74,9 @@ func TestCaptureVideo(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			enc := &fakeEncoder{}
-			c := &fakeCapture{enc: enc, err: tt.err, deliver: []vtenc.Frame{{Data: []byte{1}, Key: true}, {Data: []byte{2}}}}
+			captured := time.Now()
+			c := &fakeCapture{enc: enc, err: tt.err, deliver: []vtenc.Frame{
+				{Data: []byte{1}, Key: true, Captured: captured, Encoded: captured.Add(5 * time.Millisecond)}, {Data: []byte{2}}}}
 			s := &Source{capture: c, opts: tt.opts, newEncoder: func(o vtenc.Options, frame func(*vtenc.Frame)) (encoder, error) {
 				enc.opts, enc.frame = o, frame
 				return enc, nil
@@ -69,7 +86,7 @@ func TestCaptureVideo(t *testing.T) {
 			err := s.CaptureVideo(context.Background(), host.VideoConfig{Width: 1280, Height: 720, MaxFPS: 30, Bitrate: 5e6},
 				func(e host.VideoEncoder) { startedWith = e },
 				func(f *host.EncodedFrame) {
-					got = append(got, host.EncodedFrame{Data: append([]byte(nil), f.Data...), Key: f.Key})
+					got = append(got, host.EncodedFrame{Data: append([]byte(nil), f.Data...), Key: f.Key, Captured: f.Captured, Encoded: f.Encoded})
 				})
 			if tt.err != nil {
 				assertRoute(t, err, "TestCaptureVideo.TestCaptureFailed")
@@ -92,6 +109,10 @@ func TestCaptureVideo(t *testing.T) {
 			if len(got) != 2 || !got[0].Key || got[0].Data[0] != 1 || got[1].Key || got[1].Data[0] != 2 {
 				t.Errorf("frames %+v", got)
 			}
+			if len(got) == 2 && (!got[0].Captured.Equal(captured) || got[0].Encoded.Sub(got[0].Captured) != 5*time.Millisecond ||
+				!got[1].Captured.IsZero() || !got[1].Encoded.IsZero()) {
+				t.Errorf("the frames' times %+v", got)
+			}
 		})
 	}
 }
@@ -108,6 +129,60 @@ func TestEncoderFails(t *testing.T) {
 	assertRoute(t, err, "TestEncoderFails.func1.TestEncoderRefused")
 	if started || c.out.Encoder != nil {
 		t.Error("a capture started without an encoder")
+	}
+}
+
+// TestPattern: the test pattern needs no capture: each tick of the frame
+// rate's clock submits the next picture to the encoder, a run of refused
+// pictures is logged once, and the end of ctx ends it with the encoder
+// closed.
+func TestPattern(t *testing.T) {
+	// Encoded twice, refused twice, skipped, refused twice.
+	enc := &fakeEncoder{statuses: []int{0, 0, -12902, -12902, 1, -1, -1}}
+	ticks := make(chan time.Time)
+	var every time.Duration
+	stopped := 0
+	var logged bytes.Buffer
+	s := NewPattern(Options{Logger: slog.New(slog.NewTextHandler(&logged, nil))})
+	s.newEncoder = func(o vtenc.Options, frame func(*vtenc.Frame)) (encoder, error) {
+		enc.opts, enc.frame = o, frame
+		return enc, nil
+	}
+	s.tick = func(d time.Duration) (<-chan time.Time, func()) {
+		every = d
+		return ticks, func() { stopped++ }
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	var started host.VideoEncoder
+	go func() {
+		done <- s.CaptureVideo(ctx, host.VideoConfig{Width: 1920, Height: 1080, MaxFPS: 60, Bitrate: 8e6},
+			func(e host.VideoEncoder) { started = e }, func(*host.EncodedFrame) {})
+	}()
+	for range len(enc.statuses) {
+		ticks <- time.Now()
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if every != time.Second/60 || stopped != 1 {
+		t.Errorf("ticks every %v, stopped %d times", every, stopped)
+	}
+	want := []uint32{0, 1, 2, 3, 4, 5, 6}
+	if len(enc.pictures) != len(want) {
+		t.Fatalf("pictures %v, want %v", enc.pictures, want)
+	}
+	for i := range want {
+		if enc.pictures[i] != want[i] {
+			t.Fatalf("pictures %v, want %v", enc.pictures, want)
+		}
+	}
+	if n := bytes.Count(logged.Bytes(), []byte("refused a picture")); n != 2 {
+		t.Errorf("%d warnings for two runs of refused pictures:\n%s", n, logged.String())
+	}
+	if started != enc || enc.closed != 1 || enc.opts.Width != 1920 || enc.opts.FPS != 60 || !enc.opts.FullRange {
+		t.Errorf("encoder %+v started %v", enc, started)
 	}
 }
 

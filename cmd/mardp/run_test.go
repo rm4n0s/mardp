@@ -76,8 +76,9 @@ type fakeMac struct {
 
 	login *fakeLogin
 
-	mu    sync.Mutex
-	posts []bool
+	mu       sync.Mutex
+	posts    []bool
+	patterns int
 }
 
 func newFakeMac(granted ...host.Permission) *fakeMac {
@@ -158,6 +159,19 @@ func (f *fakeMac) parts(sys host.System, _ config.Settings, post bool, _ *slog.L
 		p.Input = f.in
 	}
 	if f.sound {
+		p.Sound = &host.ToneSource{}
+	}
+	return p, nil
+}
+
+// pattern is the fake test pattern: host.PatternVideo, and a tone unless
+// the sound is off.
+func (f *fakeMac) pattern(s config.Settings, _ *slog.Logger) (host.Parts, error) {
+	f.mu.Lock()
+	f.patterns++
+	f.mu.Unlock()
+	p := host.Parts{Screen: &host.PatternScreen{Frames: 1}, Video: &host.PatternVideo{}}
+	if s.Sound != config.SoundOff {
 		p.Sound = &host.ToneSource{}
 	}
 	return p, nil
@@ -297,6 +311,12 @@ func (r *running) stop(t *testing.T) {
 // connect connects a client to h's server, trusting only its certificate.
 func connect(t *testing.T, h *home, user, password string) (*rdptest.Client, error) {
 	t.Helper()
+	return connectSized(t, h, user, password, 1280, 720)
+}
+
+// connectSized is connect, asking for a desktop of w×ht.
+func connectSized(t *testing.T, h *home, user, password string, w, ht uint16) (*rdptest.Client, error) {
+	t.Helper()
 	nc, err := net.Dial("tcp", h.addr())
 	if err != nil {
 		t.Fatal(err)
@@ -319,7 +339,7 @@ func connect(t *testing.T, h *home, user, password string) (*rdptest.Client, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c, err := rdptest.Connect(ctx, nc, rdptest.Options{TLSConfig: cfg, User: user, Password: password, Width: 1280, Height: 720})
+	c, err := rdptest.Connect(ctx, nc, rdptest.Options{TLSConfig: cfg, User: user, Password: password, Width: w, Height: ht})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,6 +375,8 @@ func TestRunFlags(t *testing.T) {
 		{"unknown flag", []string{"-nope"}, exitUsage, "", "flag provided but not defined"},
 		{"arguments", []string{"-headless", "more"}, exitUsage, "", "unexpected arguments"},
 		{"log file", []string{"-headless", "-log-file", missing}, exitFailed, "", "the log file"},
+		{"test pattern without -headless", []string{"-test-pattern"}, exitUsage, "", "need -headless"},
+		{"measure without -headless", []string{"-measure"}, exitUsage, "", "need -headless"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -430,7 +452,7 @@ func TestServeRefuses(t *testing.T) {
 			m.sysErr, m.partsErr, m.noScreen = tt.sysErr, tt.parts, tt.noScr
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			err := serve(ctx, h.getenv, m, false, slog.New(slog.DiscardHandler))
+			err := serve(ctx, h.getenv, m, serveOptions{}, slog.New(slog.DiscardHandler))
 			if err == nil {
 				t.Fatal("serve started")
 			}

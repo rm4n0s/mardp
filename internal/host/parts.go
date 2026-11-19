@@ -120,6 +120,9 @@ type EncodedFrame struct {
 	Data []byte
 	// Key says it is a key frame.
 	Key bool
+	// Captured is when its picture was captured, zero when the source
+	// does not know; Encoded when the encoder handed it over (SPEC §14).
+	Captured, Encoded time.Time
 }
 
 // VideoSource captures the display into a hardware encoder (SPEC §4.2):

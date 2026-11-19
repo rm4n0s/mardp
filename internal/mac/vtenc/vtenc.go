@@ -117,6 +117,10 @@ type Frame struct {
 	Key bool
 	// PTS is the presentation time the capture gave the picture.
 	PTS time.Duration
+	// Captured is when the picture was captured, from its presentation
+	// time on the host clock; zero when that is unknown. Encoded is when
+	// the encoder handed the frame over (SPEC §14).
+	Captured, Encoded time.Time
 }
 
 // Stats count what the encoder did.
@@ -138,7 +142,14 @@ type output struct {
 	nalLen  int      // the length of the NAL unit lengths in avcc
 	avcc    []byte   // the NAL units, each after its length
 	pts     time.Duration
+	// age is how long ago the picture was captured, by its presentation
+	// time on the host clock; negative when unknown.
+	age time.Duration
 }
+
+// maxAge is the oldest a picture can be when its frame comes out: an age
+// beyond it, or below 0, comes from a presentation time on another clock.
+const maxAge = 10 * time.Second
 
 // config is what the backend makes a session of.
 type config struct {
@@ -319,7 +330,10 @@ func (e *Encoder) deliver(o output) {
 	if o.key {
 		e.keys.Add(1)
 	}
-	e.out = Frame{Data: buf, Key: o.key, PTS: o.pts}
+	e.out = Frame{Data: buf, Key: o.key, PTS: o.pts, Encoded: time.Now()}
+	if o.age >= 0 && o.age < maxAge {
+		e.out.Captured = e.out.Encoded.Add(-o.age)
+	}
 	e.frame(&e.out)
 }
 

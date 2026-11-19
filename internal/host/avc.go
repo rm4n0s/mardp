@@ -56,6 +56,7 @@ type videoOut interface {
 	SendFrame(annexB []byte, keyFrame bool) error
 	Backlog() rdp.Backlog
 	Path() rdp.VideoPath
+	SetWriteHook(fn func(rdp.VideoWrite))
 }
 
 // avcPath sends a session's picture on the H.264 path while one capture
@@ -74,6 +75,8 @@ type avcPath struct {
 	// interval is the time between two captured frames at the cap.
 	interval time.Duration
 	onFrame  func()
+	// times, when set, measures the frames sent (Options.OnFrameTiming).
+	times *frameTimes
 
 	mu       sync.Mutex
 	enc      VideoEncoder
@@ -104,7 +107,13 @@ func (a *avcPath) frame(f *EncodedFrame) {
 		a.mu.Unlock()
 		return
 	}
+	if a.times != nil {
+		a.times.sending(f)
+	}
 	err := a.out.SendFrame(f.Data, f.Key)
+	if err != nil && a.times != nil {
+		a.times.notSent()
+	}
 	switch {
 	case err == nil:
 		a.sent++

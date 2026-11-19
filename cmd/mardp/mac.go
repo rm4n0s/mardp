@@ -26,6 +26,10 @@ type machine interface {
 	window(ctx context.Context, b ui.Backend, log *slog.Logger) error
 	// loginItem adds the app to the login items and takes it out.
 	loginItem() loginItem
+	// pattern makes the parts of `mardp -headless -test-pattern` for the
+	// settings s: a moving test pattern through the real encoder and a
+	// tone, without capture and without input (SPEC §15.5).
+	pattern(s config.Settings, log *slog.Logger) (host.Parts, error)
 }
 
 // mac is the real Mac.
@@ -59,6 +63,15 @@ func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger
 			return host.Parts{}, err
 		}
 		parts.Input = in
+	}
+	return parts, nil
+}
+
+func (mac) pattern(s config.Settings, log *slog.Logger) (host.Parts, error) {
+	parts := host.Parts{Screen: &host.PatternScreen{}, Video: video.NewPattern(video.Options{Logger: log})}
+	if s.Sound != config.SoundOff {
+		parts.Sound = &host.ToneSource{}
+		parts.AAC = aacParts(log)
 	}
 	return parts, nil
 }

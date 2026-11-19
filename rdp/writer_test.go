@@ -395,3 +395,73 @@ func TestSessionWriteFails(t *testing.T) {
 	// The failed write ends the session, with its error.
 	assertRoute(t, <-done, "writer.run."+TagWriteFailed)
 }
+
+// TestVideoWriteHook: the hook hears of each packet of the video queue
+// after its write, in order, with when it was queued and written and its
+// length; control packets and a removed hook tell it nothing.
+func TestVideoWriteHook(t *testing.T) {
+	g := newGate()
+	wr := newWriter(g, func(error) {})
+	go wr.run()
+	defer func() {
+		close(g.release)
+		wr.halt()
+	}()
+	v := &Video{s: &Session{wr: wr}}
+	got := make(chan VideoWrite, 8)
+	v.SetWriteHook(func(w VideoWrite) { got <- w })
+	before := time.Now()
+	mark(t, wr, queueVideo, 1)
+	g.next(t)
+	select {
+	case w := <-got:
+		t.Fatalf("told of a packet still being written: %+v", w)
+	default:
+	}
+	if err := wr.send(queueVideo, func(p *packet) error { p.w.U8(2); p.w.U8(3); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	mark(t, wr, queueControl, 9)
+	g.release <- struct{}{} // video 1
+	if b := g.next(t); b[0] != 9 {
+		t.Fatalf("write %v, want control 9", b)
+	}
+	g.release <- struct{}{} // control 9
+	if b := g.next(t); b[0] != 2 {
+		t.Fatalf("write %v, want video 2", b)
+	}
+	g.release <- struct{}{} // video 2
+	var ws []VideoWrite
+	for range 2 {
+		select {
+		case w := <-got:
+			ws = append(ws, w)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("told of %d packets, want 2", len(ws))
+		}
+	}
+	for i, w := range ws {
+		if w.Queued.Before(before) || w.Written.Before(w.Queued) || w.Bytes != i+1 {
+			t.Errorf("write %d: %+v", i, w)
+		}
+	}
+	if !ws[1].Queued.After(ws[0].Queued) || ws[1].Written.Before(ws[0].Written) {
+		t.Errorf("out of order: %+v", ws)
+	}
+	v.SetWriteHook(nil)
+	mark(t, wr, queueVideo, 4)
+	if b := g.next(t); b[0] != 4 {
+		t.Fatalf("write %v, want video 4", b)
+	}
+	g.release <- struct{}{}
+	mark(t, wr, queueControl, 5) // written after video 4's hook would have run
+	if b := g.next(t); b[0] != 5 {
+		t.Fatalf("write %v, want control 5", b)
+	}
+	select {
+	case w := <-got:
+		t.Errorf("a removed hook was told of %+v", w)
+	default:
+	}
+	g.release <- struct{}{}
+}

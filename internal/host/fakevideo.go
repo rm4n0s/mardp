@@ -11,8 +11,9 @@ import (
 // second, each the size the bitrate gives a frame (a key frame three
 // times that), so a slow client feels the bitrate. A frame's data is a
 // start code, a NAL header (5 for a key frame, 1 otherwise), its number
-// and the time it was made (PatternVideoFrame reads them), then zeros. It
-// keeps what the session asked of its encoder.
+// and the time it was made (PatternVideoFrame reads them), then zeros; it
+// is captured and encoded when it is made. It keeps what the session asked
+// of its encoder.
 type PatternVideo struct {
 	mu    sync.Mutex
 	stats PatternVideoStats
@@ -99,9 +100,10 @@ func (v *PatternVideo) CaptureVideo(ctx context.Context, cfg VideoConfig, starte
 		if key {
 			buf[4] = 5
 		}
+		now := time.Now()
 		binary.BigEndian.PutUint64(buf[5:], uint64(n))
-		binary.BigEndian.PutUint64(buf[13:], uint64(time.Now().UnixNano()))
-		frame(&EncodedFrame{Data: buf, Key: key})
+		binary.BigEndian.PutUint64(buf[13:], uint64(now.UnixNano()))
+		frame(&EncodedFrame{Data: buf, Key: key, Captured: now, Encoded: now})
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/rm4n0s/errors"
 
@@ -64,6 +65,8 @@ type packet struct {
 	pdu wire.Writer
 	// done, when set, gets the result of the write.
 	done chan error
+	// queued is when the packet was queued.
+	queued time.Time
 }
 
 // writer is a session's writer goroutine (SPEC §4.2): it alone writes to
@@ -85,6 +88,9 @@ type writer struct {
 	// bytes counts the bytes written; frames the video queue's packets
 	// written, a frame each.
 	bytes, frames atomic.Uint64
+	// written, when set, is told of each packet of the video queue
+	// written (Video.SetWriteHook).
+	written atomic.Pointer[func(VideoWrite)]
 
 	mu  sync.Mutex
 	err error // why the writer stopped, nil when it was halted
@@ -117,6 +123,7 @@ func (wr *writer) send(q queue, build func(p *packet) error) error {
 		wr.free[q] <- p
 		return err
 	}
+	p.queued = time.Now()
 	wr.queued[q] <- p
 	return nil
 }
@@ -159,6 +166,9 @@ func (wr *writer) run() {
 			wr.bytes.Add(uint64(p.w.Len()))
 			if q == queueVideo {
 				wr.frames.Add(1)
+				if fn := wr.written.Load(); fn != nil {
+					(*fn)(VideoWrite{Queued: p.queued, Written: time.Now(), Bytes: p.w.Len()})
+				}
 			}
 		}
 		if p.done != nil {

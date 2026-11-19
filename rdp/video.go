@@ -2,6 +2,7 @@ package rdp
 
 import (
 	"image"
+	"time"
 
 	"github.com/rm4n0s/errors"
 
@@ -57,6 +58,28 @@ type Video struct {
 
 // Video returns the session's video output.
 func (s *Session) Video() *Video { return &s.video }
+
+// VideoWrite is one packet of the session's video queue written to the
+// connection (SPEC §14: the delay to the last byte written).
+type VideoWrite struct {
+	// Queued is when SendFrame or SendRects queued it; Written when its
+	// last byte was written to the connection.
+	Queued, Written time.Time
+	// Bytes is its length.
+	Bytes int
+}
+
+// SetWriteHook makes the session's writer call fn after it wrote each
+// packet of the video queue, in the order they were queued, on the
+// writer's goroutine: fn should return at once, since the writer waits for
+// it. A nil fn removes the hook.
+func (v *Video) SetWriteHook(fn func(VideoWrite)) {
+	if fn == nil {
+		v.s.wr.written.Store(nil)
+		return
+	}
+	v.s.wr.written.Store(&fn)
+}
 
 // Path returns how the session sends the desktop (SPEC §9.1): once the
 // graphics pipeline's surface is created, H.264 when the client takes it

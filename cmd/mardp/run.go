@@ -44,11 +44,19 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	logFile := fs.String("log-file", "", "write the log to this file instead of the standard error")
 	viewOnly := fs.Bool("view-only", false, "drop the client's keyboard and mouse, as without Accessibility")
+	testPattern := fs.Bool("test-pattern", false,
+		"with -headless: serve a moving test pattern and a tone instead of the screen and its sound, without permissions (scripts/perf.sh)")
+	measure := fs.Bool("measure", false,
+		"with -headless: log how long the H.264 frames take from capture to the socket, every 10 seconds and for each session")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
 		complain(stderr, "mardp: unexpected arguments: %q\n", fs.Args())
+		return exitUsage
+	}
+	if (*testPattern || *measure) && !*headless {
+		complain(stderr, "mardp: -test-pattern and -measure need -headless\n")
 		return exitUsage
 	}
 	if *showVersion {
@@ -74,11 +82,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	log := slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	log.Info("mardp starting", "version", version(), "headless", *headless)
-	runner := window
+	var err error
 	if *headless {
-		runner = serve
+		err = serve(ctx, getenv, m, serveOptions{viewOnly: *viewOnly, testPattern: *testPattern, measure: *measure}, log)
+	} else {
+		err = window(ctx, getenv, m, *viewOnly, log)
 	}
-	if err := runner(ctx, getenv, m, *viewOnly, log); err != nil {
+	if err != nil {
 		log.Error("mardp stopped", "err", err)
 		return exitFailed
 	}
@@ -116,18 +126,48 @@ func openFolder(ctx context.Context, getenv func(string) string, log *slog.Logge
 	return folder, s, nil
 }
 
+// serveOptions are the flags of `mardp -headless`.
+type serveOptions struct {
+	// viewOnly drops the client's input.
+	viewOnly bool
+	// testPattern serves the test pattern and a tone instead of the screen
+	// and its sound (SPEC §15.5).
+	testPattern bool
+	// measure logs the H.264 frames' timing (SPEC §14).
+	measure bool
+}
+
 // serve runs the server with the settings of mardp's folder until ctx ends
 // (SPEC §13).
-func serve(ctx context.Context, getenv func(string) string, m machine, viewOnly bool, log *slog.Logger) error {
+func serve(ctx context.Context, getenv func(string) string, m machine, opts serveOptions, log *slog.Logger) error {
 	folder, s, err := openFolder(ctx, getenv, log)
 	if err != nil {
 		return err
+	}
+	if opts.testPattern {
+		log.Info("serving a test pattern and a tone instead of the screen (-test-pattern)")
+		m = patterned{m}
 	}
 	sys, err := m.system()
 	if err != nil {
 		return err
 	}
-	srv, err := prepare(ctx, folder, func() config.Settings { return s }, sys, m, viewOnly, observer{}, log)
+	var obs observer
+	if opts.measure {
+		me := newMeasurer(log, measureEvery)
+		obs.session, obs.timing = me.event, me.frame
+		mctx, stop := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			me.run(mctx)
+		}()
+		defer func() {
+			stop()
+			<-done
+		}()
+	}
+	srv, err := prepare(ctx, folder, func() config.Settings { return s }, sys, m, opts.viewOnly, obs, log)
 	if err != nil {
 		return err
 	}
@@ -135,12 +175,14 @@ func serve(ctx context.Context, getenv func(string) string, m machine, viewOnly 
 }
 
 // observer is told what a server does, for the window's recent events
-// (SPEC §12.2); a nil func is told nothing.
+// (SPEC §12.2) and for -measure; a nil func is told nothing.
 type observer struct {
 	// session is told when a session opens and when it ends.
 	session func(host.Event)
 	// refused is told of a refused login and of what the guard decided.
 	refused func(user, remote string, res config.LoginResult)
+	// timing is told of each H.264 frame's timing (host.Options.OnFrameTiming).
+	timing func(host.FrameTiming)
 }
 
 // server is a server that listens, ready to serve.
@@ -198,7 +240,7 @@ func prepare(ctx context.Context, folder *config.Folder, settings func() config.
 		parts.Output = out
 	}
 	hst, err := host.New(parts, host.Options{VideoFPS: s.MaxFPS, MaxBitrate: s.MaxBitrate, MaxHeight: s.MaxHeight,
-		MuteMarker: folder, Logger: log, OnEvent: obs.session})
+		MuteMarker: folder, Logger: log, OnEvent: obs.session, OnFrameTiming: obs.timing})
 	if err != nil {
 		return nil, err
 	}

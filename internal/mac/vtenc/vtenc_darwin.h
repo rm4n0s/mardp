@@ -37,6 +37,17 @@ long mardpEncSubmit(mardpEnc *e, CVPixelBufferRef pb, CMTime pts);
 // mardpEncPool is the session's pool of pixel buffers, NV12 of its size.
 CVPixelBufferPoolRef mardpEncPool(mardpEnc *e);
 
+// mardpEncSubmitPattern fills a pixel buffer of the encoder's pool with
+// picture n of a moving test pattern (bands, and a square of noise that
+// moves across) and submits it, stamped with the host clock as a capture
+// stamps its frames. It returns what mardpEncSubmit returns, or -1 when
+// the pool gave no buffer.
+long mardpEncSubmitPattern(mardpEnc *e, uint32_t n);
+
+// mardpHostNanos is the host clock, CMClockGetHostTimeClock, in
+// nanoseconds: the clock of ScreenCaptureKit's presentation times.
+int64_t mardpHostNanos(void);
+
 // mardpEncClose waits for the frames being encoded, invalidates the
 // session and frees the encoder.
 void mardpEncClose(mardpEnc *e);

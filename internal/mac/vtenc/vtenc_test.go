@@ -230,6 +230,43 @@ func TestDeliver(t *testing.T) {
 	}
 }
 
+// TestDeliverTimes: a frame's capture time is its encode time less the age
+// the C side measured on the host clock; an age that comes from another
+// clock leaves it unknown.
+func TestDeliverTimes(t *testing.T) {
+	p := []byte{0, 0, 0, 3, 0x41, 7, 7}
+	for _, tt := range []struct {
+		age   time.Duration
+		known bool
+	}{
+		{12 * time.Millisecond, true},
+		{0, true},
+		{-1, false},
+		{-time.Second, false},
+		{maxAge, false},
+		{24 * time.Hour, false},
+	} {
+		t.Run(tt.age.String(), func(t *testing.T) {
+			var got Frame
+			e, err := newEncoder(Options{Width: 64, Height: 64}, func(fr *Frame) { got = *fr }, &fakeVT{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := time.Now()
+			e.deliver(output{nalLen: 4, avcc: p, age: tt.age})
+			if got.Encoded.Before(before) || got.Encoded.After(time.Now()) {
+				t.Errorf("encoded at %v, not during the call", got.Encoded)
+			}
+			switch {
+			case !tt.known && !got.Captured.IsZero():
+				t.Errorf("captured %v, want unknown", got.Captured)
+			case tt.known && got.Encoded.Sub(got.Captured) != tt.age:
+				t.Errorf("captured %v before encoded, want %v", got.Encoded.Sub(got.Captured), tt.age)
+			}
+		})
+	}
+}
+
 func TestAppendAnnexB(t *testing.T) {
 	for _, tt := range []struct {
 		name   string

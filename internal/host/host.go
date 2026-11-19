@@ -82,6 +82,11 @@ type Options struct {
 	// OnEvent is told when a session opens and when it ends, on the
 	// session's goroutine; nil is told nothing.
 	OnEvent func(Event)
+	// OnFrameTiming is told when each frame of the H.264 path was
+	// captured, encoded, queued and written (SPEC §14), on the session's
+	// writer goroutine, which waits for it: it should return at once. nil
+	// measures nothing.
+	OnFrameTiming func(FrameTiming)
 
 	// now is the clock of the double clicks; nil is time.Now.
 	now func() time.Time
@@ -327,6 +332,11 @@ func (p *picture) runAVC(ctx context.Context, cancel func()) error {
 	interval := time.Second / time.Duration(h.opts.VideoFPS)
 	a := &avcPath{out: p.s.Video(), log: p.log, rate: p.rate, stop: cancel, interval: interval}
 	defer a.end()
+	if h.opts.OnFrameTiming != nil {
+		a.times = &frameTimes{tell: h.opts.OnFrameTiming}
+		a.out.SetWriteHook(a.times.written)
+		defer a.out.SetWriteHook(nil)
+	}
 	if p.poll != nil {
 		a.onFrame = p.poll.kickNow
 	}

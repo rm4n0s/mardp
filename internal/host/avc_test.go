@@ -74,6 +74,8 @@ func (o *fakeOut) Path() rdp.VideoPath {
 	return o.path
 }
 
+func (o *fakeOut) SetWriteHook(func(rdp.VideoWrite)) {}
+
 func (o *fakeOut) set(f func(o *fakeOut)) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
