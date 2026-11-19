@@ -377,7 +377,7 @@ The server sends both as soon as it has them. The client shows a frame when it a
 D7 makes speed a requirement, so the rules are part of the specification:
 
 1. **No copies of pictures in Go.** On the H.264 path a frame goes from the capture to the encoder as an IOSurface (§4.2).
-2. **No allocation per frame or per sound packet** in the steady state, in `rdp` and in `internal/host`: buffers come from pools sized at the start of the session. Benchmarks of the PDU writers assert 0 allocations per operation.
+2. **No allocation per frame or per sound packet** in the steady state, in `rdp` and in `internal/host`: buffers come from pools sized at the start of the session. Benchmarks of the PDU writers assert 0 allocations per operation. As built (6.2): the benchmarks of the frame paths (an H.264 frame sent, written and acknowledged, with the measurement's write hook; a frame of tiles; bitmaps; a sound packet; the writer; in `internal/host` the H.264 path's handling of a frame, measured, and a sound buffer encoded and written) fail when their loop allocates more than once in a thousand operations, the runtime's own background allocations; tests with `testing.AllocsPerRun` assert 0 in the default run. The numbers are in `docs/PERFORMANCE.md`.
 3. **One cgo call or callback per frame** and per sound packet, never per rectangle or per NAL unit.
 4. **Nothing waits behind the network in the capture path**: capture and encoding never block on a socket; they see only the skip flag.
 5. **The hardware does the work**: scaling on the GPU, colour conversion in the capture, H.264 in the hardware encoder, AES-GCM of TLS with the CPU's instructions.

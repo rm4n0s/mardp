@@ -43,3 +43,29 @@ Notes:
 - The maximum (32.5 ms) is the first frame, the key frame of the encoder's start.
 - The test pattern's moving square is a gradient with noise, harder to encode than most desktops, so the bitrate sits near the cap: the rate control of §9.5 holds it there.
 - The loopback has no network delay: the write stage is the time to hand the bytes to TLS and the kernel, not to the client. Over the LAN the write stage grows with the network (6.3).
+
+## Allocations (6.2, 2026-11-19)
+
+SPEC §11 rule 2: nothing allocates per frame or per sound packet once a session's buffers have grown. Each benchmark below fails when its loop allocates (more than once in a thousand operations, the runtime's own background allocations); tests with `testing.AllocsPerRun` assert the same in the default run.
+
+```sh
+go test ./rdp ./internal/host -run '^$' -bench 'SendFrame|SendTiles|SendRects|AudioWrite|Writer|AVCFrame|SoundBuffer'
+```
+
+Apple M6:
+
+| Benchmark | What one operation is | Time | Allocations |
+|---|---|---|---|
+| `rdp` SendFrame/4KiB | an H.264 frame sent, framed for the graphics pipeline, written, acknowledged, with the write hook | 0.88 µs | 0 |
+| `rdp` SendFrame/64KiB | the same | 6.6 µs (9.9 GB/s) | 0 |
+| `rdp` SendFrame/512KiB | the same, a large key frame | 43 µs (12 GB/s) | 0 |
+| `rdp` SendTiles | a frame of tiles (640×360 and 64×64) on the graphics pipeline, Planar | 2.2 ms | 0 |
+| `rdp` SendRects | 1024×768 as fast-path bitmaps, Planar | 7.8 ms | 0 |
+| `rdp` AudioWrite/3KiB | 20 ms of PCM written on the sound channel | 0.71 µs | 0 |
+| `rdp` AudioWrite/400B | an AAC frame's size | 0.46 µs | 0 |
+| `rdp` Writer/64B–256KiB | an update queued and written | 0.30–5.3 µs | 0 |
+| `internal/host` AVCFrame | an encoded frame handed to the session by the H.264 path, with its flow decisions, measured as `-measure` does | 77 ns | 0 |
+| `internal/host` SoundBuffer | 10 ms of captured sound encoded as PCM and written | 0.67 µs | 0 |
+
+What it fixed: the sound path made a method value of its packet function for each captured buffer, one allocation every 10 ms; it is made once now.
+

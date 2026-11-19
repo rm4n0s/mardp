@@ -205,14 +205,14 @@ func BenchmarkWriter(b *testing.B) {
 			defer wr.halt()
 			s := &Session{wr: wr, client: Client{FastPathOutput: true, MaxRequestSize: 0x3f0000}}
 			data := make([]byte, n)
-			b.ReportAllocs()
 			b.SetBytes(int64(n))
-			for b.Loop() {
+			benchNoAllocs(b, func() error {
 				if err := s.sendUpdate(queueVideo, fastpath.UpdateBitmap, data); err != nil {
-					b.Fatal(err)
+					return err
 				}
 				<-sig
-			}
+				return nil
+			})
 		})
 	}
 }

@@ -129,11 +129,17 @@ type soundPath struct {
 	full int
 	// sent counts the packets written, for the tests.
 	sent int
+	// write is p.packet, made once: a method value made at each call
+	// allocates (SPEC §11 rule 2).
+	write func(data []byte, t time.Duration)
 }
 
 // buffer encodes b.
 func (p *soundPath) buffer(b *SoundBuffer) {
-	if err := p.enc.Encode(b, p.packet); err != nil {
+	if p.write == nil {
+		p.write = p.packet
+	}
+	if err := p.enc.Encode(b, p.write); err != nil {
 		p.log.Warn("encoding the sound", "err", err)
 		p.stop()
 	}

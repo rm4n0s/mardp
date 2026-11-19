@@ -813,3 +813,13 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - `cmd/mardp`: `mardp -headless -test-pattern -measure` with no permission granted serves H.264, makes the pattern's parts and not the screen's, is view-only, and logs the session's timing; the measurer logs each period with frames and each session once; both flags without `-headless` are refused with exit code 2.
 - **Differs from the plan:** with the test pattern the capture time is the moment the picture is handed to the encoder; the real capture's delay before that (ScreenCaptureKit's) is in the numbers of 6.3. The plan names the script; also built: the two flags of `mardp -headless` it needs, and the timing log, which the owner's runs of 6.3 use too.
 - **Manual checks:** none.
+
+## 6.2 Allocations (2026-11-19)
+- **Built:**
+  - `rdp`: `BenchmarkSendFrame` (H.264 frames of 4, 64 and 512 KiB, framed, written and acknowledged, with the measurement's write hook), `BenchmarkSendTiles` (a frame of tiles on the graphics pipeline), `BenchmarkAudioWrite` (PCM and AAC sizes); `BenchmarkSendRects` and `BenchmarkWriter` now assert too. Each fails when its loop allocates, in any goroutine, more than once in a thousand operations. `TestSendFrameAllocs`: 0 allocations per H.264 frame, with the hook and without.
+  - `internal/host`: `BenchmarkAVCFrame` (the H.264 path's handling of a frame, measured into `Timings`) and `BenchmarkSoundBuffer` (a buffer encoded as PCM and written), asserting the same; `TestPathAllocs` asserts 0 with `testing.AllocsPerRun`.
+  - The fix: the sound path made a method value of its packet function at each captured buffer (one allocation every 10 ms); it makes it once.
+  - SPEC §11 rule 2 as built; docs/PERFORMANCE.md with the numbers.
+- **Proved:** every benchmark passes with 0 B and 0 allocations per operation on the Apple M6 (docs/PERFORMANCE.md); the tests pass in the default run. The packages under `internal/mac` already had tests asserting 0 allocations on their paths (the capture's delivery of a frame and of sound, the encoder's delivery, the AAC encoder, the pointer).
+- **Differs from the plan:** the benchmarks allow the runtime's own background allocations, once in a thousand operations (seen: about once in 100 000); an operation that allocates allocates every time and fails them. Also covered: the bitmap and tile paths and the writer, beyond frames of H.264 and sound packets.
+- **Manual checks:** none.

@@ -269,10 +269,11 @@ func BenchmarkSendRects(b *testing.B) {
 	img := testImage(rand.New(rand.NewPCG(9, 10)), 1024, 768)
 	rects := []image.Rectangle{image.Rect(0, 0, 1024, 768)}
 	b.SetBytes(4 * 1024 * 768)
-	for b.Loop() {
+	benchNoAllocs(b, func() error {
 		if err := s.Video().SendRects(img, rects); err != nil {
-			b.Fatal(err)
+			return err
 		}
 		<-sig
-	}
+		return nil
+	})
 }
