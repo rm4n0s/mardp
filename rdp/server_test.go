@@ -242,9 +242,17 @@ func stillOpen(t *testing.T, nc net.Conn, d time.Duration) {
 	if err := nc.SetReadDeadline(time.Now().Add(d)); err != nil {
 		t.Fatal(err)
 	}
-	var b [1]byte
-	if _, err := nc.Read(b[:]); !errors.Is(err, os.ErrDeadlineExceeded) {
-		t.Fatalf("connection closed: %v", err)
+	// What the server sends meanwhile (the dynamic channels'
+	// capabilities) is read past.
+	var b [512]byte
+	for {
+		_, err := nc.Read(b[:])
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return
+		}
+		if err != nil {
+			t.Fatalf("connection closed: %v", err)
+		}
 	}
 }
 
@@ -254,9 +262,15 @@ func closedWithin(t *testing.T, nc net.Conn, d time.Duration) {
 	if err := nc.SetReadDeadline(time.Now().Add(d)); err != nil {
 		t.Fatal(err)
 	}
-	var b [1]byte
-	if _, err := nc.Read(b[:]); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
-		t.Fatalf("connection not closed within %v: %v", d, err)
+	var b [512]byte
+	for {
+		_, err := nc.Read(b[:])
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("connection not closed within %v: %v", d, err)
+		}
+		if err != nil {
+			return
+		}
 	}
 }
 
@@ -676,7 +690,8 @@ func TestErrors(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				err := s.serveConn(ctx, sc, s.log, func() {})
-				if cerr := sc.Close(); cerr != nil {
+				// A write that failed as the session ended closed it already.
+				if cerr := sc.Close(); cerr != nil && !errors.Is(cerr, net.ErrClosed) {
 					t.Error(cerr)
 				}
 				done <- err

@@ -186,6 +186,11 @@ type Session struct {
 	pointer Pointer
 	// channels are the static channels the server reads.
 	channels []*staticChannel
+	// dvc is the manager of dynamic channels, nil when the client joined
+	// no drdynvc; dvcWait is how long the client has to answer its
+	// capabilities.
+	dvc     *dvcManager
+	dvcWait time.Duration
 
 	mu sync.Mutex
 	// reason is why the server ended the session; 0 while it is open or
@@ -559,10 +564,12 @@ func (c *conn) runSession(ctx context.Context, s *Session, h Handler, o *openSes
 	// A session replaced or stopped before the one it replaced has ended
 	// never reaches the application.
 	if sctx.Err() == nil {
+		s.startDVC(s.dvcWait)
 		wg.Go(func() { h.SessionOpened(sctx, s) })
 	}
 	err := c.readSession(s)
 	s.end()
+	s.stopDVC()
 	cancel()
 	// What is still queued is dropped; a write the client does not read
 	// fails now.

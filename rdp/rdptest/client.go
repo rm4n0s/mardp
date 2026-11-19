@@ -16,6 +16,7 @@ import (
 	"github.com/rm4n0s/errors"
 
 	"github.com/rm4n0s/mardp/rdp/internal/caps"
+	"github.com/rm4n0s/mardp/rdp/internal/dynvc"
 	"github.com/rm4n0s/mardp/rdp/internal/fastpath"
 	"github.com/rm4n0s/mardp/rdp/internal/gcc"
 	"github.com/rm4n0s/mardp/rdp/internal/mcs"
@@ -138,6 +139,9 @@ type Client struct {
 	reassembly fastpath.Reassembler
 	// joiners join the chunks of each static channel ReadChannel reads.
 	joiners map[uint16]*svc.Joiner
+	// dvcJoiners join the PDUs of each dynamic channel ReadDVCMessage
+	// reads.
+	dvcJoiners map[uint32]*dynvc.Joiner
 }
 
 // New returns a client on nc that has not sent anything yet.

@@ -55,8 +55,8 @@ func (c *Client) SendShutdownRequest(ctx context.Context) error {
 	return c.SendShare(ctx, func(w *wire.Writer) error { return caps.WriteShutdownRequest(w, c.ShareID, c.UserID) })
 }
 
-// ReadShareData reads the next Data PDU the server sends, skipping FlowPDUs
-// and Set Error Info. A Disconnect Provider Ultimatum fails it with
+// ReadShareData reads the next Data PDU the server sends, skipping FlowPDUs,
+// Set Error Info and what comes on the static channels. A Disconnect Provider Ultimatum fails it with
 // TagPDUUnexpected, and so does a share PDU of another type. The body is
 // valid until the next read.
 func (c *Client) ReadShareData(ctx context.Context) (caps.Data, error) {

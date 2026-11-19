@@ -15,6 +15,7 @@ import (
 	"github.com/rm4n0s/errors"
 
 	"github.com/rm4n0s/mardp/rdp/internal/caps"
+	"github.com/rm4n0s/mardp/rdp/internal/dynvc"
 	"github.com/rm4n0s/mardp/rdp/internal/gcc"
 	"github.com/rm4n0s/mardp/rdp/internal/input"
 	"github.com/rm4n0s/mardp/rdp/internal/mcs"
@@ -383,4 +384,12 @@ func TestHostileSweep(t *testing.T) {
 		_, err := input.ParseSlowPath(b)
 		return err
 	}, sp.Bytes())
+
+	// What a client sends on dynamic channels.
+	sweep(t, rng, "dynvc.ParseClient", func(b []byte) error {
+		_, err := dynvc.ParseClient(b)
+		return err
+	}, []byte{0x50, 0x00, 0x02, 0x00}, []byte{0x10, 0x03, 0x00, 0x00, 0x00, 0x00},
+		append([]byte{0x24, 0x03, 0x7b, 0x0c}, bytes.Repeat([]byte{0x71}, 64)...),
+		[]byte{0x34, 0x03, 0x71}, []byte{0x40, 0x03})
 }

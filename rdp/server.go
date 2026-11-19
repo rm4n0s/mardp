@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/rm4n0s/errors"
@@ -73,6 +74,9 @@ type Server struct {
 	maxPending   int
 	loginTimeout time.Duration
 	open         openSession
+	// dvcCapsWait is how long a client has to answer the capabilities of
+	// dynamic channels: dvcCapsWait, shorter in tests.
+	dvcCapsWait time.Duration
 }
 
 // openSession is the session a server has open: one at a time, a new one
@@ -130,6 +134,7 @@ func NewServer(cfg Config) (*Server, error) {
 		log:          cfg.Logger,
 		maxPending:   cfg.MaxPending,
 		loginTimeout: cfg.LoginTimeout,
+		dvcCapsWait:  dvcCapsWait,
 	}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
@@ -202,7 +207,9 @@ func (s *Server) handle(ctx context.Context, nc net.Conn, log *slog.Logger, rele
 		log.Info("connection closed")
 	case ctx.Err() != nil:
 		log.Info("connection closed: the server stopped")
-	case errors.Is(err, io.EOF):
+	// A client that hangs up with data from the server unread resets
+	// the connection.
+	case errors.Is(err, io.EOF), errors.Is(err, syscall.ECONNRESET):
 		log.Info("connection closed by the client", "err", err)
 	case hasTag(err, TagLoginFailed):
 		log.Warn("login failed", "err", err)

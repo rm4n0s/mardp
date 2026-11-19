@@ -49,13 +49,18 @@ const (
 	videoDepth    = 4
 	controlBuffer = 4 << 10
 	videoBuffer   = 64 << 10
+	// pduBuffer holds a dynamic channel's PDU (dynvc.MaxPDU).
+	pduBuffer = 2 << 10
 )
 
 // packet is what one write sends: whole frames, built by the sender.
 type packet struct {
 	w wire.Writer
-	// tmp is room for a PDU that is built before what wraps it.
+	// tmp is room for a PDU that is built before what wraps it, and pdu
+	// for one built before tmp wraps it (a dynamic channel's in a static
+	// channel's).
 	tmp wire.Writer
+	pdu wire.Writer
 	// done, when set, gets the result of the write.
 	done chan error
 }
@@ -86,7 +91,11 @@ func newWriter(out io.Writer, fail func(err error)) *writer {
 		wr.queued[q] = make(chan *packet, n.depth)
 		wr.free[q] = make(chan *packet, n.depth)
 		for range n.depth {
-			wr.free[q] <- &packet{w: wire.NewWriter(make([]byte, 0, n.size)), tmp: wire.NewWriter(make([]byte, 0, n.size))}
+			wr.free[q] <- &packet{
+				w:   wire.NewWriter(make([]byte, 0, n.size)),
+				tmp: wire.NewWriter(make([]byte, 0, n.size)),
+				pdu: wire.NewWriter(make([]byte, 0, pduBuffer)),
+			}
 		}
 	}
 	return wr
@@ -118,6 +127,7 @@ func (wr *writer) get(q queue) (*packet, error) {
 	case p := <-wr.free[q]:
 		p.w.Reset()
 		p.tmp.Reset()
+		p.pdu.Reset()
 		p.done = nil
 		return p, nil
 	default:

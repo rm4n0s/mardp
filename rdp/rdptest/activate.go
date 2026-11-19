@@ -163,8 +163,9 @@ func (c *Client) sendShare(body func(w *wire.Writer) error) error {
 	})
 }
 
-// readShare reads the next share PDU the server sends, skipping FlowPDUs.
-// A Disconnect Provider Ultimatum fails it.
+// readShare reads the next share PDU the server sends, skipping FlowPDUs
+// and what it sends on the static channels. A Disconnect Provider
+// Ultimatum fails it.
 func (c *Client) readShare() (caps.PDU, error) {
 	var errorInfo uint32
 	for {
@@ -182,6 +183,9 @@ func (c *Client) readShare() (caps.PDU, error) {
 		d, err := mcs.ReadSendDataIndication(&r)
 		if err != nil {
 			return caps.PDU{}, err
+		}
+		if d.ChannelID != c.Server.Network.MCSChannelID {
+			continue
 		}
 		sr := wire.NewReader(d.Data)
 		p, err := caps.ReadPDU(&sr)

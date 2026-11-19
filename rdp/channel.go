@@ -3,7 +3,6 @@ package rdp
 import (
 	"sync/atomic"
 
-	"github.com/rm4n0s/mardp/rdp/internal/mcs"
 	"github.com/rm4n0s/mardp/rdp/internal/svc"
 	"github.com/rm4n0s/mardp/rdp/internal/wire"
 )
@@ -112,15 +111,7 @@ func (s *Session) sendChannel(q queue, ch *staticChannel, msg []byte) error {
 			p.tmp.Reset()
 			svc.WriteHeader(&p.tmp, h)
 			p.tmp.Write(chunk)
-			return appendData(&p.w, func(w *wire.Writer) error {
-				return mcs.WriteSendDataIndication(w, &mcs.SendData{
-					Initiator:    serverInitiator,
-					ChannelID:    ch.id,
-					Priority:     mcs.PriorityHigh,
-					Segmentation: mcs.SegmentationWhole,
-					Data:         p.tmp.Bytes(),
-				})
-			})
+			return appendChannelData(p, ch)
 		})
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"math/rand/v2"
+	"net"
 	"slices"
 	"testing"
 	"time"
@@ -30,36 +31,38 @@ func randomBytes(n int, seed uint64) []byte {
 }
 
 // TestStaticChannels sends a message longer than a chunk each way on
-// drdynvc: the server joins the client's chunks into the message, and its
+// rdpsnd: the server joins the client's chunks into the message, and its
 // answer arrives in chunks of 1,600 bytes that rdptest joins.
 func TestStaticChannels(t *testing.T) {
 	h := newSessions()
 	ts := start(t, Config{Handler: h})
 	c, _ := ts.open(t, rdptest.Options{Channels: channelTestNames})
 	s := h.next(t)
-	if s.channel("cliprdr") != nil || s.channel("rdpsnd") == nil {
+	if s.channel("cliprdr") != nil || s.channel("drdynvc") == nil {
 		t.Fatalf("channels the server reads: %v", s.channels)
 	}
-	ch := s.channel("drdynvc")
-	if ch == nil || ch.id != c.ChannelID("drdynvc") {
-		t.Fatalf("drdynvc: %+v, the client's ID %d", ch, c.ChannelID("drdynvc"))
+	ch := s.channel("rdpsnd")
+	if ch == nil || ch.id != c.ChannelID("rdpsnd") {
+		t.Fatalf("rdpsnd: %+v, the client's ID %d", ch, c.ChannelID("rdpsnd"))
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// What arrives on cliprdr is ignored, and on rdpsnd, while it has no
+	// handler, dropped once joined.
+	if err := c.SendChannel(ctx, c.ChannelID("cliprdr"), randomBytes(3000, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SendChannel(ctx, ch.id, randomBytes(3000, 2)); err != nil {
+		t.Fatal(err)
+	}
+	ts.log.find(t, "static channel message dropped")
+
 	got := make(chan []byte, 1)
 	ch.setHandler(func(msg []byte) error {
 		got <- slices.Clone(msg)
 		return s.sendChannel(queueControl, ch, msg)
 	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	// What arrives on cliprdr is ignored, and on rdpsnd, which has no
-	// handler, dropped once joined.
-	if err := c.SendChannel(ctx, c.ChannelID("cliprdr"), randomBytes(3000, 1)); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.SendChannel(ctx, c.ChannelID("rdpsnd"), randomBytes(3000, 2)); err != nil {
-		t.Fatal(err)
-	}
 	msg := randomBytes(5000, 3)
 	if err := c.SendChannel(ctx, ch.id, msg); err != nil {
 		t.Fatal(err)
@@ -88,11 +91,10 @@ func TestStaticChannels(t *testing.T) {
 	}
 
 	// A short message goes in one chunk.
-	rs := s.channel("rdpsnd")
-	if err := s.sendChannel(queueControl, rs, []byte{1, 2, 3}); err != nil {
+	if err := s.sendChannel(queueControl, ch, []byte{1, 2, 3}); err != nil {
 		t.Fatal(err)
 	}
-	m, err = c.ReadChannel(ctx, rs.id)
+	m, err = c.ReadChannel(ctx, ch.id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +161,8 @@ func TestStaticChannelHostile(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				err := s.serveConn(ctx, sc, s.log, func() {})
-				if cerr := sc.Close(); cerr != nil {
+				// A write that failed as the session ended closed it already.
+				if cerr := sc.Close(); cerr != nil && !errors.Is(cerr, net.ErrClosed) {
 					t.Error(cerr)
 				}
 				done <- err

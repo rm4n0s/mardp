@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"slices"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/rm4n0s/errors"
 
 	"github.com/rm4n0s/mardp/rdp/internal/caps"
 	"github.com/rm4n0s/mardp/rdp/internal/input"
@@ -442,7 +445,8 @@ func TestHostileInput(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				err := s.serveConn(ctx, sc, s.log, func() {})
-				if cerr := sc.Close(); cerr != nil {
+				// A write that failed as the session ended closed it already.
+				if cerr := sc.Close(); cerr != nil && !errors.Is(cerr, net.ErrClosed) {
 					t.Error(cerr)
 				}
 				done <- err
