@@ -83,7 +83,7 @@ Features planned after 1.0 are in §17 (M7): Network Level Authentication, the c
 | `internal/mac/video` | The host's video source: the capture in NV12 straight into an encoder made for each capture (§4.2) | standard library, `internal/host`, `internal/mac/capture`, `internal/mac/vtenc` |
 | `internal/mac/aacenc` | AudioToolbox: AAC | cgo, standard library, `errors`, `internal/host` (the types it implements) |
 | `internal/mac/input` | Core Graphics events: keyboard and mouse; the pointer's image | cgo, standard library, `errors`, `internal/host` (the types it implements) |
-| `internal/mac/system` | Permissions (Screen Recording, Accessibility), keeping the display awake, the list of displays, the sound output's mute (Core Audio) | cgo, standard library, `errors`, `internal/host` (the types it implements) |
+| `internal/mac/system` | Permissions (Screen Recording, Accessibility), keeping the display awake, the list of displays, the sound output's mute (Core Audio), the notice of a logout or shutdown | cgo, standard library, `errors`, `internal/host` (the types it implements) |
 | `internal/config` | Settings file, password hash, TLS certificate | standard library, `errors` |
 | `internal/ui` | The Glutter app: window, tray, settings. The only package that imports Glutter | `glutter`, `internal/host`, `internal/config` |
 | `internal/archtest` | Tests that check this table: who may import what, and that `import "C"` appears only under `internal/mac` | |
@@ -409,6 +409,11 @@ D7 makes speed a requirement, so the rules are part of the specification:
 ### 12.3 The menu-bar icon
 
 It shows the state (stopped, listening, connected). Its menu: the state in words, Start or Stop, Disconnect (when connected), Show window, Quit.
+
+As built in 5.3:
+- The icon is a template image (macOS draws it in the menu bar's colors): a screen on a stand, empty while stopped, with a dot in the middle while listening, filled while a client is connected. Its tip says "mardp" and the state.
+- The menu: the state (greyed out), a line, Start or Stop, Disconnect while connected, a line, Show window, Quit. Start is greyed out until the server can start, and Start, Stop and Disconnect while an action of the window runs, as the window's buttons are. A click on the icon opens the menu.
+- Closing the window hides it; Show window, or a click on the Dock icon, brings it back. Cmd+Q also hides it, because Glutter cannot tell it from the close button (docs/GLUTTER-ISSUES.md); Quit in the menu ends the app and stops the server. When the Mac logs out, restarts or shuts down, mardp quits (NSWorkspaceWillPowerOffNotification), so it does not keep the logout waiting.
 
 ### 12.4 Notifications
 

@@ -271,3 +271,28 @@ The tests check the numbers against the test client. This check compares them wi
 5. Connect again and quit Remmina. Expected: "the client disconnected".
 
 Tell me the numbers you saw, and anything that looked wrong.
+
+## 5.3 The menu-bar icon (SPEC §12.3, §7.3)
+
+The tests drive the icon's menu on Glutter's fake Linux desktop. This check clicks the real icon in the Mac's menu bar.
+
+1. Build the app and open it with a log:
+
+   ```bash
+   scripts/build-app.sh
+   ```
+
+   ```bash
+   open -n build/mardp.app --args -log-file /tmp/mardp.log
+   ```
+
+2. Look at the menu bar. Expected: mardp's icon, a small screen on a stand with an empty screen, drawn in the menu bar's colors (white in dark mode, black in light mode).
+3. Click the icon. Expected: a menu with "Stopped" (greyed out), a line, "Start", a line, "Show window" and "Quit".
+4. Choose "Start". Expected: the window and the menu say "Listening", the menu has "Stop" in place of "Start", and the icon has a dot in the middle of the screen.
+5. Connect with Remmina. Expected: the icon's screen is filled, and the menu has "Connected", "Stop" and "Disconnect". Choose "Disconnect": Remmina closes, and the icon has its dot again.
+6. Close the window with its red button. Expected: the window goes, mardp's icon stays, and Remmina can still connect. Choose "Show window": the window comes back as it was. Close it again and click mardp's icon in the Dock: it comes back too.
+7. Press Cmd+Q in the window. Expected: the window hides as with the red button (Glutter cannot tell them apart, docs/GLUTTER-ISSUES.md).
+8. Choose "Quit" in the icon's menu. Expected: the icon and the app go, and the server stops (Remmina cannot connect).
+9. Only when it suits you, since it ends your session: open the app, press Start, and log out of the Mac. Expected: the logout goes on without a message that mardp interrupted it; afterwards `/tmp/mardp.log` ends with "the Mac logs out or shuts down: quitting".
+
+Tell me what did not look or behave as expected, with a screenshot of the menu bar if the icon looks wrong.

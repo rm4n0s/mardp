@@ -59,7 +59,20 @@ func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger
 	return parts, nil
 }
 
+// window runs the window until the user quits, ctx ends, or the Mac logs
+// out or shuts down: closing the window only hides it (SPEC §7.3).
 func (mac) window(ctx context.Context, b ui.Backend, log *slog.Logger) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// Glutter: macOS's question at a logout (applicationShouldTerminate)
+	// reaches the app as a close request, which the window answers by
+	// hiding. Glutter should let the app tell it from the close button
+	// (docs/GLUTTER-ISSUES.md).
+	stop := system.WatchPowerOff(func() {
+		log.Info("the Mac logs out or shuts down: quitting")
+		cancel()
+	})
+	defer stop()
 	return ui.Run(ctx, b, log)
 }
 

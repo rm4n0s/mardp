@@ -30,8 +30,7 @@ func settingsStatus() Status {
 // card.
 func newSettingsTester(t *testing.T, b *fakeBackend) *gluttertest.Tester {
 	t.Helper()
-	ts := gluttertest.New(t, gluttertest.Opts{Size: m.Size{Width: 560, Height: 2400}})
-	ts.PumpWidget(NewApp(b))
+	ts, _ := newDesktopTester(t, b, 2400)
 	return ts
 }
 

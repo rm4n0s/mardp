@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/rm4n0s/glutter/desktop"
 	m "github.com/rm4n0s/glutter/material"
+	gui "github.com/rm4n0s/glutter/ui"
 	"github.com/rm4n0s/mardp/internal/host"
 )
 
@@ -32,8 +34,9 @@ var (
 // KeyCheck is the key of the button of the checklist's line titled title.
 func KeyCheck(title string) m.ValueKey[string] { return m.NewValueKey("check " + title) }
 
-// Run opens the window on b and returns when the window is closed or ctx
-// ends; Glutter logs to log. It must be called on the main goroutine.
+// Run opens the window on b, with the menu-bar icon, and returns when the
+// user chooses Quit or ctx ends; closing the window hides it (SPEC §7.3).
+// Glutter logs to log. It must be called on the main goroutine.
 func Run(ctx context.Context, b Backend, log *slog.Logger) error {
 	return m.RunAppContext(ctx, NewApp(b), m.RunAppOpts{
 		AppID:  AppID,
@@ -96,6 +99,14 @@ type windowState struct {
 	timer    canceler
 	// settings is the settings card's form.
 	settings settingsForm
+	// icons are the menu-bar icons of the server's states, and iconErr
+	// why they could not be drawn.
+	icons   [3]gui.WindowIcon
+	iconErr string
+	// lifecycle hides the window when it is closed; quitting says that
+	// the user chose Quit, which lets the app end.
+	lifecycle *m.AppLifecycleListener
+	quitting  bool
 }
 
 func (s *windowState) InitState() {
@@ -103,6 +114,14 @@ func (s *windowState) InitState() {
 	s.password = m.NewTextEditingController()
 	s.status = s.Widget().b.Status()
 	s.settings.init(s.status.Settings)
+	for i, st := range []ServerState{ServerStopped, ServerListening, ServerConnected} {
+		icon, err := TrayIcon(st)
+		if err != nil {
+			s.iconErr = err.Error()
+		}
+		s.icons[i] = icon
+	}
+	s.lifecycle = m.NewAppLifecycleListener(m.WidgetsBindingOf(s.Context()), m.AppLifecycleListenerOpts{OnExitRequested: s.exitRequested})
 	s.schedule()
 }
 
@@ -110,9 +129,57 @@ func (s *windowState) Dispose() {
 	if s.timer != nil {
 		s.timer.Cancel()
 	}
+	s.lifecycle.Dispose()
 	s.user.Dispose()
 	s.password.Dispose()
 	s.settings.dispose()
+}
+
+// exitRequested is the window's close button, and Cmd+Q: the window is
+// hidden and the app goes on with the menu-bar icon (SPEC §7.3), unless
+// the user chose Quit.
+//
+// Glutter: on macOS, Cmd+Q and the close button both arrive here and
+// cannot be told apart, so Cmd+Q hides the window too and Quit is only in
+// the icon's menu. Glutter should say which one asked (docs/GLUTTER-ISSUES.md).
+func (s *windowState) exitRequested() gui.AppExitResponse {
+	if s.quitting {
+		return gui.AppExitResponseExit
+	}
+	if c := s.windowController(); c != nil {
+		c.SetHidden(true)
+	}
+	return gui.AppExitResponseCancel
+}
+
+// showWindow brings the window back, hidden or behind others.
+func (s *windowState) showWindow() {
+	if c := s.windowController(); c != nil {
+		c.SetHidden(false)
+		c.Activate()
+	}
+}
+
+// quit ends the app, which stops the server.
+func (s *windowState) quit() {
+	s.quitting = true
+	m.WidgetsBindingOf(s.Context()).ExitApplication(gui.AppExitTypeRequired)
+}
+
+// trayAction runs an item of the menu-bar icon's menu.
+func (s *windowState) trayAction(a TrayAction) {
+	switch a {
+	case TrayStart:
+		s.start()
+	case TrayStop:
+		s.stop()
+	case TrayDisconnect:
+		s.disconnect()
+	case TrayShowWindow:
+		s.showWindow()
+	case TrayQuit:
+		s.quit()
+	}
 }
 
 // schedule asks for the status again after PollInterval. The binding's
@@ -194,10 +261,16 @@ func (s *windowState) Build(bc m.BuildContext) m.Widget {
 		children = append(children, s.checklistCard(bc, vm))
 	}
 	children = append(children, s.eventsCard(bc, vm), s.settingsCard(bc))
-	return m.NewScaffold(m.ScaffoldOpts{
+	page := m.NewScaffold(m.ScaffoldOpts{
 		AppBar: m.NewAppBar(m.AppBarOpts{Title: m.NewText("mardp")}),
 		Body: m.NewSingleChildScrollView(m.NewPadding(m.NewEdgeInsetsAll(16),
 			m.NewColumn(children, m.ColumnOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 16}))),
+	})
+	return desktop.NewSystemTray(s.icons[s.status.Server], page, desktop.SystemTrayOpts{
+		Title:       TextTrayTitle,
+		Tooltip:     TextTrayTitle,
+		TooltipBody: vm.State,
+		Menu:        trayEntries(NewTrayMenu(vm, s.busy), s.trayAction),
 	})
 }
 
@@ -234,6 +307,9 @@ func (s *windowState) statusCard(bc m.BuildContext, vm ViewModel) m.Widget {
 	}
 	if s.actionErr != "" {
 		rows = append(rows, errorText(bc, s.actionErr, m.WidgetOpts{Key: KeyActionErr}))
+	}
+	if s.iconErr != "" {
+		rows = append(rows, errorText(bc, TextIconFailed+s.iconErr))
 	}
 	var onStart, onStop func()
 	if vm.CanStart && !s.busy {

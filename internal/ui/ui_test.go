@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/rm4n0s/errors"
+	"github.com/rm4n0s/glutter/foundation"
 	"github.com/rm4n0s/glutter/gluttertest"
 	m "github.com/rm4n0s/glutter/material"
 	"github.com/rm4n0s/mardp/internal/config"
@@ -144,9 +145,26 @@ func ready() Status {
 
 func newTester(t *testing.T, b *fakeBackend) *gluttertest.Tester {
 	t.Helper()
-	ts := gluttertest.New(t, gluttertest.Opts{Size: m.Size{Width: 560, Height: 900}})
-	ts.PumpWidget(NewApp(b))
+	ts, _ := newDesktopTester(t, b, 900)
 	return ts
+}
+
+// newDesktopTester is the app on b in a window height pixels tall, on a
+// fake desktop that shows the menu-bar icon, once the icon is there.
+func newDesktopTester(t *testing.T, b *fakeBackend, height float64) (*gluttertest.Tester, *gluttertest.FakeDesktop) {
+	t.Helper()
+	if !foundation.DebugMode {
+		t.Skip("the fake desktop needs a debug build of Glutter (-tags debug_mode)")
+	}
+	// Glutter: the fake desktop serves the tray of the Linux desktop, so
+	// the tests run as on Linux; the tray on macOS is checked by hand.
+	foundation.SetDebugDefaultTargetPlatformOverride(foundation.Some(foundation.TargetPlatformLinux))
+	t.Cleanup(func() { foundation.SetDebugDefaultTargetPlatformOverride(foundation.None[foundation.TargetPlatform]()) })
+	ts := gluttertest.New(t, gluttertest.Opts{Size: m.Size{Width: 560, Height: height}})
+	fd := ts.FakeDesktop()
+	ts.PumpWidget(NewApp(b))
+	fd.WaitFor("the menu-bar icon", fd.TrayRegistered)
+	return ts, fd
 }
 
 // settle pumps frames until done says so: Start, Stop and Save run on a

@@ -58,3 +58,6 @@ func (s *System) OutputMuted(uid string) (bool, error) {
 func (s *System) SetOutputMuted(uid string, muted bool) error {
 	return errors.New(TagSystemUnsupported, "mardp's host runs only on macOS", "device", uid)
 }
+
+// WatchPowerOff does nothing on systems that are not macOS.
+func WatchPowerOff(fn func()) (stop func()) { return func() {} }

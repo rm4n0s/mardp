@@ -730,3 +730,20 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - `cmd/mardp`, with a temporary `MARDP_HOME`: a refused login, a session's details, Disconnect, and a session the server's stop ends, in the events in order; the limit of 50.
 - **Differs from the plan:** the plan's fake host is the fake backend of the window's tests; the real host is tested with the test client instead.
 - **Manual checks:** the numbers with Remmina: pending, see docs/MANUAL-CHECKS.md (5.2).
+
+## 5.3 The menu-bar icon (2026-11-19)
+- **Built:**
+  - `internal/ui`: the menu-bar icon (`desktop.SystemTray`) around the window, with an icon for each state (`TrayIcon`: a template image of a screen on a stand, empty, with a dot, or filled) and its menu (`NewTrayMenu`: the state, Start or Stop, Disconnect while connected, Show window, Quit), rebuilt with the window's status. Closing the window hides it (`AppLifecycleListener`); Quit ends the app, which stops the server as before.
+  - `internal/mac/system`: `WatchPowerOff` calls a function when macOS says it logs out, restarts or shuts down (`NSWorkspaceWillPowerOffNotification`); a no-op on other systems.
+  - `cmd/mardp`: the window's context ends at a logout or shutdown, so mardp quits instead of hiding its window and keeping the logout waiting.
+  - SPEC §12.3: the icon and the menu as built; the package table: `internal/mac/system` has the notice of a logout.
+- **Proved:**
+  - Unit tests of the menu for each state, busy or not, and of the three icons (five sizes, black as a template image, each different).
+  - `gluttertest` with the fake desktop: the menu follows the server (Start, Stop, Disconnect from the menu reach the backend; the icon changes with the state); closing the window hides it with no exit request; Show window brings it back; Quit asks the app to exit, with the window shown or hidden.
+  - `internal/mac/system`: the function is called when the notification is posted in the process, and not after stop.
+  - The built app on this Mac: it starts with the icon and no tray error in its log, and a SIGTERM still ends it at once (exit 0).
+- **Differs from the plan:**
+  - Cmd+Q hides the window as the close button does: Glutter gives the app no way to tell them apart (docs/GLUTTER-ISSUES.md). Quit is in the icon's menu.
+  - Not in the plan: quitting at a logout or shutdown, which the hidden window would otherwise block (`WatchPowerOff`).
+  - The window's tests now run on Glutter's fake Linux desktop, the only one with a tray (docs/GLUTTER-ISSUES.md); they need `-tags debug_mode`, as before.
+- **Manual checks:** the icon and its menu with real clicks, closing and Quit, a logout: pending, see docs/MANUAL-CHECKS.md (5.3).

@@ -29,4 +29,5 @@ func TestUnsupported(t *testing.T) {
 	_, err = s.OutputMuted("x")
 	assertRoute(t, err, "System.OutputMuted.SystemUnsupported")
 	assertRoute(t, s.SetOutputMuted("x", true), "System.SetOutputMuted.SystemUnsupported")
+	WatchPowerOff(func() { t.Error("a power off") })()
 }
