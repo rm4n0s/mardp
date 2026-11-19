@@ -225,7 +225,7 @@ func (c *conn) negotiate() error {
 	c.requested = cr.RequestedProtocols
 	cc := x224.ConnectionConfirm{
 		Negotiation:      x224.NegResponse,
-		Flags:            x224.RspExtendedClientDataSupported,
+		Flags:            x224.RspExtendedClientDataSupported | x224.RspDynvcGfxProtocolSupported,
 		SelectedProtocol: x224.ProtocolSSL,
 	}
 	return c.send(func(w *wire.Writer) error { x224.WriteConnectionConfirm(w, &cc); return nil })

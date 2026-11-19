@@ -13,6 +13,7 @@ import (
 	"github.com/rm4n0s/errors"
 
 	"github.com/rm4n0s/mardp/rdp/internal/dynvc"
+	"github.com/rm4n0s/mardp/rdp/internal/gcc"
 	"github.com/rm4n0s/mardp/rdp/internal/wire"
 	"github.com/rm4n0s/mardp/rdp/rdptest"
 )
@@ -71,7 +72,7 @@ func (e *dvcEvents) message(t *testing.T) []byte {
 func TestDVC(t *testing.T) {
 	h := newSessions()
 	ts := start(t, Config{Handler: h})
-	c, _ := ts.open(t, rdptest.Options{Channels: channelTestNames})
+	c, _ := ts.open(t, rdptest.Options{Channels: channelTestNames, EditClientData: noGFX})
 	s := h.next(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -224,6 +225,10 @@ func TestDVCUnavailable(t *testing.T) {
 	assertRoute(t, err, "Client.ReadDVC->Client.drdynvc."+rdptest.TagDVCUnavailable)
 }
 
+// noGFX takes the support of the graphics pipeline out of a client's
+// data, so that the server opens no channel of its own.
+func noGFX(cd *gcc.ClientData) { cd.Core.EarlyCapabilityFlags &^= gcc.EarlySupportDynvcGFXProtocol }
+
 // dvcServer is a server whose clients have wait to answer the dynamic
 // channels' capabilities, and whose sessions h gets.
 func dvcServer(t *testing.T, wait time.Duration, h Handler) (*Server, *recorder) {
@@ -240,7 +245,8 @@ func dvcServer(t *testing.T, wait time.Duration, h Handler) (*Server, *recorder)
 }
 
 // dvcConnect serves one connection on s and activates a client on it that
-// joined drdynvc; the channel gets what serveConn returns.
+// joined drdynvc and does not support the graphics pipeline, whose channel
+// would come first; the channel gets what serveConn returns.
 func dvcConnect(t *testing.T, ctx context.Context, s *Server) (*rdptest.Client, <-chan error) {
 	t.Helper()
 	cc, sc := tcpPair(t)
@@ -258,7 +264,8 @@ func dvcConnect(t *testing.T, ctx context.Context, s *Server) (*rdptest.Client, 
 			t.Error(err)
 		}
 	})
-	c := rdptest.New(cc, rdptest.Options{TLSConfig: certs(t).client, User: testUser, Password: testPassword, Channels: channelTestNames})
+	c := rdptest.New(cc, rdptest.Options{TLSConfig: certs(t).client, User: testUser, Password: testPassword, Channels: channelTestNames,
+		EditClientData: noGFX})
 	for _, step := range []func(context.Context) error{c.Negotiate, c.StartTLS, c.ConnectMCS, c.Attach, c.JoinAll, c.Login, c.Activate} {
 		if err := step(ctx); err != nil {
 			t.Fatal(err)

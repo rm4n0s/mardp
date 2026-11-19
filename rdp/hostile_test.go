@@ -17,6 +17,7 @@ import (
 	"github.com/rm4n0s/mardp/rdp/internal/caps"
 	"github.com/rm4n0s/mardp/rdp/internal/dynvc"
 	"github.com/rm4n0s/mardp/rdp/internal/gcc"
+	"github.com/rm4n0s/mardp/rdp/internal/gfx"
 	"github.com/rm4n0s/mardp/rdp/internal/input"
 	"github.com/rm4n0s/mardp/rdp/internal/mcs"
 	"github.com/rm4n0s/mardp/rdp/internal/sec"
@@ -392,4 +393,14 @@ func TestHostileSweep(t *testing.T) {
 	}, []byte{0x50, 0x00, 0x02, 0x00}, []byte{0x10, 0x03, 0x00, 0x00, 0x00, 0x00},
 		append([]byte{0x24, 0x03, 0x7b, 0x0c}, bytes.Repeat([]byte{0x71}, 64)...),
 		[]byte{0x34, 0x03, 0x71}, []byte{0x40, 0x03})
+
+	// What a client sends on the graphics pipeline.
+	var gw wire.Writer
+	gfx.AppendCapsAdvertise(&gw, []gfx.CapSet{gfx.NewCapSet(gfx.Version81, gfx.FlagAVC420Enabled), gfx.NewCapSet(gfx.Version101, 0)})
+	gfx.AppendFrameAcknowledge(&gw, 1, 2, 3)
+	gfx.AppendQoEFrameAcknowledge(&gw, 2, 3, 4, 5)
+	gfx.AppendCacheImportOffer(&gw, []uint64{1, 2})
+	sweep(t, rng, "gfx.ReadClient", func(b []byte) error {
+		return gfx.ReadClient(b, func(gfx.PDU) error { return nil })
+	}, gw.Bytes())
 }

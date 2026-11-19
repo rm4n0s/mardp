@@ -191,6 +191,10 @@ type Session struct {
 	// capabilities.
 	dvc     *dvcManager
 	dvcWait time.Duration
+	// gfx is the graphics pipeline, nil when the client does not support
+	// it or joined no drdynvc. It is set before the application gets the
+	// session.
+	gfx *gfxPipeline
 
 	mu sync.Mutex
 	// reason is why the server ended the session; 0 while it is open or
@@ -565,6 +569,7 @@ func (c *conn) runSession(ctx context.Context, s *Session, h Handler, o *openSes
 	// never reaches the application.
 	if sctx.Err() == nil {
 		s.startDVC(s.dvcWait)
+		s.startGFX()
 		wg.Go(func() { h.SessionOpened(sctx, s) })
 	}
 	err := c.readSession(s)

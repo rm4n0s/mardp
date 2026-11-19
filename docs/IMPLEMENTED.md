@@ -414,3 +414,19 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - A client that hangs up with data from the server unread resets the connection; the server now logs that as closed by the client, as it does EOF (the capabilities sent at session start made TestClientHangsUp see it).
   - TestStaticChannels uses `rdpsnd`, now that `drdynvc` belongs to the DVC manager; rdptest's activation skips what arrives on static channels; the tests that read until the server closes read past it.
 - **Manual checks:** none.
+
+## 3.3 The graphics pipeline (2026-11-19)
+- **Built:**
+  - `rdp/internal/gfx`: the RDPGFX header and command IDs, capability sets of 8.0 to 10.7 (`Valid`, `Flags`, `AVC420`), `ReadClient` (Caps Advertise, Frame Acknowledge, QoE Frame Acknowledge, Cache Import Offer; other commands with their body) and `ReadServer` (Caps Confirm, Reset Graphics, Create Surface, Map Surface To Output, Start Frame, End Frame, Cache Import Reply), the writers of each, `Begin`/`End` for a PDU whose length is patched, `Timestamp`, and the RDP 8 segments: `Wrap` (one segment up to 65,535 bytes, multipart above, uncompressed) and `Unwrap`. Tags `GfxLengthInvalid`, `GfxCapsInvalid`, `GfxCountInvalid`, `GfxSegmentInvalid`, `GfxCompressed`, `GfxSizeInvalid`.
+  - `rdp/gfx.go`: the session opens `Microsoft::Windows::RDS::Graphics` when the client supports the pipeline and joined `drdynvc`; the capability exchange (the newest of 8.1 and 10.x, the client's set echoed, H.264 allowed or not), Reset Graphics, Create Surface and Map Surface To Output; frames (Start Frame, content, End Frame, in one message on the video queue); acknowledgements, suspension, the second Caps Advertise, the Cache Import Reply; `Video.Backlog()`. Tag `VideoGFXNotReady`.
+  - The X.224 Connection Confirm also says DYNVC_GFX_PROTOCOL_SUPPORTED.
+  - `rdptest`: `ReadGFX`, `SendGFX`, `StartGFX`, `AcceptGFX`, `AdvertiseGFX`, `AckFrame`.
+  - SPEC §9.1 says what the server confirms, the surface, the second advertise and how acknowledgements move the backlog; §6 says when `Backlog()` is zero.
+- **Proved:**
+  - `gfx` tests (coverage 89%): every PDU written byte for byte against the layout of MS-RDPEGFX 2.2 (Microsoft gives no examples of these) and read back; several PDUs in one message; which sets are valid and allow H.264; the timestamp's layout; data of sizes around a segment's wrapped and unwrapped, with the bytes of the single and multipart forms; every fault with its route; a fuzz target with seeds (run as seeds only).
+  - `rdp` tests: rdptest goes through the exchange for 8.1 (with and without AVC420), 10, 10 without AVC, 10.1 to 10.7, the newest of FreeRDP's list, and a list whose newest set is malformed; each time the confirm, Reset Graphics (one primary monitor of the desktop's size), the surface and the map are checked. The backlog follows the acknowledgements on a moved clock: three frames 10 ms apart, one acknowledged, then frame 3 covering frame 2, an unknown frame logged, a suspension emptying it and keeping it empty, an acknowledgement resuming it. A frame before the confirm, after no common version (the channel closed), after a refusal and after the client closed the channel fails with its route; a second advertise after 10.3 starts over and after 10.2 is ignored; a client without the pipeline or without `drdynvc` has none. Three malformed graphics PDUs end the session with their route; `gfx.ReadClient` joined the hostile-input sweep.
+- **Differs from the plan:**
+  - 8.0 is not confirmed (SPEC §9.1 names 8.1 and 10.x); a set whose length does not match its version is skipped.
+  - The DVC tests' client no longer says it supports the pipeline, so that the server's own channel does not take ID 1.
+  - `Video.Path()` stays `VideoBitmaps` until 3.4 sends pictures through the pipeline.
+- **Manual checks:** none.
