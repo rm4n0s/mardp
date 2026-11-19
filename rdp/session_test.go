@@ -88,7 +88,7 @@ func TestSessionOpened(t *testing.T) {
 		Channels:         rdptest.DefaultChannels,
 		FastPathOutput:   true, DesktopResize: true, SkipAlpha: true,
 		InputScancodes: true, InputUnicode: true, InputExtendedMouse: true, InputHorizontalWheel: true, InputFastPath: true,
-		PointerCacheSize: 25, ColorPointer: true, LargePointer: 384, MaxRequestSize: 0x3f0000,
+		AlphaPointer: true, PointerCacheSize: 25, ColorPointer: true, LargePointer: 384, MaxRequestSize: 0x3f0000,
 		SurfaceBits: true, FrameMarker: true, FrameAcknowledge: true, MaxUnacknowledgedFrames: 2,
 	}
 	if got.Remote.String() != want.Remote.String() || !slices.Equal(got.Channels, want.Channels) {

@@ -146,8 +146,13 @@ type Client struct {
 	// input the client says it sends (INPUT_FLAG_SCANCODES, _UNICODE,
 	// _MOUSEX, _MOUSE_HWHEEL, _MOUSE_RELATIVE and _FASTPATH_INPUT2).
 	InputScancodes, InputUnicode, InputExtendedMouse, InputHorizontalWheel, InputRelativeMouse, InputFastPath bool
-	// PointerCacheSize is how many pointer shapes the client caches, 0 when
-	// it caches none; ColorPointer says it shows color pointers.
+	// AlphaPointer says the client takes the New Pointer Update, so its
+	// pointer shapes keep their alpha: it gave a pointerCacheSize that is
+	// not 0. PointerCacheSize is how many shapes the client caches: that
+	// size, or without it the size of its 24 bpp color pointer cache.
+	// ColorPointer is the client's colorPointerFlag, which MS-RDPBCGR
+	// says to ignore.
+	AlphaPointer     bool
 	PointerCacheSize int
 	ColorPointer     bool
 	// LargePointer is the largest pointer side the client allows in Large
@@ -176,7 +181,8 @@ type Session struct {
 	// wr writes everything the session sends.
 	wr *writer
 	// video is the session's video output.
-	video Video
+	video   Video
+	pointer Pointer
 
 	mu sync.Mutex
 	// reason is why the server ended the session; 0 while it is open or
@@ -312,7 +318,8 @@ func addCaps(cl *Client, cc *caps.Caps) {
 	if cc.Has(caps.SetPointer) {
 		cl.ColorPointer = cc.Pointer.Color
 		cl.PointerCacheSize = int(cc.Pointer.ColorCacheSize)
-		if cc.Pointer.HasCacheSize {
+		if cc.Pointer.HasCacheSize && cc.Pointer.CacheSize != 0 {
+			cl.AlphaPointer = true
 			cl.PointerCacheSize = int(cc.Pointer.CacheSize)
 		}
 	}
@@ -407,6 +414,7 @@ func (c *conn) activate(desktopSize func(*Client) (int, int)) (*Session, error) 
 		return nil, errors.New(TagShareIDInvalid, "a Confirm Active for another share", "shareID", ca.ShareID, "want", shareID)
 	}
 	addCaps(&s.client, &ca.Caps)
+	s.pointer.init(s)
 	c.log.Debug("confirm active", "sets", ca.Caps.Sets, "fastPathOutput", s.client.FastPathOutput,
 		"maxRequestSize", s.client.MaxRequestSize, "input", ca.Caps.Input.Flags)
 	if err := c.finalize(); err != nil {

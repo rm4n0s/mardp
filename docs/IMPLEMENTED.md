@@ -217,3 +217,30 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - `SendRects` takes no `ctx`, since it never waits (SPEC §6 updated).
   - SPEC §6 (video, `Client`) and §9.6 (tiles, compression, alpha, scan line order) are updated.
 - **Manual checks:** none.
+
+## 1.11 Pointer (2026-11-19)
+- **Built:** `rdp/internal/pointer`:
+  - The pointer updates of MS-RDPBCGR 2.2.9.1.1.4 and 2.2.9.1.2.1.11: position, hidden, default, cached, Color Pointer (24 bpp), New Pointer (32 bpp with alpha) and Large Pointer (32 bpp, up to 384 a side). Masks are bottom-up with scan lines padded to 2 bytes; a transparent pixel is XOR 0 and AND 1. Writing allocates nothing.
+  - `Shrink`, which makes a shape fit by an integer factor, averaging each block weighted by alpha.
+  - The reader (`Parse`) for `rdptest`, which refuses anything this server never sends (wrong lengths, a size or depth outside the update, a hotspot outside, a pixel that inverts the screen). 3 tags.
+
+  In `rdp` (`pointer.go`):
+  - `Session.Pointer()` with `SetShape(img, hotX, hotY)`, `Hide()`, `Default()` and `Move(x, y)`, on the control queue. The largest side is 32, 96 or 384, from the client's Large Pointer Capability Set and its largest fast-path update; shapes larger are shrunk; a shape over 96 goes in a Large Pointer Update.
+  - A cache of up to 64 entries, least recently used replaced, keyed by a hash of size, hotspot and pixels; a slot is recorded only once its update is queued.
+  - `Client.AlphaPointer` (the client sent a pointer cache size, so it takes the New Pointer Update). 1 tag (`TagPointerShapeInvalid`).
+
+  `rdptest`: `Cursor`, `Client.NewCursor` and `Cursor.Apply`, which keep the pointer a client shows, with its cache. 1 tag.
+- **Proved:**
+  - **Shown as sent:** `TestPointer` sets 7 shapes (with alpha, with another hotspot, one from the cache, large ones that are shrunk), hides, shows the default, comes back from the cache and moves out of the desktop; the `rdptest` cursor shows the expected shape each time. It runs for six clients: the defaults (384, 32 bpp), 96 only, no Large Pointer (32), no multifragment (32), color pointers only (24 bpp), and color pointers with 96.
+  - `TestPointerCache`: a cache of 3 replaces the least recently used; a client without a cache gets index 0 every time.
+  - `pointer`: the exact bytes of 2×2 New, Large and Color Pointer Updates, the mask lengths of the padding examples in 2.2.9.1.1.4.4 (3×3 → 30, 7×7 → 14), 300 random round trips, `Shrink`, every refused case, and 5000 mutations per seed without a panic. Coverage 100%.
+  - **Errors:** 8 invalid shapes, a client without fast-path output (each method), a full queue (each method; a shape that was not queued is not cached) and a session that is over, each with its route. Every new tag has a route test.
+  - **0 allocations:** new shapes, cached shapes, moves and hide, through the running writer (`TestPointerAllocs`) and in the writer functions.
+  - Three repeated `-race` runs pass. Coverage: `rdp` 94.3%, `rdptest` 76.9%, `pointer` 100%.
+- **Differs from the plan:**
+  - `Default()` is added, for the client's own pointer.
+  - Shapes too large for the client are shrunk rather than refused, and a shape over 96 is sent as a Large Pointer Update at 32 bpp even to a client that otherwise takes only Color Pointer Updates (the update carries its depth).
+  - Control packets keep the size they grew to, so large pointers can grow the control queue's buffers (up to 32 packets of about 600 KB for a 384×384 shape).
+  - Microsoft gives no example of a pointer update, so the exact bytes in the tests come from the field tables and the padding examples of 2.2.9.1.1.4.4.
+  - SPEC §6 (pointer, `Client`) and §10.3 (encoding, shrinking, cache) are updated.
+- **Manual checks:** none.
