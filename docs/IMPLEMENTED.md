@@ -865,5 +865,5 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - SPEC: the status says version 1.0, with the owner's checks in docs/MANUAL-CHECKS.md; the paragraph of §12.2 that held only before M5 now says what the window does (closing it keeps the app and the server running, §7.3); §14 says this Mac met every target it measures without a change, and the owner's numbers are pending.
   - README: where the measured numbers are, and what still waits for a check on the owner's machines.
 - **Proved:** on a clean clone of the branch, `scripts/check.sh` (gofmt, vet, golangci-lint, the tests with and without `debug_mode`, with `-race`, the library on Linux) and the lints with the tags `mardp_mac`, `mardp_freerdp` and `mardp_perf` pass, and the tree stays clean.
-- **Differs from the plan:** none so far; v1.0.0 is published with the owner's word.
+- **Differs from the plan:** none. The owner gave their word on 2026-11-20 ("Yes, publish v1.0.0"): milestone M6 is published as v1.0.0.
 - **Manual checks:** the ones of earlier steps that are still open: pending, see docs/MANUAL-CHECKS.md.
