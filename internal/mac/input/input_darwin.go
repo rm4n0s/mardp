@@ -2,7 +2,7 @@ package input
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework ApplicationServices -framework CoreGraphics -framework CoreFoundation
+#cgo LDFLAGS: -framework AppKit -framework ApplicationServices -framework CoreGraphics -framework CoreFoundation
 #include <stdlib.h>
 #include "input_darwin.h"
 */

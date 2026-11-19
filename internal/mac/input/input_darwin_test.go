@@ -17,3 +17,10 @@ func TestNew(t *testing.T) {
 func TestPostInvalid(t *testing.T) {
 	assertRoute(t, macOS{}.post(&event{}), "macOS.post.InputEventFailed")
 }
+
+func TestNewPointer(t *testing.T) {
+	p, err := NewPointer(PointerOptions{Display: "x"})
+	if err != nil || p == nil || p.opts.Display != "x" || len(p.buf) != 4*maxPointerSide*maxPointerSide {
+		t.Fatalf("%v %v", p, err)
+	}
+}

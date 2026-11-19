@@ -42,6 +42,7 @@ type relay struct {
 	runes         map[rune]struct{}
 	buttons       map[rdp.MouseButton]int // held, with their click count
 	x, y          float64                 // the last position
+	moves         uint64                  // how many times it was set
 	lastButton    rdp.MouseButton
 	lastDown      time.Time
 	lastX, lastY  float64
@@ -118,6 +119,7 @@ func (r *relay) MouseMove(x, y int) {
 		return
 	}
 	r.x, r.y = r.point(x, y)
+	r.moves++
 	r.failed("move", r.in.MouseMove(r.x, r.y))
 	r.mouseDone()
 }
@@ -130,6 +132,7 @@ func (r *relay) MouseButton(b rdp.MouseButton, down bool, x, y int) {
 		return
 	}
 	r.x, r.y = r.point(x, y)
+	r.moves++
 	var clicks int
 	if down {
 		now := r.now()
@@ -175,6 +178,14 @@ func (r *relay) SyncLocks(caps, num, scroll bool) {
 	}
 	r.releaseKeys()
 	r.failed("locks", r.in.SetLocks(caps, num, scroll))
+}
+
+// position gives where the client last put the pointer, in the display's
+// points, and how many times it did; for the pointer.
+func (r *relay) position() (x, y float64, moves uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.x, r.y, r.moves
 }
 
 // mouseDone tells the pointer that the mouse did something.

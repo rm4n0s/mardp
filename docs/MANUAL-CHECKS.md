@@ -101,3 +101,13 @@ The tests never post events into your desktop (rule 11), so posting is checked b
 5. Hold Shift, close Remmina, and check on the Mac that Shift is not stuck.
 
 Tell me what did not work, and how the scrolling speed felt.
+
+## 2.6 The pointer in Remmina (SPEC §10.3)
+
+Also once `mardp -headless` exists (step 2.7 adds the command). Connected from Remmina:
+
+1. Move over text (the I-beam), a link in Safari (the hand), a window's edge (the resize arrows), and start an app (the busy pointer if it shows): the pointer in Remmina changes with each, at the same size as on the Mac, with clean edges.
+2. Play a video full screen in Safari and keep the mouse still: the pointer hides.
+3. On the Mac itself (or with an app that moves the pointer), move the pointer while Remmina is connected and its mouse is still: Remmina's pointer follows.
+
+Tell me which shapes looked wrong (size, edges, hotspot), and whether 2 and 3 worked.

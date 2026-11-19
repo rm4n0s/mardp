@@ -11,3 +11,11 @@ func TestUnsupported(t *testing.T) {
 	}
 	assertRoute(t, err, "New.InputUnsupported")
 }
+
+func TestPointerUnsupported(t *testing.T) {
+	p, err := NewPointer(PointerOptions{})
+	if p != nil {
+		t.Error("a pointer")
+	}
+	assertRoute(t, err, "NewPointer.InputUnsupported")
+}

@@ -152,26 +152,33 @@ func (h *Host) SessionOpened(ctx context.Context, s *rdp.Session) {
 
 	var poll *pointerPoll
 	if h.parts.Pointer != nil {
-		poll = newPointerPoll(h.parts.Pointer, s.Pointer(), log)
+		poll = newPointerPoll(h.parts.Pointer, s.Pointer(), log, h.opts.now)
+		if d.PointWidth > 0 && d.PointHeight > 0 {
+			poll.px, poll.py = float64(width)/float64(d.PointWidth), float64(height)/float64(d.PointHeight)
+		}
 		pic.onFrame = poll.kickNow
-		pctx, cancel := context.WithCancel(ctx)
-		var wg sync.WaitGroup
-		wg.Go(func() { poll.run(pctx) })
-		defer func() {
-			cancel()
-			wg.Wait()
-		}()
 	}
 
 	if h.parts.Input != nil {
 		r := newRelay(h.parts.Input, log, h.opts.now, d, width, height, h.opts.DoubleClickTime, h.opts.DoubleClickDistance)
 		if poll != nil {
 			r.onMouse = poll.afterMouse
+			poll.client = r.position
 		}
 		s.SetInputSink(r)
 		defer func() {
 			s.SetInputSink(nil)
 			r.release()
+		}()
+	}
+
+	if poll != nil {
+		pctx, cancel := context.WithCancel(ctx)
+		var wg sync.WaitGroup
+		wg.Go(func() { poll.run(pctx) })
+		defer func() {
+			cancel()
+			wg.Wait()
 		}()
 	}
 

@@ -6,6 +6,7 @@ import (
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -289,9 +290,10 @@ func TestSession(t *testing.T) {
 	ptr.Set(testShape(1), nil)
 	disp := Display{ID: "d", Width: 3840, Height: 2160, PointWidth: 1920, PointHeight: 1080, Main: true}
 	sys := NewFakeSystem([]Display{disp})
-	clock := time.Unix(1000, 0)
+	var clock atomic.Int64
+	clock.Store(time.Unix(1000, 0).UnixNano())
 	parts := Parts{Screen: &PatternScreen{Info: disp, Frames: 1}, Input: in, Pointer: ptr, System: sys}
-	s := serve(t, parts, Options{now: func() time.Time { return clock }}, 1280, 800)
+	s := serve(t, parts, Options{now: func() time.Time { return time.Unix(0, clock.Load()) }}, 1280, 800)
 	// 3840×2160 fits in 1280×800 as 1280×720: one desktop pixel is 1.5
 	// points.
 	s.sc = rdptest.NewScreen(1280, 720)
@@ -359,6 +361,14 @@ func TestSession(t *testing.T) {
 		if !slices.Equal(got, wantEv) {
 			t.Errorf("injector got\n%+v\nwant\n%+v", got, wantEv)
 		}
+	})
+
+	t.Run("the Mac moves the pointer", func(t *testing.T) {
+		// The client's mouse has been still, and something on the Mac moves
+		// the pointer: the client gets the position, in desktop pixels.
+		clock.Add(int64(time.Second))
+		ptr.Set(PointerShape{OnDisplay: true, X: 600, Y: 300}, nil)
+		s.readUntil(t, "the pointer's position", func() bool { return s.cur.X == 400 && s.cur.Y == 200 })
 	})
 
 	t.Run("released at the end", func(t *testing.T) {

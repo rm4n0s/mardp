@@ -162,6 +162,10 @@ type PointerShape struct {
 	// Hash identifies the picture and hotspot: equal hashes are the same
 	// shape.
 	Hash uint64
+	// OnDisplay says the pointer is on the session's display, at X, Y in
+	// its points from its top-left corner, whether shown or not.
+	OnDisplay bool
+	X, Y      float64
 }
 
 // PointerSource reads the system pointer (SPEC §10.3).

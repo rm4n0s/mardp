@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sync"
@@ -34,6 +35,13 @@ func (f *fakeTarget) Hide() error {
 	return f.fail
 }
 
+func (f *fakeTarget) Move(x, y int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.got = append(f.got, fmt.Sprintf("move %d,%d", x, y))
+	return f.fail
+}
+
 func (f *fakeTarget) sent() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -44,7 +52,7 @@ func TestPointerPoll(t *testing.T) {
 	src := &StaticPointer{}
 	dst := &fakeTarget{}
 	rec := &recorder{}
-	p := newPointerPoll(src, dst, slog.New(rec))
+	p := newPointerPoll(src, dst, slog.New(rec), time.Now)
 	steps := []struct {
 		name  string
 		shape PointerShape
@@ -97,7 +105,7 @@ func TestPointerPollStops(t *testing.T) {
 			src := &StaticPointer{}
 			src.Set(testShape(1), nil)
 			dst := &fakeTarget{fail: errors.New(tag, "no")}
-			p := newPointerPoll(src, dst, slog.New(slog.DiscardHandler))
+			p := newPointerPoll(src, dst, slog.New(slog.DiscardHandler), time.Now)
 			done := make(chan struct{})
 			go func() {
 				p.run(context.Background())
@@ -114,7 +122,7 @@ func TestPointerPollStops(t *testing.T) {
 
 func TestPointerPollWakes(t *testing.T) {
 	src := &StaticPointer{}
-	p := newPointerPoll(src, &fakeTarget{}, slog.New(slog.DiscardHandler))
+	p := newPointerPoll(src, &fakeTarget{}, slog.New(slog.DiscardHandler), time.Now)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -143,4 +151,88 @@ func TestPointerPollWakes(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+func TestPointerPollPosition(t *testing.T) {
+	src := &StaticPointer{}
+	dst := &fakeTarget{}
+	rec := &recorder{}
+	now := time.Unix(1000, 0)
+	p := newPointerPoll(src, dst, slog.New(rec), func() time.Time { return now })
+	p.px, p.py = 0.5, 0.5
+	var cx, cy float64
+	var moves uint64
+	p.client = func() (float64, float64, uint64) { return cx, cy, moves }
+	at := func(x, y float64) PointerShape { return PointerShape{OnDisplay: true, X: x, Y: y} }
+	clientMoves := func(x, y float64) {
+		cx, cy = x, y
+		moves++
+		p.afterMouse()
+	}
+	steps := []struct {
+		name   string
+		before func()
+		shape  PointerShape
+		fail   error
+		want   []string
+	}{
+		{"the start puts the client's pointer", nil, at(100, 200), nil, []string{"move 50,100", "hide"}},
+		{"not moved", nil, at(100, 200), nil, nil},
+		{"the Mac moved it", nil, at(300, 201), nil, []string{"move 150,101"}},
+		{"the client moved it: too soon", func() { clientMoves(400, 400) }, at(410, 400), nil, nil},
+		{"settled where the client put it", func() { now = now.Add(pointerSettle) }, at(400, 400), nil, nil},
+		{"within the slack", nil, at(401, 401.5), nil, nil},
+		{"the Mac did not follow", func() { clientMoves(500, 500); now = now.Add(pointerSettle) }, at(400, 400), nil, []string{"move 200,200"}},
+		{"off the display", nil, PointerShape{X: 9, Y: 9}, nil, nil},
+		{"queue full", nil, at(10, 10), errors.New(rdp.TagQueueFull, "full"), []string{"move 5,5"}},
+		{"tried again", nil, at(10, 10), nil, []string{"move 5,5"}},
+		{"other failure", nil, at(20, 20), errors.New("TestMoveFailed", "bad"), []string{"move 10,10"}},
+		{"not tried again", nil, at(20, 20), nil, nil},
+		{"another failure is not logged", nil, at(30, 30), errors.New("TestMoveFailed", "bad"), []string{"move 15,15"}},
+	}
+	for _, s := range steps {
+		if s.before != nil {
+			s.before()
+		}
+		src.Set(s.shape, nil)
+		dst.mu.Lock()
+		dst.fail, dst.got = s.fail, nil
+		dst.mu.Unlock()
+		p.poll()
+		if got := dst.sent(); !slices.Equal(got, s.want) {
+			t.Fatalf("%s: sent %v, want %v", s.name, got, s.want)
+		}
+	}
+	warns := rec.find("the pointer's position was not sent")
+	if len(warns) != 1 {
+		t.Fatalf("logged %d times, want once", len(warns))
+	}
+	err, _ := attr(warns[0], "err").Any().(error)
+	assertRoute(t, err, "TestPointerPollPosition.TestMoveFailed")
+}
+
+func TestPointerPollPositionStops(t *testing.T) {
+	src := &StaticPointer{}
+	src.Set(PointerShape{OnDisplay: true, X: 1, Y: 1}, nil)
+	dst := &fakeTarget{fail: errors.New(rdp.TagFastPathUnsupported, "no")}
+	p := newPointerPoll(src, dst, slog.New(slog.DiscardHandler), time.Now)
+	p.px, p.py = 1, 1
+	p.poll()
+	if !p.off {
+		t.Fatal("the poller goes on")
+	}
+	if got := dst.sent(); !slices.Equal(got, []string{"move 1,1"}) {
+		t.Errorf("sent %v", got)
+	}
+}
+
+func TestPointerPollNoScale(t *testing.T) {
+	src := &StaticPointer{}
+	src.Set(PointerShape{OnDisplay: true, X: 1, Y: 1}, nil)
+	dst := &fakeTarget{}
+	p := newPointerPoll(src, dst, slog.New(slog.DiscardHandler), time.Now)
+	p.poll()
+	if got := dst.sent(); !slices.Equal(got, []string{"hide"}) {
+		t.Errorf("sent %v", got)
+	}
 }

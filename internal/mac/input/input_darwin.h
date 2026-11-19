@@ -21,3 +21,14 @@ typedef struct {
 int mardpInTrusted(void);
 int mardpInOrigin(const char *uuid, double *x, double *y);
 int mardpInPost(const mardpInEvent *e);
+
+// mardpPtrInfo is what mardpPtrRead read; see pointerInfo in pointer.go.
+typedef struct {
+	int status; // 0 read, 1 no image, 2 too large, 3 not drawn
+	int visible;
+	int width, height, hotX, hotY;
+	int onDisplay;
+	double x, y;
+} mardpPtrInfo;
+
+mardpPtrInfo mardpPtrRead(const char *uuid, uint8_t *buf, int cap);
