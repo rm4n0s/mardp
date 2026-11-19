@@ -89,3 +89,15 @@ The test machine's own desktop (Xfce) shows in its UTM window. Nothing here touc
 6. When the 10 minutes are over, stop the machine if you started it (`scripts/vm.sh stop`).
 
 Tell me what Remmina said in step 4, whether step 5 looked as expected, and send me the lines the test printed ("session opened", "session ended; input: …").
+
+## 2.5 Keyboard and mouse on the Mac (SPEC §10.4, §10.5)
+
+The tests never post events into your desktop (rule 11), so posting is checked by you, from Remmina, once `mardp -headless` exists (step 2.7 adds the command here). Then, connected to the Mac:
+
+1. Type in TextEdit: letters, digits, punctuation, Shift and Caps Lock, an accented letter through a dead key, and the keypad with Num Lock on and off.
+2. Ctrl+arrows (Mission Control's spaces), Alt+letters (Option characters), Super+Tab (the app switcher), Super+C and Super+V (copy and paste).
+3. Click, double-click a word, triple-click a line, drag a window, right-click, middle-click a link in Safari, the back and forward buttons in Safari if your mouse has them.
+4. Scroll a long page up and down, and sideways if your mouse can: say whether one notch scrolls too little or too much.
+5. Hold Shift, close Remmina, and check on the Mac that Shift is not stuck.
+
+Tell me what did not work, and how the scrolling speed felt.

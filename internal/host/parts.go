@@ -36,6 +36,29 @@ type Image = rdp.Image
 // desktop.
 const MaxDesktopSide = rdp.MaxDesktopSide
 
+// Extended is rdp.Extended, the prefix of a scancode, for the packages
+// under internal/mac.
+type Extended = rdp.Extended
+
+// The prefixes of a scancode (rdp.Extended).
+const (
+	NotExtended = rdp.NotExtended
+	ExtendedE0  = rdp.ExtendedE0
+	ExtendedE1  = rdp.ExtendedE1
+)
+
+// MouseButton is rdp.MouseButton, for the packages under internal/mac.
+type MouseButton = rdp.MouseButton
+
+// The mouse buttons (rdp.MouseButton).
+const (
+	ButtonLeft    = rdp.ButtonLeft
+	ButtonRight   = rdp.ButtonRight
+	ButtonMiddle  = rdp.ButtonMiddle
+	ButtonBack    = rdp.ButtonBack
+	ButtonForward = rdp.ButtonForward
+)
+
 // Frame is one captured picture for the bitmap paths (SPEC §9.6).
 type Frame struct {
 	// Image is the display's picture at the session's desktop size.

@@ -326,11 +326,15 @@ The server sends both as soon as it has them. The client shows a frame when it a
 - Modifiers, by default: Ctrl is Control, Alt is Option, the Super (Windows) key is Command. A setting swaps Ctrl and Command, for people who want Ctrl+C to copy on the Mac (D19).
 - Caps Lock, Num Lock and Scroll Lock follow the client's state when it sends a synchronize event.
 - When a session ends, every key and button that is still down is released.
+- The table (`internal/mac/input`) covers the 105 keys of an ISO keyboard, F13 to F20 and the Japanese and Brazilian keys. Keys a Mac lacks go where an Apple extended keyboard has them: Print Screen and SysRq are F13, Scroll Lock F14, Pause F15, Insert is Help, Menu is the context-menu key. Media keys post nothing. The code a key posts when it goes down is the one its release posts. Modifier keys post flags-changed events, and every event carries the flags of the modifiers held and of Caps Lock, with each key's own numeric-pad and Fn flags as a Mac keyboard sets them.
+- Num Lock is not a key on the Mac: it decides whether the keypad's digits are digits or the navigation keys (on until the client's first synchronize). Caps Lock toggles on each press. Scroll Lock's state is dropped.
+- Without Accessibility macOS drops posted events silently, so the injector checks `AXIsProcessTrusted` at most once a second and fails each event without it.
 
 ### 10.5 Mouse
 
 - Positions are scaled from the session's desktop size to the display's points. Buttons: left, right, middle, back, forward. The wheel scrolls vertically and horizontally.
 - Double clicks are counted by the host from the time and distance between clicks, as macOS expects in the event.
+- Positions get the display's origin in the global space added (read again at most once a second). A move with a button down is a drag of the lowest button held. The wheel posts one line per notch (120), keeping what is less than a line for the next turn the same way; whether that speed suits is a manual check.
 
 ## 11. Performance design
 
