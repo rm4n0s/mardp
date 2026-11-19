@@ -360,3 +360,230 @@ func TestVideoText(t *testing.T) {
 		}
 	}
 }
+
+// loadSettings reads h's config.json.
+func loadSettings(t *testing.T, h *home) config.Settings {
+	t.Helper()
+	folder, err := config.Open(context.Background(), h.dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := folder.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// samePlain says whether a and b are the same settings, but for the
+// password, a pointer that each load makes anew.
+func samePlain(a, b config.Settings) bool {
+	a.Password, b.Password = nil, nil
+	return a == b
+}
+
+// loopback is the Mac's addresses in the tests.
+func loopback() ([]net.Addr, error) {
+	return []net.Addr{
+		&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)},
+		&net.IPNet{IP: net.ParseIP("192.168.1.20"), Mask: net.CIDRMask(24, 32)},
+		&net.IPNet{IP: net.ParseIP("fd00::20"), Mask: net.CIDRMask(64, 128)},
+	}, nil
+}
+
+// TestAppSaveSettings: the settings are saved with the login kept; with the
+// server stopped nothing is pending.
+func TestAppSaveSettings(t *testing.T) {
+	displays := []host.Display{{ID: "1", Name: "Built-in", Width: 3024, Height: 1964, Main: true}}
+	h := newHome(t, nil)
+	m := newFakeMac(host.ScreenRecording, host.Accessibility)
+	m.sys = host.NewFakeSystem(displays, host.ScreenRecording, host.Accessibility)
+	a := newTestApp(t, h, m, false, slog.New(slog.DiscardHandler))
+	a.interfaces = loopback
+	ctx := context.Background()
+	st := a.Status()
+	if !samePlain(st.Settings, h.s) || !slices.Equal(st.Displays, displays) || st.Pending {
+		t.Fatalf("status %+v", st)
+	}
+	s := st.Settings
+	s.User, s.Password = "mallory", nil // not saved: SetLogin sets them
+	s.Address, s.MaxFPS, s.MaxBitrate, s.Sound, s.Display, s.SwapCtrlCommand = "192.168.1.20", 30, 12_500_000, config.SoundBoth, "1", true
+	s.OpenAtLogin, s.StartServer, s.MaxHeight = true, true, 1080
+	if err := a.SaveSettings(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	want := s
+	want.User, want.Password = h.s.User, h.s.Password
+	if got := loadSettings(t, h); got.User != testUser || !got.CheckLogin(testUser, testPassword) {
+		t.Errorf("the login changed: %+v", got)
+	} else if !samePlain(got, want) {
+		t.Errorf("config.json has %+v, want %+v", got, want)
+	}
+	if st := a.Status(); !samePlain(st.Settings, want) || st.Pending {
+		t.Errorf("status %+v", st)
+	}
+}
+
+func TestAppSaveSettingsRefused(t *testing.T) {
+	h := newHome(t, nil)
+	m := newFakeMac()
+	a := newTestApp(t, h, m, false, slog.New(slog.DiscardHandler))
+	a.interfaces = loopback
+	ctx := context.Background()
+	for _, tt := range []struct {
+		name  string
+		edit  func(s *config.Settings)
+		route string
+		field string
+	}{
+		{"address not of this Mac", func(s *config.Settings) { s.Address = "10.9.9.9" }, "app.SaveSettings->app.checkLocal." + TagAddressNotLocal, "address"},
+		{"address not an IP", func(s *config.Settings) { s.Address = "my-mac" }, "app.SaveSettings->app.checkLocal." + TagAddressNotLocal, "address"},
+		{"port", func(s *config.Settings) { s.Port = 0 }, "app.SaveSettings->Folder.Save", "port"},
+		{"bitrate", func(s *config.Settings) { s.MaxBitrate = 1 }, "app.SaveSettings->Folder.Save", "maxBitrate"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := h.s
+			tt.edit(&s)
+			err := a.SaveSettings(ctx, s)
+			assertRoute(t, err, tt.route)
+			if field, ok := ui.FieldOf(err); !ok || field != tt.field {
+				t.Errorf("field %q, want %q", field, tt.field)
+			}
+			if !samePlain(a.Status().Settings, h.s) || !samePlain(loadSettings(t, h), h.s) {
+				t.Error("refused settings were saved")
+			}
+		})
+	}
+	a.interfaces = func() ([]net.Addr, error) { return nil, errors.New("TestNoInterfaces", "none") }
+	s := h.s
+	s.Address = "127.0.0.1"
+	assertRoute(t, a.SaveSettings(ctx, s), "app.SaveSettings->app.checkLocal."+TagInterfacesFailed)
+	s.Address = "" // every address: nothing to check
+	if err := a.SaveSettings(ctx, s); err != nil {
+		t.Error(err)
+	}
+}
+
+// TestAppRestartWhenIdle: settings saved while a client is connected wait
+// for the session to end; then the server starts again with them.
+func TestAppRestartWhenIdle(t *testing.T) {
+	h := newHome(t, nil)
+	m := newFakeMac(host.ScreenRecording, host.Accessibility)
+	a := newTestApp(t, h, m, false, slog.New(slog.DiscardHandler))
+	a.poll = 10 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := a.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	running := func() *liveServer {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.run
+	}
+	first := running()
+
+	// What applies when the app opens or at login does not restart it.
+	s := h.s
+	s.OpenAtLogin, s.StartServer = !s.OpenAtLogin, !s.StartServer
+	if err := a.SaveSettings(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if st := a.Status(); st.Pending {
+		t.Errorf("pending after %+v", st.Settings)
+	}
+
+	c, err := connect(t, h, testUser, testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the session", func() bool { return a.Status().Server == ui.ServerConnected })
+	s.MaxFPS = 30
+	if err := a.SaveSettings(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.NewCertificate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond) // several polls
+	if st := a.Status(); !st.Pending || st.Server != ui.ServerConnected || running() != first {
+		t.Fatalf("the server did not wait for the session: %+v", st)
+	}
+	oldPrint := a.Status().Fingerprint
+	if err := c.Disconnect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the restart", func() bool { r := running(); return r != nil && r != first })
+	st := a.Status()
+	if st.Pending || st.Server != ui.ServerListening || st.Fingerprint == oldPrint || st.Problem != "" {
+		t.Errorf("after the restart %+v", st)
+	}
+	if r := running(); r.settings.MaxFPS != 30 {
+		t.Errorf("the server runs with %+v", r.settings)
+	}
+}
+
+// TestAppPendingStop: stopping the server drops what was pending; a stopped
+// server has nothing pending.
+func TestAppPendingStop(t *testing.T) {
+	h := newHome(t, nil)
+	m := newFakeMac(host.ScreenRecording, host.Accessibility)
+	a := newTestApp(t, h, m, false, slog.New(slog.DiscardHandler))
+	a.poll = time.Hour
+	ctx := context.Background()
+	if err := a.NewCertificate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if a.Status().Pending {
+		t.Error("pending with the server stopped")
+	}
+	if err := a.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.NewCertificate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !a.Status().Pending {
+		t.Error("a new certificate is not pending")
+	}
+	if err := a.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if a.Status().Pending {
+		t.Error("still pending after a stop and a start")
+	}
+}
+
+func TestAppNewCertificateFails(t *testing.T) {
+	h := newHome(t, nil)
+	a := newTestApp(t, h, newFakeMac(), false, slog.New(slog.DiscardHandler))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assertRoute(t, a.NewCertificate(ctx), "app.NewCertificate->Folder.NewCertificate")
+}
+
+// TestAppClose: after the app closed, nothing starts the server again.
+func TestAppClose(t *testing.T) {
+	h := newHome(t, nil)
+	m := newFakeMac(host.ScreenRecording, host.Accessibility)
+	a := newTestApp(t, h, m, false, slog.New(slog.DiscardHandler))
+	ctx := context.Background()
+	if err := a.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st := a.Status(); st.Server != ui.ServerStopped {
+		t.Errorf("started after closing: %+v", st)
+	}
+}

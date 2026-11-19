@@ -672,3 +672,45 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - The "null sink" is ALSA's file plugin over the null device, not a PulseAudio or PipeWire null sink. The guest agent runs as root with no sound server, and FreeRDP's ALSA backend writes straight into the file.
   - Seen, not changed: FreeRDP 3.33 confirms each Wave2 block twice, so mardp logs the second confirm at Debug as "a Wave Confirm of no block ignored". The first confirm is matched, so the backlog and the gap rule work. FreeRDP also drops the first block while it opens its device (the file plugin has no mixer).
 - **Manual checks:** a video with sound for 10 minutes and the clap test on the owner's Linux machine: pending, see docs/MANUAL-CHECKS.md (4.6).
+
+
+## 5.1 Settings (2026-11-19)
+- **Built:**
+  - `internal/ui/settings.go`: the settings form, which keeps the text fields as typed and the bitrate in Mbit/s. It turns the form into `config.Settings` with an error per field (config's own validation, through its metadata "field"). It also builds the choices of the display, height cap, frame rate and sound menus, always with the saved value among them.
+  - `internal/ui/settings_card.go`: the settings card, grouped by when the settings apply, each group saying so:
+    - at once: the user name and password, with a Change button that opens the login form, and "Open the app at login";
+    - at the next session: port, address, display, height cap, frame rate cap, bitrate cap, sound, swap Ctrl and Command, and "New certificate";
+    - the next time the app opens: "Start the server when the app opens".
+
+    "Save settings" and "Undo changes" are enabled only with changes. Messages show under the fields that are not valid. A note says that the settings are saved, or pending while the server runs. Settings saved elsewhere show in the form unless it has changes of its own.
+  - `ui.Backend` gains `SaveSettings` and `NewCertificate`; `ui.Status` gains the saved settings, the Mac's displays and `Pending`.
+  - `cmd/mardp` app:
+    - `SaveSettings` keeps the login, checks that the address is one of the Mac's (new tags `MardpAddressNotLocal`, with metadata field "address", and `MardpInterfacesFailed`), and saves.
+    - When a setting of a session changed (or the certificate is new) and the server runs, settings are pending. A goroutine polls four times a second and starts the server again once no client is connected. Stopping the server drops what is pending.
+    - Quitting the window closes the app, so that a restart cannot start the server again after it.
+  - SPEC §12.2: the settings as built.
+- **Proved:**
+  - `gluttertest`, against a fake backend:
+    - each of the ten settings changed in the window and saved, with nothing else changed;
+    - Save and Undo disabled without changes;
+    - the port, address and bitrate messages, with nothing saved, and Undo clearing them;
+    - an address the backend refuses (by its "field");
+    - another save failure shown;
+    - the pending note while the server runs, gone once it started again;
+    - settings saved elsewhere followed, and a change in the form kept;
+    - New certificate;
+    - the login changed from the settings card;
+    - saved values the menus do not offer.
+  - Unit tests of the form (24 cases: every field, valid and not), `FieldOf`, and the choices.
+  - `cmd/mardp`, with a temporary `MARDP_HOME`:
+    - the settings saved with the login kept, in `config.json` and the status, with the displays;
+    - the refused address (not the Mac's, not an IP), port and bitrate, with their routes and fields, nothing saved;
+    - the interfaces failing;
+    - a running server with a client connected: "open at login" and "start server" leave nothing pending; a frame rate change and a new certificate stay pending while the client is connected; after it disconnects, the server runs again with 30 frames a second and a new fingerprint;
+    - Stop dropping what is pending;
+    - the certificate failing;
+    - no start after the app closed.
+- **Differs from the plan:**
+  - Nothing is applied to a running session: the plan's "at the next session" is a restart of the server once no client is connected, which keeps one place that reads the settings (prepare).
+  - The settings card is always shown, under the status and the checklist.
+- **Manual checks:** the card in the real window, and a restart for saved settings with Remmina: pending, see docs/MANUAL-CHECKS.md (5.1).

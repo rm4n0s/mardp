@@ -187,7 +187,7 @@ Tell me how smooth the video was, whether anything looked wrong, and any line of
 
 mardp mutes your Mac's output only while a client gets the sound, and only if it was not muted already: with your Mac muted, as it is now, it changes nothing. For this check, unmute the Mac and set its volume to a quiet level yourself first; mardp never touches the volume. Have Remmina's profile play the sound locally (Advanced tab, "Audio output mode": "Local").
 
-1. Build the app, open it with a log, check that "Where the sound plays" is "On the client only", and press Start:
+1. Build the app, open it with a log, check that the setting "Sound" is "On the client only", and press Start:
 
    ```bash
    scripts/build-app.sh
@@ -200,8 +200,8 @@ mardp mutes your Mac's output only while a client gets the sound, and only if it
 2. Play something with sound on the Mac (a video in Safari), then connect with Remmina. Expected: the sound plays on your Linux machine, and the Mac's speakers go quiet; the Mac's sound menu shows it muted; `/tmp/mardp.log` has `msg="the Mac's output is muted while the client plays the sound"`.
 3. Disconnect Remmina. Expected: the Mac plays the sound again; the log has `msg="the Mac's output is unmuted"`.
 4. Connect again, then end mardp without letting it unmute: `pkill -9 -f mardp.app/Contents/MacOS`. Expected: the Mac stays muted. Open mardp again (step 1's second command). Expected: it unmutes the Mac as it starts; the log has `msg="unmuted the output mardp left muted"`.
-5. Set "Where the sound plays" to "On both", press Stop and Start, and connect. Expected: the sound plays on both machines and the Mac is not muted.
-6. Mute the Mac yourself, set "On the client only" again, connect and disconnect. Expected: the Mac stays muted all along (the log says `the Mac's output is muted already`).
+5. Set "Sound" to "On both the client and the Mac", press "Save settings", then Stop and Start, and connect. Expected: the sound plays on both machines and the Mac is not muted.
+6. Mute the Mac yourself, set "Sound" to "On the client only" again and save, connect and disconnect. Expected: the Mac stays muted all along (the log says `the Mac's output is muted already`).
 7. Press Stop and close the window. Put the volume and mute back as you like them.
 
 Tell me what differed at any step.
@@ -213,7 +213,7 @@ The test machine proved that FreeRDP plays the sound right, as PCM and as AAC. O
 
 Remmina's profile: Basic tab, "Colour depth" "GFX AVC420 (32 bpp)"; Advanced tab, "Audio output mode" "Local".
 
-1. Build the app, open it with a log, check that "Sound" is on and "Where the sound plays" is "On the client only", and press Start:
+1. Build the app, open it with a log, check that the setting "Sound" is "On the client only", and press Start:
 
    ```bash
    scripts/build-app.sh
@@ -229,3 +229,28 @@ Remmina's profile: Basic tab, "Colour depth" "GFX AVC420 (32 bpp)"; Advanced tab
 5. Press Stop and close the window.
 
 Tell me whether the sound dropped out, how far apart the flash and the beep were (and which came first), and any line of `/tmp/mardp.log` with `level=WARN` or `level=ERROR`.
+
+## 5.1 The settings in the real window (SPEC §12.2)
+
+The tests drive the settings card through Glutter's test binding. This check looks at it on the Mac, at its real size, and at a restart for saved settings with Remmina.
+
+1. Build the app and open it with a log:
+
+   ```bash
+   scripts/build-app.sh
+   ```
+
+   ```bash
+   open -n build/mardp.app --args -log-file /tmp/mardp.log
+   ```
+
+2. Scroll to "Settings". Expected: three groups, "These apply at once.", "These apply at the next session: …" and "This applies the next time the app opens.", each with its settings; every field and menu readable, nothing cut off, in light and in dark mode (System Settings, Appearance).
+3. Type `70000` as the port and press "Save settings". Expected: "A port from 1 to 65535." under the port, and nothing saved. Press "Undo changes": the port comes back.
+4. Type an address that is not your Mac's (for example `10.9.9.9`) and save. Expected: "An IP address of this Mac, or empty for every address." Undo.
+5. Open the display menu. Expected: "The main display" and each of your displays with its size.
+6. Press Start and connect with Remmina. Set "Frame rate cap" to 30 and save. Expected: "Saved. The changes apply at the next session: …" while Remmina stays connected, at 60 frames a second.
+7. Disconnect Remmina. Expected: within a second the pending text goes and `/tmp/mardp.log` has `starting the server again with the saved settings`. Connect again: Remmina connects as before (the log's `the settings are saved` line before it has `maxFps=30`).
+8. Press "New certificate" and connect again after disconnecting. Expected: Remmina asks to accept a new certificate, with the fingerprint the window now shows.
+9. Set "Frame rate cap" back to 60, save, press Stop and close the window.
+
+Tell me what did not look or behave as expected, with a screenshot of the settings card if something looks wrong.

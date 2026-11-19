@@ -11,6 +11,7 @@ import (
 	"github.com/rm4n0s/errors"
 	"github.com/rm4n0s/glutter/gluttertest"
 	m "github.com/rm4n0s/glutter/material"
+	"github.com/rm4n0s/mardp/internal/config"
 	"github.com/rm4n0s/mardp/internal/host"
 )
 
@@ -23,6 +24,11 @@ type fakeBackend struct {
 	logins   []string
 	starts   int
 	stops    int
+	// saveErr fails SaveSettings; saved are the settings it saved; certs
+	// counts NewCertificate.
+	saveErr error
+	saved   []config.Settings
+	certs   int
 }
 
 func (f *fakeBackend) Status() Status {
@@ -78,6 +84,33 @@ func (f *fakeBackend) OpenSettings(ctx context.Context, p host.Permission) error
 	defer f.mu.Unlock()
 	f.opened = append(f.opened, p)
 	return nil
+}
+
+// SaveSettings saves s; with the server running, it is pending.
+func (f *fakeBackend) SaveSettings(ctx context.Context, s config.Settings) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	f.saved = append(f.saved, s)
+	f.st.Settings = s
+	f.st.Pending = f.st.Server != ServerStopped
+	return nil
+}
+
+func (f *fakeBackend) NewCertificate(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.certs++
+	return nil
+}
+
+// savedSettings returns what SaveSettings saved.
+func (f *fakeBackend) savedSettings() []config.Settings {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.saved)
 }
 
 // calls returns what the backend was asked to do.

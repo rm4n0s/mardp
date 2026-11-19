@@ -7,6 +7,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/rm4n0s/mardp/internal/config"
 	"github.com/rm4n0s/mardp/internal/host"
 )
 
@@ -48,13 +49,21 @@ type Status struct {
 	// Video names the connected session's video path (SPEC §9.1), one of
 	// the TextVideo texts; "" when no client is connected.
 	Video string
+	// Settings are the saved settings.
+	Settings config.Settings
+	// Displays are the Mac's displays now, for the setting of the display.
+	Displays []host.Display
+	// Pending says that saved settings wait for the next session: the
+	// running server starts again with them once no client is connected.
+	Pending bool
 }
 
 // Equal says whether s and o are the same status.
 func (s Status) Equal(o Status) bool {
 	return s.Server == o.Server && slices.Equal(s.Addresses, o.Addresses) && s.Fingerprint == o.Fingerprint &&
 		s.ViewOnly == o.ViewOnly && s.ScreenRecording == o.ScreenRecording && s.Accessibility == o.Accessibility &&
-		s.User == o.User && s.LoginSet == o.LoginSet && s.Problem == o.Problem && s.Video == o.Video
+		s.User == o.User && s.LoginSet == o.LoginSet && s.Problem == o.Problem && s.Video == o.Video &&
+		s.Settings == o.Settings && slices.Equal(s.Displays, o.Displays) && s.Pending == o.Pending
 }
 
 // Backend is what the window shows and does. Status is called on the UI
@@ -74,4 +83,11 @@ type Backend interface {
 	// OpenSettings asks macOS for p, which shows its question the first time,
 	// and opens p's pane of System Settings (SPEC §7.1).
 	OpenSettings(ctx context.Context, p host.Permission) error
+	// SaveSettings checks and saves s, all but its user name and password,
+	// which SetLogin sets (SPEC §12.2). What changes the server applies at
+	// the next session (Pending).
+	SaveSettings(ctx context.Context, s config.Settings) error
+	// NewCertificate replaces the server's certificate; it applies at the
+	// next session, like the settings.
+	NewCertificate(ctx context.Context) error
 }

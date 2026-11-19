@@ -23,7 +23,17 @@ const (
 	TagUserMissing = "MardpUserMissing"
 	// TagStopTimedOut: the server's sessions did not end in time.
 	TagStopTimedOut = "MardpStopTimedOut"
+	// TagAddressNotLocal: the address to save is not an address of this
+	// Mac; its metadata "field" is "address", as config's TagInvalid.
+	TagAddressNotLocal = "MardpAddressNotLocal"
+	// TagInterfacesFailed: the Mac's addresses could not be listed, to
+	// check the address to save; the cause is kept.
+	TagInterfacesFailed = "MardpInterfacesFailed"
 )
+
+// restartPoll is how often the app looks whether the server can start
+// again with saved settings: when no client is connected (SPEC §12.2).
+const restartPoll = 250 * time.Millisecond
 
 // stopTimeout is how long the server may take to end its sessions when the
 // app quits.
@@ -44,7 +54,7 @@ func window(ctx context.Context, getenv func(string) string, m machine, viewOnly
 	err = m.window(ctx, a, log)
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stopTimeout)
 	defer cancel()
-	if serr := a.Stop(sctx); err == nil {
+	if serr := a.close(sctx); err == nil {
 		err = serr
 	}
 	return err
@@ -58,12 +68,19 @@ type app struct {
 	viewOnly   bool
 	log        *slog.Logger
 	interfaces func() ([]net.Addr, error)
+	// poll is how often the app looks whether the server can start again
+	// with saved settings.
+	poll time.Duration
 
 	mu       sync.Mutex
 	settings config.Settings
 	starting bool
 	run      *liveServer
 	problem  string
+	// pending says that saved settings wait for the next session, and
+	// restarting that a goroutine waits for it; closed that the app quits
+	// and starts no server anymore.
+	pending, restarting, closed bool
 }
 
 // liveServer is a server that serves until cancel; done is closed when it
@@ -75,7 +92,7 @@ type liveServer struct {
 }
 
 func newApp(folder *config.Folder, s config.Settings, sys host.System, m machine, viewOnly bool, log *slog.Logger) *app {
-	return &app{folder: folder, sys: sys, m: m, viewOnly: viewOnly, log: log, interfaces: net.InterfaceAddrs, settings: s}
+	return &app{folder: folder, sys: sys, m: m, viewOnly: viewOnly, log: log, interfaces: net.InterfaceAddrs, poll: restartPoll, settings: s}
 }
 
 // current returns the settings now.
@@ -91,9 +108,15 @@ func (a *app) Status() ui.Status {
 		ScreenRecording: a.sys.Granted(host.ScreenRecording),
 		Accessibility:   a.sys.Granted(host.Accessibility),
 	}
+	displays, err := a.sys.Displays()
+	if err != nil {
+		a.log.Debug("the displays could not be listed", "err", err)
+	}
+	st.Displays = displays
 	a.mu.Lock()
 	s, r := a.settings, a.run
 	st.User, st.LoginSet, st.Problem = s.User, s.Ready(), a.problem
+	st.Settings, st.Pending = s, a.pending && r != nil
 	a.mu.Unlock()
 	if r == nil {
 		return st
@@ -130,7 +153,7 @@ func videoText(p rdp.VideoPath) string {
 // its own.
 func (a *app) Start(ctx context.Context) error {
 	a.mu.Lock()
-	if a.run != nil || a.starting {
+	if a.run != nil || a.starting || a.closed {
 		a.mu.Unlock()
 		return nil
 	}
@@ -163,11 +186,12 @@ func (a *app) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop implements ui.Backend.
+// Stop implements ui.Backend. The next start takes the saved settings, so
+// none are pending anymore.
 func (a *app) Stop(ctx context.Context) error {
 	a.mu.Lock()
 	r := a.run
-	a.run = nil
+	a.run, a.pending = nil, false
 	a.mu.Unlock()
 	if r == nil {
 		return nil
@@ -202,6 +226,130 @@ func (a *app) SetLogin(ctx context.Context, user, password string) error {
 	a.mu.Unlock()
 	a.log.Info("the user name and password are set", "user", user)
 	return nil
+}
+
+// close stops the server for good, when the app quits: a restart for
+// saved settings cannot start it again.
+func (a *app) close(ctx context.Context) error {
+	a.mu.Lock()
+	a.closed = true
+	a.mu.Unlock()
+	return a.Stop(ctx)
+}
+
+// SaveSettings implements ui.Backend: it saves s with the user name and the
+// password kept, and a running server starts again with them once no client
+// is connected.
+func (a *app) SaveSettings(ctx context.Context, s config.Settings) error {
+	if s.Address != "" {
+		if err := a.checkLocal(s.Address); err != nil {
+			return err
+		}
+	}
+	a.mu.Lock()
+	old := a.settings
+	a.mu.Unlock()
+	s.Version, s.User, s.Password = old.Version, old.User, old.Password
+	if err := a.folder.Save(ctx, s); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.settings = s
+	a.mu.Unlock()
+	a.log.Info("the settings are saved", "port", s.Port, "address", s.Address, "display", s.Display,
+		"maxHeight", s.MaxHeight, "maxFps", s.MaxFPS, "maxBitrate", s.MaxBitrate, "sound", s.Sound,
+		"swapCtrlCommand", s.SwapCtrlCommand, "startServer", s.StartServer, "openAtLogin", s.OpenAtLogin)
+	if forSession(old) != forSession(s) {
+		a.restartWhenIdle()
+	}
+	return nil
+}
+
+// forSession is s without what does not apply to a session: the login,
+// which a running server reads at each login, and what applies when the
+// app opens or at login.
+func forSession(s config.Settings) config.Settings {
+	s.User, s.Password, s.StartServer, s.OpenAtLogin = "", nil, false, false
+	return s
+}
+
+// checkLocal says whether address is an address of this Mac.
+func (a *app) checkLocal(address string) error {
+	ip := net.ParseIP(address)
+	addrs, err := a.interfaces()
+	if err != nil {
+		return errors.NewErr(TagInterfacesFailed, err)
+	}
+	for _, ad := range addrs {
+		if n, ok := ad.(*net.IPNet); ok && ip != nil && n.IP.Equal(ip) {
+			return nil
+		}
+	}
+	return errors.New(TagAddressNotLocal, "the address is not an address of this Mac", "field", "address", "address", address)
+}
+
+// NewCertificate implements ui.Backend: a running server starts again with
+// the new certificate once no client is connected.
+func (a *app) NewCertificate(ctx context.Context) error {
+	c, err := a.folder.NewCertificate(ctx)
+	if err != nil {
+		return err
+	}
+	a.log.Info("a new certificate", "fingerprint", c.Fingerprint)
+	a.restartWhenIdle()
+	return nil
+}
+
+// restartWhenIdle makes the running server start again with the saved
+// settings and certificate as soon as no client is connected: settings
+// pending while it waits.
+func (a *app) restartWhenIdle() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.run == nil {
+		return
+	}
+	a.pending = true
+	if a.restarting {
+		return
+	}
+	a.restarting = true
+	go a.waitIdle()
+}
+
+// waitIdle restarts the server once no client is connected; it returns
+// when it did, or when nothing is pending anymore (the server stopped).
+func (a *app) waitIdle() {
+	t := time.NewTicker(a.poll)
+	defer t.Stop()
+	for range t.C {
+		a.mu.Lock()
+		r := a.run
+		if !a.pending || r == nil || a.closed {
+			a.pending, a.restarting = false, false
+			a.mu.Unlock()
+			return
+		}
+		if r.hst.Sessions() > 0 {
+			a.mu.Unlock()
+			continue
+		}
+		a.restarting = false
+		a.mu.Unlock()
+		a.log.Info("starting the server again with the saved settings")
+		ctx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+		err := a.Stop(ctx)
+		if err == nil {
+			err = a.Start(ctx)
+		}
+		cancel()
+		if err != nil {
+			a.mu.Lock()
+			a.problem = err.Error()
+			a.mu.Unlock()
+		}
+		return
+	}
 }
 
 // OpenSettings implements ui.Backend.

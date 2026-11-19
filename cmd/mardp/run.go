@@ -143,6 +143,8 @@ type server struct {
 	fingerprint string
 	// post says that the client's input is posted; false is view only.
 	post bool
+	// settings are the settings it was made of.
+	settings config.Settings
 }
 
 // prepare makes a server of the settings and listens where they say: it
@@ -207,7 +209,7 @@ func prepare(ctx context.Context, folder *config.Folder, settings func() config.
 	if err != nil {
 		return nil, errors.NewErr(TagListenFailed, err).SetMetadata("addr", addr)
 	}
-	return &server{srv: srv, l: l, hst: hst, fingerprint: cert.Fingerprint, post: post}, nil
+	return &server{srv: srv, l: l, hst: hst, fingerprint: cert.Fingerprint, post: post, settings: s}, nil
 }
 
 // authenticator checks a login against the settings that settings returns,

@@ -92,12 +92,15 @@ type windowState struct {
 	user     *m.TextEditingController
 	password *m.TextEditingController
 	timer    canceler
+	// settings is the settings card's form.
+	settings settingsForm
 }
 
 func (s *windowState) InitState() {
 	s.user = m.NewTextEditingController()
 	s.password = m.NewTextEditingController()
 	s.status = s.Widget().b.Status()
+	s.settings.init(s.status.Settings)
 	s.schedule()
 }
 
@@ -107,6 +110,7 @@ func (s *windowState) Dispose() {
 	}
 	s.user.Dispose()
 	s.password.Dispose()
+	s.settings.dispose()
 }
 
 // schedule asks for the status again after PollInterval. The binding's
@@ -121,7 +125,10 @@ func (s *windowState) schedule() {
 // refresh shows the backend's status, rebuilding only when it changed.
 func (s *windowState) refresh() {
 	if st := s.Widget().b.Status(); !st.Equal(s.status) {
-		s.SetState(func() { s.status = st })
+		s.SetState(func() {
+			s.status = st
+			s.settings.follow(st.Settings)
+		})
 	}
 }
 
@@ -182,6 +189,7 @@ func (s *windowState) Build(bc m.BuildContext) m.Widget {
 	if vm.Checklist != nil || s.editing {
 		children = append(children, s.checklistCard(bc, vm))
 	}
+	children = append(children, s.settingsCard(bc))
 	return m.NewScaffold(m.ScaffoldOpts{
 		AppBar: m.NewAppBar(m.AppBarOpts{Title: m.NewText("mardp")}),
 		Body: m.NewSingleChildScrollView(m.NewPadding(m.NewEdgeInsetsAll(16),
