@@ -1,0 +1,84 @@
+//go:build darwin
+
+package vtenc
+
+/*
+#cgo CFLAGS: -x objective-c -fobjc-arc
+#cgo LDFLAGS: -framework Foundation -framework CoreMedia -framework CoreVideo -framework VideoToolbox
+#include "vtenc_darwin.h"
+*/
+import "C"
+
+import (
+	"runtime/cgo"
+	"time"
+	"unsafe"
+)
+
+// New makes an Encoder whose frames go to frame (see the package
+// documentation).
+func New(opts Options, frame func(*Frame)) (*Encoder, error) {
+	return newEncoder(opts, frame, videoToolbox{})
+}
+
+// videoToolbox is the backend of VideoToolbox.
+type videoToolbox struct{}
+
+func (videoToolbox) create(cfg config, enc *Encoder) (session, *createFailure) {
+	h := cgo.NewHandle(enc)
+	r := C.mardpEncCreate(C.uintptr_t(h), C.int(cfg.width), C.int(cfg.height), cBool(cfg.fullRange),
+		C.int(cfg.profile), C.int(cfg.bitrate), C.int(cfg.fps))
+	if r.enc == nil {
+		// mardpEncCreate freed what it made: no callback holds h.
+		h.Delete()
+		return nil, &createFailure{step: C.GoString(&r.step[0]), status: int(r.status)}
+	}
+	return &vtSession{enc: r.enc, h: h}, nil
+}
+
+func cBool(b bool) C.int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// vtSession is a running VTCompressionSession.
+type vtSession struct {
+	enc *C.mardpEnc
+	h   cgo.Handle
+}
+
+func (s *vtSession) setBitrate(bitsPerSecond int) int {
+	return int(C.mardpEncSetBitrate(s.enc, C.int(bitsPerSecond)))
+}
+
+func (s *vtSession) forceKeyFrame() { C.mardpEncForceKey(s.enc) }
+
+func (s *vtSession) setSkip(skip bool) { C.mardpEncSetSkip(s.enc, cBool(skip)) }
+
+func (s *vtSession) close() {
+	C.mardpEncClose(s.enc)
+	// No output can reach Go any more.
+	s.h.Delete()
+}
+
+//export mardpEncOutput
+func mardpEncOutput(h C.uintptr_t, status C.int, dropped C.int, key C.int, sets **C.uint8_t, setLens *C.size_t, nsets C.int,
+	nalLen C.int, data *C.uint8_t, n C.size_t, pts C.int64_t) {
+	e := cgo.Handle(h).Value().(*Encoder)
+	o := output{status: int(status), dropped: dropped != 0, key: key != 0, nalLen: int(nalLen), pts: time.Duration(pts)}
+	var buf [4][]byte
+	if nsets > 0 {
+		ps := unsafe.Slice(sets, int(nsets))
+		ls := unsafe.Slice(setLens, int(nsets))
+		for i := range min(len(buf), int(nsets)) {
+			buf[i] = unsafe.Slice((*byte)(unsafe.Pointer(ps[i])), int(ls[i]))
+		}
+		o.sets = buf[:min(len(buf), int(nsets))]
+	}
+	if data != nil && n > 0 {
+		o.avcc = unsafe.Slice((*byte)(unsafe.Pointer(data)), int(n))
+	}
+	e.deliver(o)
+}
