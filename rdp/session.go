@@ -72,13 +72,14 @@ func (f HandlerFunc) SessionOpened(ctx context.Context, s *Session) { f(ctx, s) 
 // Set Error Info (SPEC §5.4).
 type CloseReason int
 
-// The reasons the application ends a session for.
+// The reasons a session is ended for.
 const (
 	// CloseByHost: the Mac's user ended the session
 	// (ERRINFO_RPC_INITIATED_DISCONNECT).
 	CloseByHost CloseReason = iota + 1
 	// CloseReplaced: another client connected and took the session over
-	// (ERRINFO_DISCONNECTED_BY_OTHERCONNECTION, SPEC D13).
+	// (ERRINFO_DISCONNECTED_BY_OTHERCONNECTION, SPEC D13). The server
+	// sends it itself when a new session opens.
 	CloseReplaced
 	// CloseServerStopped: the server is stopping (ERRINFO_SERVER_SHUTDOWN).
 	// The server sends it itself when Serve's context is canceled.
@@ -516,10 +517,11 @@ func (c *conn) readShare() (caps.PDU, error) {
 }
 
 // runSession hands the open session to h and reads what the client sends
-// until the session ends (SPEC §5.3, §5.4). It cancels the session's context
-// and waits for h before it returns. When ctx is canceled the session is
-// closed with CloseServerStopped.
-func (c *conn) runSession(ctx context.Context, s *Session, h Handler) error {
+// until the session ends (SPEC §5.3, §5.4). It first replaces the session
+// open in o, if any, and waits for it to end (SPEC D13). It cancels the
+// session's context and waits for h before it returns. When ctx is canceled
+// the session is closed with CloseServerStopped.
+func (c *conn) runSession(ctx context.Context, s *Session, h Handler, o *openSession) error {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s.cancel = cancel
@@ -534,10 +536,28 @@ func (c *conn) runSession(ctx context.Context, s *Session, h Handler) error {
 		}
 	})
 	defer stop()
+	done := make(chan struct{})
+	defer close(done)
+	if prev := o.replace(s, done); prev != nil {
+		c.log.Info("replacing the open session", "client", prev.s.client.Name)
+		// A client that reads nothing would hold Close forever: after
+		// closeWait the connection is closed without the reason.
+		cctx, ccancel := context.WithTimeout(ctx, closeWait)
+		if err := prev.s.Close(cctx, CloseReplaced); err != nil {
+			c.log.Debug("closing the replaced session", "err", err)
+		}
+		ccancel()
+		<-prev.done
+	}
+	defer o.leave(s)
 	c.log.Info("session opened", "client", s.client.Name, "width", s.width, "height", s.height,
 		"graphicsPipeline", s.client.GraphicsPipeline)
 	var wg sync.WaitGroup
-	wg.Go(func() { h.SessionOpened(sctx, s) })
+	// A session replaced or stopped before the one it replaced has ended
+	// never reaches the application.
+	if sctx.Err() == nil {
+		wg.Go(func() { h.SessionOpened(sctx, s) })
+	}
 	err := c.readSession(s)
 	s.end()
 	cancel()

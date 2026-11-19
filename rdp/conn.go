@@ -133,7 +133,7 @@ func (s *Server) serveConn(ctx context.Context, nc net.Conn, log *slog.Logger, r
 	if !stop() {
 		return nil
 	}
-	return c.runSession(ctx, sess, s.handler)
+	return c.runSession(ctx, sess, s.handler, &s.open)
 }
 
 // write writes, in one call, the frames that build appends.

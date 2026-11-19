@@ -244,3 +244,20 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - Microsoft gives no example of a pointer update, so the exact bytes in the tests come from the field tables and the padding examples of 2.2.9.1.1.4.4.
   - SPEC §6 (pointer, `Client`) and §10.3 (encoding, shrinking, cache) are updated.
 - **Manual checks:** none.
+
+## 1.12 Ending, replacing, and the hostile-input sweep (2026-11-19)
+- **Built:**
+  - **Replacement (D13), in the library:** the server keeps one open session. When a new one has finished the connection sequence, the open one is closed with `CloseReplaced`, given 2 seconds for the ultimatum to be written (a client that reads nothing is cut off without it), and the new session reaches the handler once the old one has ended and its handler has returned. A session replaced while it waits never reaches the handler.
+  - **TCP keep-alive** on every accepted connection: 15 s idle, 5 s interval, 3 probes (`net.KeepAliveConfig`). A connection where it cannot be set is logged and served all the same.
+  - **The sweep** (`rdp/hostile_test.go`): one pass over every parser of client data. These are the TPKT and fast-path frames, X.224 (Connection Request, Data header, Disconnect Request), MCS (Connect-Initial and the domain PDUs), GCC and the client data blocks, the Client Info PDU, Confirm Active, the finalization and other Data PDUs, Refresh Rect, Suppress Output, and slow-path and fast-path input.
+- **Proved:**
+  - **Every reason:** `TestSessionClose` (by host, replaced, server stopped, a client without Set Error Info), `TestServerStopClosesSessions`, `TestLogin` (failed login), `TestClientDisconnects`, `TestClientHangsUp` and `TestSessionCloseWaitsForTheClient` already covered each way a session ends. This step adds the replacement through the server.
+  - **Replacement:** `TestReplace` shows the first client told ERRINFO_DISCONNECTED_BY_OTHERCONNECTION, the first session ending before the second opens, the log, and a third login after the second has ended replacing nothing. `TestReplaceStalledClient` shows a first client that reads nothing does not hold the second up beyond about 2 s. `TestReplacedBeforeOpening` uses a first handler that does not return: the second session is replaced while it waits, its client is told so, its handler never runs, and the third session opens.
+  - **Keep-alive:** `TestKeepAlive` reads SO_KEEPALIVE, the idle time, the interval and the count back from the socket (macOS and Linux). It also covers a connection that is not TCP and one where setting it fails.
+  - **The sweep:** for each seed it runs every cut, every 2 and 4 bytes set to 0xFF… and 0x7F…, 1000 mutations, 100 seeds with up to 2 KiB of random bytes added, then 1000 random inputs and one random input of the largest frame. Seeds are Microsoft's examples, the Connection Requests recorded from FreeRDP and Remmina, and PDUs from the writers. No parser panicked, returned an untagged error, or allocated more than 8 KiB plus 32 bytes per input byte (measured per parse). `TestSweepCheck` shows the check catches an allocation sized by a length field and an untagged error.
+  - Three repeated `-race` runs pass. Coverage: `rdp` 94.7%.
+- **Differs from the plan:**
+  - The spec did not say who replaces a session. The library does it, at the end of the new client's connection sequence rather than at its login, so a client that has the password but fails the sequence does not end the open session. The new session waits for the old one's handler, so the application never runs two at once. `CloseReplaced` is now sent by the server itself.
+  - The sweep lives in `rdp`, the one package whose tests can import every parser, rather than in a new helper package. The per-package hostile tests of `input`, `mcs`, `gcc`, `bitmap` and `pointer` stay.
+  - SPEC §5.4 (replacement) and §15.4 (the sweep) are updated.
+- **Manual checks:** none.

@@ -72,6 +72,40 @@ type Server struct {
 	log          *slog.Logger
 	maxPending   int
 	loginTimeout time.Duration
+	open         openSession
+}
+
+// openSession is the session a server has open: one at a time, a new one
+// replaces it (SPEC D13).
+type openSession struct {
+	mu  sync.Mutex
+	cur *liveSession
+}
+
+// liveSession is an open session; done is closed when it has ended and its
+// handler has returned.
+type liveSession struct {
+	s    *Session
+	done <-chan struct{}
+}
+
+// replace makes s the open session and returns the one it replaces, nil
+// when there is none.
+func (o *openSession) replace(s *Session, done <-chan struct{}) *liveSession {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	prev := o.cur
+	o.cur = &liveSession{s: s, done: done}
+	return prev
+}
+
+// leave forgets s, unless another session has replaced it.
+func (o *openSession) leave(s *Session) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.cur != nil && o.cur.s == s {
+		o.cur = nil
+	}
 }
 
 // NewServer checks cfg and returns a server for it.
@@ -161,6 +195,7 @@ func (s *Server) handle(ctx context.Context, nc net.Conn, log *slog.Logger, rele
 		}
 	}()
 	log.Debug("connection accepted")
+	keepAlive(nc, log)
 	err := s.serveConn(ctx, nc, log, release)
 	switch {
 	case err == nil:
@@ -175,6 +210,28 @@ func (s *Server) handle(ctx context.Context, nc net.Conn, log *slog.Logger, rele
 		log.Info("connection closed: no login in time", "timeout", s.loginTimeout, "err", err)
 	default:
 		log.Warn("connection ended", "err", err)
+	}
+}
+
+// The TCP keep-alive of SPEC §5.4: a connection that goes silent is closed
+// after about 30 seconds.
+const (
+	keepAliveIdle     = 15 * time.Second
+	keepAliveInterval = 5 * time.Second
+	keepAliveCount    = 3
+)
+
+// keepAlive turns on TCP keep-alive on nc, when it is a TCP connection. A
+// connection where it fails is served all the same.
+func keepAlive(nc net.Conn, log *slog.Logger) {
+	tc, ok := nc.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	if err := tc.SetKeepAliveConfig(net.KeepAliveConfig{
+		Enable: true, Idle: keepAliveIdle, Interval: keepAliveInterval, Count: keepAliveCount,
+	}); err != nil {
+		log.Warn("TCP keep-alive could not be turned on", "err", err)
 	}
 }
 

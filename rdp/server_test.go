@@ -101,6 +101,19 @@ func (r *recorder) find(t *testing.T, msg string) slog.Record {
 	}
 }
 
+// count is how many records have message msg now.
+func (r *recorder) count(msg string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, rec := range r.records {
+		if rec.Message == msg {
+			n++
+		}
+	}
+	return n
+}
+
 func attr(rec slog.Record, key string) slog.Value {
 	var v slog.Value
 	rec.Attrs(func(a slog.Attr) bool {
