@@ -19,7 +19,7 @@ fi
 if ! security find-identity -v -p codesigning | grep -q "\"$NAME\""; then
 	cat >&2 <<MSG
 sign.sh: the signing identity "$NAME" is not in your keychain.
-Create it once with scripts/make-identity.sh (README, "Building").
+Create it once with scripts/make-identity.sh (README, "The signing identity").
 MSG
 	exit 1
 fi

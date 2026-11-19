@@ -881,3 +881,15 @@ The owner, with Remmina: "the mardp works but when I move a window around the im
   - `scripts/perf.sh slow` on the Apple M6: before, 31 frames a second at 1.4 Mbit/s; after, 39 frames a second at 7.8 Mbit/s.
   - `internal/host`: the rule's table (network, slow client, motion that begins inside a second, a screen that stops, a lost frame), the stays of 10 to 320 periods, five minutes against a model of a 3 Mbit/s network (the bitrate settles there) and of a 40 frames a second client (the bitrate stays); the path counts the time held back, also across a period's end; a session whose client turns slow tries one fall, goes back, and never gets a frame older than its three frames on their way allow.
 - **Not proved here:** that this is all of what the owner saw. It is the only way found for motion to spoil the picture, and it must happen with any client slower than the capture; the owner's check with Remmina is pending, see docs/MANUAL-CHECKS.md (1.0.1).
+
+## 1.0.1 A guide for a new Mac (2026-11-20)
+
+The owner: "put a guide on readme on how to install it on new mac but if possible make installation easy that non developers can understand. Put also a guide on how to use it".
+
+- **Built:**
+  - `scripts/install.sh`: one command that checks what a build needs (macOS, Apple's command line tools, Go) and says in plain words what to do about what is missing, then makes the signing identity, builds, copies the app to `/Applications` and opens it; run again, it updates. `-check` only checks. It refuses while mardp runs.
+  - `scripts/build-app.sh`: without git (GitHub's ZIP of a tag) the version comes from the folder's name; the scripts call each other through `sh`.
+  - README, rewritten for someone who does not program: installing on a new Mac in four steps, the first start, connecting from Linux, using it (the window, the menu-bar icon, every setting), watching video, a table of what to do when something is wrong, updating and removing. What developers need moved to the end.
+  - SPEC §16.
+- **Proved:** `scripts/install.sh -check` on this Mac passes; with Go out of the PATH it finds Go's installer location, and with Go nowhere it stops with the steps to install it; a wrong flag prints the usage. The version from the folder's name: `mardp-1.2.3` gives 1.2.3, another folder 0.0.0, a git checkout its tag.
+- **Not proved:** the whole installation on a new Mac. Here the steps after the checks (identity, build, copy, open) were not run through the script, because the owner's mardp was running from `build/mardp.app` and the script would have replaced it; each of those steps is a command the owner has run before. The first run on a Mac without the command line tools and without Go is the owner's to try.

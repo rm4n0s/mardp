@@ -6,7 +6,9 @@
 #
 # The bundle's version is the last version tag (vX.Y.Z) before HEAD;
 # `mardp -version` prints the version Go records from git, which is the same
-# at a tagged commit and a pseudo-version after it.
+# at a tagged commit and a pseudo-version after it. Without git (the source
+# as a ZIP from GitHub), the version is the one in the folder's name
+# (mardp-X.Y.Z, as GitHub names a tag's ZIP), and 0.0.0 otherwise.
 #
 # usage: scripts/build-app.sh [-debug]
 #
@@ -27,7 +29,13 @@ esac
 app=build/mardp.app
 # The oldest macOS mardp runs on (SPEC D20).
 minimum=14.0
-version=$(git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || echo v0.0.0)
+version=$(git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || true)
+if [ -z "$version" ]; then
+	case $(basename "$PWD") in
+	mardp-[0-9]*.[0-9]*.[0-9]*) version=$(basename "$PWD" | sed 's/^mardp-//') ;;
+	*) version=0.0.0 ;;
+	esac
+fi
 version=${version#v}
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/mardp-build-app.XXXXXX")
@@ -73,5 +81,5 @@ fi
 # Glutter: glutter-macos signs ad hoc and has no flag for the signing
 # identity (its SignOptions.Identity has no flag); the app is signed again
 # with mardp's own (docs/GLUTTER-ISSUES.md).
-scripts/sign.sh "$app"
+sh scripts/sign.sh "$app"
 echo "built $app $version"
