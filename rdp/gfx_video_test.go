@@ -64,7 +64,8 @@ func TestGFXBitmaps(t *testing.T) {
 			sink := newRecordSink()
 			s.SetFlowSink(sink)
 			ctx := gfxContext(t)
-			g, err := c.StartGFX(ctx, []gfx.CapSet{gfx.NewCapSet(gfx.Version107, 0)})
+			// A client without H.264 gets Planar.
+			g, err := c.StartGFX(ctx, []gfx.CapSet{gfx.NewCapSet(gfx.Version107, gfx.FlagAVCDisabled)})
 			if err != nil {
 				t.Fatal(err)
 			}

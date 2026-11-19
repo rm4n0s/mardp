@@ -29,6 +29,12 @@ const (
 	TagCompressed = "GfxCompressed"
 	// TagSizeInvalid: a surface or output larger than the protocol allows.
 	TagSizeInvalid = "GfxSizeInvalid"
+	// TagRectInvalid: a rectangle whose right or bottom is not past its
+	// left or top.
+	TagRectInvalid = "GfxRectInvalid"
+	// TagQuantInvalid: an H.264 quantization parameter over 51 or a quality
+	// over 100.
+	TagQuantInvalid = "GfxQuantInvalid"
 )
 
 // HeaderLen is the length of RDPGFX_HEADER.
@@ -210,11 +216,10 @@ type PDU struct {
 	SurfaceID        uint16
 	PixelFormat      uint8
 	OriginX, OriginY uint32
-	// CodecID, Left, Top, Right and Bottom are a Wire To Surface 1's, with
-	// its SurfaceID and PixelFormat and its bitmap data in Body; Right and
-	// Bottom are exclusive.
-	CodecID                  uint16
-	Left, Top, Right, Bottom uint16
+	// CodecID and Rect are a Wire To Surface 1's, with its SurfaceID and
+	// PixelFormat and its bitmap data in Body.
+	CodecID uint16
+	Rect    Rect16
 	// Body is what follows the header of a PDU the package does not
 	// parse.
 	Body []byte
@@ -410,10 +415,8 @@ func parseWireToSurface1(p *PDU, r *wire.Reader) error {
 	if p.PixelFormat, err = r.U8(); err != nil {
 		return err
 	}
-	for _, v := range []*uint16{&p.Left, &p.Top, &p.Right, &p.Bottom} {
-		if *v, err = r.U16LE(); err != nil {
-			return err
-		}
+	if p.Rect, err = readRect16(r); err != nil {
+		return err
 	}
 	n, err := r.U32LE()
 	if err != nil {
@@ -555,19 +558,16 @@ func AppendMapSurfaceToOutput(w *wire.Writer, id uint16, x, y uint32) {
 	w.U32LE(y)
 }
 
-// BeginWireToSurface1 starts a Wire To Surface 1 of the area left, top to
-// right, bottom (exclusive) of surface, and returns its offset; the bitmap
-// data is appended next, and EndWireToSurface1 finishes the PDU.
-func BeginWireToSurface1(w *wire.Writer, surface uint16, format uint8, left, top, right, bottom uint16) int {
+// BeginWireToSurface1 starts a Wire To Surface 1 of the area r of
+// surface, and returns its offset; the bitmap data is appended next, and
+// EndWireToSurface1 finishes the PDU.
+func BeginWireToSurface1(w *wire.Writer, surface uint16, format uint8, r Rect16) int {
 	off := w.Len()
 	header(w, CmdWireToSurface1, 0)
 	w.U16LE(surface)
 	w.U16LE(0)
 	w.U8(format)
-	w.U16LE(left)
-	w.U16LE(top)
-	w.U16LE(right)
-	w.U16LE(bottom)
+	appendRect16(w, r)
 	w.U32LE(0)
 	return off
 }
@@ -755,4 +755,142 @@ func segment(b []byte) ([]byte, error) {
 		return nil, errors.New(TagSegmentInvalid, "a segment of another compression type", "header", h)
 	}
 	return b[1:], nil
+}
+
+// Rect16 is an RDPGFX_RECT16 (2.2.1.2): Right and Bottom are exclusive.
+type Rect16 struct {
+	Left, Top, Right, Bottom uint16
+}
+
+func appendRect16(w *wire.Writer, r Rect16) {
+	w.U16LE(r.Left)
+	w.U16LE(r.Top)
+	w.U16LE(r.Right)
+	w.U16LE(r.Bottom)
+}
+
+func readRect16(r *wire.Reader) (Rect16, error) {
+	var v Rect16
+	var err error
+	for _, f := range []*uint16{&v.Left, &v.Top, &v.Right, &v.Bottom} {
+		if *f, err = r.U16LE(); err != nil {
+			return v, err
+		}
+	}
+	return v, nil
+}
+
+// The limits of an RDPGFX_AVC420_QUANT_QUALITY (2.2.4.4.2).
+const (
+	// MaxQP is the largest quantization parameter of H.264's high
+	// profiles.
+	MaxQP = 51
+	// MaxQuality is the largest quality level.
+	MaxQuality = 100
+	// qpProgressive is the bit of qpVal that marks a progressive region.
+	qpProgressive = 0x80
+)
+
+// QuantQuality is an RDPGFX_AVC420_QUANT_QUALITY: the quantization and
+// quality of a region of an H.264 frame.
+type QuantQuality struct {
+	QP          uint8
+	Progressive bool
+	Quality     uint8
+}
+
+// AVC420 is an RFX_AVC420_BITMAP_STREAM (2.2.4.4): the regions of the
+// frame that the client shows, with their quantization and quality (the
+// metablock, which the client SHOULD NOT use to decode), and the frame in
+// H.264's Annex B byte stream.
+type AVC420 struct {
+	Regions   []Rect16
+	Quant     []QuantQuality
+	Bitstream []byte
+}
+
+// avc420RegionLen is the length of a region and its quantization in the
+// metablock.
+const avc420RegionLen = 8 + 2
+
+// AppendAVC420 appends the bitmap stream a. It fails with TagCountInvalid
+// when there are no regions or not one quantization for each,
+// TagRectInvalid for an empty region and TagQuantInvalid for a value out
+// of range.
+func AppendAVC420(w *wire.Writer, a AVC420) error {
+	if len(a.Regions) == 0 || len(a.Quant) != len(a.Regions) {
+		return errors.New(TagCountInvalid, "not one quantization for each region of an H.264 frame",
+			"regions", len(a.Regions), "quant", len(a.Quant))
+	}
+	for i, r := range a.Regions {
+		if r.Right <= r.Left || r.Bottom <= r.Top {
+			return errors.New(TagRectInvalid, "an empty region of an H.264 frame", "index", i,
+				"left", r.Left, "top", r.Top, "right", r.Right, "bottom", r.Bottom)
+		}
+	}
+	for i, q := range a.Quant {
+		if q.QP > MaxQP || q.Quality > MaxQuality {
+			return errors.New(TagQuantInvalid, "a quantization or quality out of range", "index", i,
+				"qp", q.QP, "quality", q.Quality)
+		}
+	}
+	w.U32LE(uint32(len(a.Regions)))
+	for _, r := range a.Regions {
+		appendRect16(w, r)
+	}
+	for _, q := range a.Quant {
+		v := q.QP
+		if q.Progressive {
+			v |= qpProgressive
+		}
+		w.U8(v)
+		w.U8(q.Quality)
+	}
+	w.Write(a.Bitstream)
+	return nil
+}
+
+// ReadAVC420 reads the bitmap stream of a Wire To Surface 1 with
+// CodecAVC420. Its slices point into b. A region whose right or bottom is
+// not past its left or top fails with TagRectInvalid, as FreeRDP refuses
+// it, and values out of range with TagQuantInvalid.
+func ReadAVC420(b []byte) (AVC420, error) {
+	r := wire.NewReader(b)
+	var a AVC420
+	n, err := r.U32LE()
+	if err != nil {
+		return a, err
+	}
+	if int64(n)*avc420RegionLen > int64(r.Remaining()) {
+		return a, errors.New(TagCountInvalid, "more regions than the data holds", "count", n, "rest", r.Remaining())
+	}
+	a.Regions = make([]Rect16, n)
+	for i := range a.Regions {
+		if a.Regions[i], err = readRect16(&r); err != nil {
+			return a, err
+		}
+		if v := a.Regions[i]; v.Right <= v.Left || v.Bottom <= v.Top {
+			return a, errors.New(TagRectInvalid, "an empty region of an H.264 frame", "index", i,
+				"left", v.Left, "top", v.Top, "right", v.Right, "bottom", v.Bottom)
+		}
+	}
+	a.Quant = make([]QuantQuality, n)
+	for i := range a.Quant {
+		v, err := r.U8()
+		if err != nil {
+			return a, err
+		}
+		quality, err := r.U8()
+		if err != nil {
+			return a, err
+		}
+		q := QuantQuality{QP: v & 0x3f, Progressive: v&qpProgressive != 0, Quality: quality}
+		if q.QP > MaxQP || q.Quality > MaxQuality {
+			return a, errors.New(TagQuantInvalid, "a quantization or quality out of range", "index", i,
+				"qp", q.QP, "quality", q.Quality)
+		}
+		a.Quant[i] = q
+	}
+	a.Bitstream = r.Rest()
+	return a, nil
 }

@@ -17,6 +17,25 @@ import (
 // channel closed.
 const TagGFXNotReady = "VideoGFXNotReady"
 
+// TagH264Unavailable: an H.264 frame for a session whose video path is not
+// VideoAVC420.
+const TagH264Unavailable = "VideoH264Unavailable"
+
+// TagKeyFrameWanted: an H.264 frame that is not a key frame, for a surface
+// that has had no key frame since it was created.
+const TagKeyFrameWanted = "VideoKeyFrameWanted"
+
+// TagFrameEmpty: an H.264 frame without data.
+const TagFrameEmpty = "VideoFrameEmpty"
+
+// The quantization and quality the AVC420 metablock states for a frame.
+// The client SHOULD NOT use them (MS-RDPEGFX 2.2.4.4.1), and the encoder's
+// own vary, so these are the values of a good picture.
+const (
+	avc420QP      = 22
+	avc420Quality = 100
+)
+
 // gfxChannelName is the dynamic channel of the graphics pipeline
 // (MS-RDPEGFX 2.1).
 const gfxChannelName = "Microsoft::Windows::RDS::Graphics"
@@ -46,16 +65,20 @@ type gfxPipeline struct {
 	// surface is created, and cleared when the channel closes.
 	confirmed gfx.CapSet
 	ready     bool
-	// avc420 says whether the client decodes H.264 in YUV420 mode.
-	avc420 bool
+	// avc420 says whether the client decodes H.264 in YUV420 mode;
+	// keyed is set once a key frame went to the surface.
+	avc420, keyed bool
 	// next is the ID of the next frame.
 	next uint32
 	// unacked are the frames sent and not acknowledged, oldest first.
 	// suspended is set while the client has suspended acknowledgements.
 	unacked   []gfxSentFrame
 	suspended bool
-	// raw and wrapped build the messages; guarded by mu.
+	// raw and wrapped build the messages, region and quant an H.264
+	// frame's metablock; guarded by mu.
 	raw, wrapped wire.Writer
+	region       [1]gfx.Rect16
+	quant        [1]gfx.QuantQuality
 }
 
 // startGFX opens the graphics pipeline's channel when the client said it
@@ -176,7 +199,7 @@ func (g *gfxPipeline) caps(sets []gfx.CapSet) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	g.ready = true
+	g.ready, g.keyed = true, false
 	s.c.log.Info("graphics pipeline ready", "version", c.Version, "flags", c.Flags(), "avc420", g.avc420)
 	return true, nil
 }
@@ -253,11 +276,47 @@ func (g *gfxPipeline) sendFrameLocked(build func(w *wire.Writer) error) error {
 	return nil
 }
 
-// isReady reports whether the surface is created and frames can be sent.
-func (g *gfxPipeline) isReady() bool {
+// path returns the video path of the pipeline's state.
+func (g *gfxPipeline) path() VideoPath {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.ready
+	switch {
+	case !g.ready:
+		return VideoBitmaps
+	case g.avc420:
+		return VideoAVC420
+	}
+	return VideoPlanar
+}
+
+// sendAVC420 sends an H.264 frame of the whole surface.
+func (g *gfxPipeline) sendAVC420(annexB []byte, keyFrame bool) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.ready || !g.avc420 {
+		return errors.New(TagH264Unavailable, "an H.264 frame for a client that does not take it now",
+			"ready", g.ready, "avc420", g.avc420)
+	}
+	if !g.keyed && !keyFrame {
+		return errors.New(TagKeyFrameWanted, "an H.264 frame that depends on frames the client does not have",
+			"length", len(annexB))
+	}
+	s := g.s
+	err := g.sendFrameLocked(func(w *wire.Writer) error {
+		r := gfx.Rect16{Right: uint16(s.width), Bottom: uint16(s.height)}
+		off := gfx.BeginWireToSurface1(w, gfxSurfaceID, gfx.PixelFormatXRGB, r)
+		g.region[0], g.quant[0] = r, gfx.QuantQuality{QP: avc420QP, Quality: avc420Quality}
+		err := gfx.AppendAVC420(w, gfx.AVC420{Regions: g.region[:], Quant: g.quant[:], Bitstream: annexB})
+		if err != nil {
+			return err
+		}
+		return gfx.EndWireToSurface1(w, off, gfx.CodecAVC420)
+	})
+	if err != nil {
+		return err
+	}
+	g.keyed = true
+	return nil
 }
 
 // sendTiles sends rects of img, clipped to bounds, as one frame of tiles
@@ -283,6 +342,26 @@ func (s *Session) wantKeyFrame() {
 	if f != nil {
 		f.KeyFrameWanted()
 	}
+}
+
+// SendFrame sends an H.264 frame of the whole desktop, Annex B byte
+// stream, without waiting for the network (SPEC §6, §9.3): one graphics
+// frame with a Wire To Surface 1 of the AVC420 stream, in one packet of the
+// video queue (TagQueueFull when it is full). It works while Path is
+// VideoAVC420, and fails with TagH264Unavailable otherwise. The first frame
+// on a surface must be a key frame (TagKeyFrameWanted): the flow sink's
+// KeyFrameWanted says when one is due. annexB is not used after SendFrame
+// returns.
+func (v *Video) SendFrame(annexB []byte, keyFrame bool) error {
+	if len(annexB) == 0 {
+		return errors.New(TagFrameEmpty, "an H.264 frame without data", "keyFrame", keyFrame)
+	}
+	g := v.s.gfx
+	if g == nil {
+		return errors.New(TagH264Unavailable, "an H.264 frame for a session without the graphics pipeline",
+			"graphicsPipeline", v.s.client.GraphicsPipeline)
+	}
+	return g.sendAVC420(annexB, keyFrame)
 }
 
 // Backlog is the video sent and not yet acknowledged by the client (SPEC

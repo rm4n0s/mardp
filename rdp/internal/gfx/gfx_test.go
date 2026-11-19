@@ -71,12 +71,12 @@ func TestPDUs(t *testing.T) {
 			"0f 00 00 00 14 00 00 00  01 00 00 00 02 00 00 00 03 00 00 00", ReadServer,
 			PDU{Cmd: CmdMapSurfaceToOutput, SurfaceID: 1, OriginX: 2, OriginY: 3}},
 		{"wire to surface 1", func(w *wire.Writer) error {
-			off := BeginWireToSurface1(w, 1, PixelFormatXRGB, 1, 2, 3, 4)
+			off := BeginWireToSurface1(w, 1, PixelFormatXRGB, Rect16{1, 2, 3, 4})
 			w.Write([]byte{9, 8})
 			return EndWireToSurface1(w, off, CodecPlanar)
 		},
 			"01 00 00 00 1b 00 00 00  01 00 0a 00 20  01 00 02 00 03 00 04 00  02 00 00 00  09 08", ReadServer,
-			PDU{Cmd: CmdWireToSurface1, SurfaceID: 1, CodecID: CodecPlanar, PixelFormat: PixelFormatXRGB, Left: 1, Top: 2, Right: 3, Bottom: 4, Body: []byte{9, 8}}},
+			PDU{Cmd: CmdWireToSurface1, SurfaceID: 1, CodecID: CodecPlanar, PixelFormat: PixelFormatXRGB, Rect: Rect16{1, 2, 3, 4}, Body: []byte{9, 8}}},
 		{"start frame", func(w *wire.Writer) error { AppendStartFrame(w, 0x12345678, 7); return nil },
 			"0b 00 00 00 10 00 00 00  78 56 34 12 07 00 00 00", ReadServer,
 			PDU{Cmd: CmdStartFrame, Timestamp: 0x12345678, FrameID: 7}},

@@ -31,8 +31,10 @@ const (
 	// for a client without the graphics pipeline.
 	VideoBitmaps VideoPath = iota + 1
 	// VideoPlanar is Planar of the changed rectangles through the graphics
-	// pipeline.
+	// pipeline, for a client that does not take H.264.
 	VideoPlanar
+	// VideoAVC420 is H.264 frames through the graphics pipeline.
+	VideoAVC420
 )
 
 func (p VideoPath) String() string {
@@ -41,6 +43,8 @@ func (p VideoPath) String() string {
 		return "bitmaps"
 	case VideoPlanar:
 		return "planar"
+	case VideoAVC420:
+		return "avc420"
 	}
 	return "unknown"
 }
@@ -54,11 +58,13 @@ type Video struct {
 // Video returns the session's video output.
 func (s *Session) Video() *Video { return &s.video }
 
-// Path returns how the session sends the desktop: through the graphics
-// pipeline once its surface is created, otherwise as bitmaps.
+// Path returns how the session sends the desktop (SPEC §9.1): once the
+// graphics pipeline's surface is created, H.264 when the client takes it
+// and Planar when not, otherwise bitmaps. SendFrame works on VideoAVC420
+// only; SendRects on every path.
 func (v *Video) Path() VideoPath {
-	if g := v.s.gfx; g != nil && g.isReady() {
-		return VideoPlanar
+	if g := v.s.gfx; g != nil {
+		return g.path()
 	}
 	return VideoBitmaps
 }
@@ -130,7 +136,7 @@ func appendTiles(w *wire.Writer, img *bitmap.Image, rects []image.Rectangle, bou
 			for x := r.Min.X; x < r.Max.X; x += gfxTile {
 				t := bitmap.Rect{X: x, Y: y, Width: min(gfxTile, r.Max.X-x), Height: min(gfxTile, r.Max.Y-y)}
 				off := gfx.BeginWireToSurface1(w, gfxSurfaceID, gfx.PixelFormatXRGB,
-					uint16(t.X), uint16(t.Y), uint16(t.X+t.Width), uint16(t.Y+t.Height))
+					gfx.Rect16{Left: uint16(t.X), Top: uint16(t.Y), Right: uint16(t.X + t.Width), Bottom: uint16(t.Y + t.Height)})
 				planar, err := bitmap.AppendTile(w, img, t)
 				if err != nil {
 					return err

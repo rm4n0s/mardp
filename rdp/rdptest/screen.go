@@ -74,8 +74,8 @@ func (sc *Screen) DrawGFX(ps []gfx.PDU) (GFXDrawn, error) {
 					"surface", p.SurfaceID, "format", p.PixelFormat, "codec", p.CodecID)
 			}
 			planar := p.CodecID == gfx.CodecPlanar
-			x, y := int(p.Left), int(p.Top)
-			err := bitmap.DrawTile((*bitmap.Image)(sc), x, y, int(p.Right)-x, int(p.Bottom)-y, planar, p.Body)
+			x, y := int(p.Rect.Left), int(p.Rect.Top)
+			err := bitmap.DrawTile((*bitmap.Image)(sc), x, y, int(p.Rect.Right)-x, int(p.Rect.Bottom)-y, planar, p.Body)
 			if err != nil {
 				return d, err
 			}

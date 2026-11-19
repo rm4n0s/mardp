@@ -449,3 +449,14 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - Whether FreeRDP shows these tiles is for 3.9's interop test.
   - Not part of the step: CLAUDE.md and rule 14 now say that the session chooses the version of a publish without asking (the owner, 2026-11-19), the next minor version for a milestone.
 - **Manual checks:** none.
+
+## 3.5 AVC420 (2026-11-19)
+- **Built:**
+  - `rdp/internal/gfx`: `AVC420` (regions, quantization and quality, the Annex B data), `AppendAVC420` and `ReadAVC420` for RFX_AVC420_BITMAP_STREAM and its metablock; `Rect16`, which Wire To Surface 1 now takes; tags `GfxRectInvalid` and `GfxQuantInvalid`.
+  - `rdp`: `Video.SendFrame(annexB, keyFrame)`, one graphics frame with a Wire To Surface 1 of the whole surface (QP 22, quality 100); `Video.Path()` decides the three outcomes of §9.1 (`VideoAVC420`, `VideoPlanar`, `VideoBitmaps`). Tags `VideoH264Unavailable`, `VideoKeyFrameWanted` (a P-frame before the surface's first key frame), `VideoFrameEmpty`.
+  - SPEC §6 (`SendFrame`, `Path`) and §9.1 (the AVC420 frame).
+- **Proved:**
+  - `gfx` tests: two bitmap streams byte for byte against 2.2.4.4 and its sub-structures (one region of 1920×1080 with QP 22 and quality 100; two regions, one progressive, with the extremes of QP and quality) and read back; the reserved bit ignored; every fault of writing and reading with its route; cuts and mutations without a panic.
+  - `rdp` tests: rdptest gets back the same Annex B data it was sent, for a key frame of 40,000 bytes, a P-frame of 300 and one of 200,000 (multipart segments, many DVC PDUs), each one frame with IDs 1 to 3, the region of the desktop and the metablock's values; the acknowledgement empties the backlog; Planar rectangles still go through on this path. A P-frame before the key frame, a frame before the surface, after a re-advertise without H.264, for a client without the pipeline, and an empty frame fail with their routes; after a 10.3+ re-advertise the surface needs a key frame again. TestGFX checks the path of every version (AVC420 or Planar); the client without the pipeline gets bitmaps. The key frame request waits while output is suppressed and comes with the resume.
+- **Differs from the plan:** the refusal of a P-frame before the key frame is new (a decoder cannot show it), and so is the metablock's fixed QP and quality (SPEC §9.1).
+- **Manual checks:** none.

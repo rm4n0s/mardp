@@ -80,7 +80,7 @@ func TestDrawGFX(t *testing.T) {
 			codec = gfx.CodecPlanar
 		}
 		return gfx.PDU{Cmd: gfx.CmdWireToSurface1, SurfaceID: 1, CodecID: codec, PixelFormat: gfx.PixelFormatXRGB,
-			Left: uint16(r.X), Top: uint16(r.Y), Right: uint16(r.X + r.Width), Bottom: uint16(r.Y + r.Height), Body: w.Bytes()}
+			Rect: gfx.Rect16{Left: uint16(r.X), Top: uint16(r.Y), Right: uint16(r.X + r.Width), Bottom: uint16(r.Y + r.Height)}, Body: w.Bytes()}
 	}
 	ps := []gfx.PDU{
 		{Cmd: gfx.CmdStartFrame, FrameID: 3},
@@ -119,8 +119,8 @@ func TestDrawGFX(t *testing.T) {
 		{"another surface", edit(func(p *gfx.PDU) { p.SurfaceID = 2 }), "Screen.DrawGFX." + TagGFXUnsupported},
 		{"another format", edit(func(p *gfx.PDU) { p.PixelFormat = gfx.PixelFormatARGB }), "Screen.DrawGFX." + TagGFXUnsupported},
 		{"another codec", edit(func(p *gfx.PDU) { p.CodecID = gfx.CodecAVC420 }), "Screen.DrawGFX." + TagGFXUnsupported},
-		{"outside the screen", edit(func(p *gfx.PDU) { p.Left, p.Right = 7, 9 }), "Screen.DrawGFX->DrawTile." + bitmap.TagRectInvalid},
-		{"inverted", edit(func(p *gfx.PDU) { p.Left, p.Right = 2, 0 }), "Screen.DrawGFX->DrawTile." + bitmap.TagRectInvalid},
+		{"outside the screen", edit(func(p *gfx.PDU) { p.Rect.Left, p.Rect.Right = 7, 9 }), "Screen.DrawGFX->DrawTile." + bitmap.TagRectInvalid},
+		{"inverted", edit(func(p *gfx.PDU) { p.Rect.Left, p.Rect.Right = 2, 0 }), "Screen.DrawGFX->DrawTile." + bitmap.TagRectInvalid},
 		{"cut planar", edit(func(p *gfx.PDU) { p.Body = p.Body[:1] }), "Screen.DrawGFX->DrawTile->decodePlanar"},
 	}
 	for _, tt := range tests {

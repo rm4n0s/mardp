@@ -120,6 +120,15 @@ func TestGFX(t *testing.T) {
 			if !ready || avc420 != tc.avc420 {
 				t.Errorf("ready %v, avc420 %v", ready, avc420)
 			}
+			// Two of the three outcomes of SPEC §9.1; TestBitmaps has the
+			// third.
+			wantPath := VideoPlanar
+			if tc.avc420 {
+				wantPath = VideoAVC420
+			}
+			if p := s.Video().Path(); p != wantPath {
+				t.Errorf("path %v, want %v", p, wantPath)
+			}
 		})
 	}
 }
@@ -262,7 +271,7 @@ func TestGFXBacklog(t *testing.T) {
 	if ts.log.count("graphics PDU ignored") != 1 {
 		t.Errorf("ignored %d PDUs", ts.log.count("graphics PDU ignored"))
 	}
-	if p := v.Path(); p != VideoPlanar {
+	if p := v.Path(); p != VideoAVC420 {
 		t.Errorf("path %v", p)
 	}
 }
