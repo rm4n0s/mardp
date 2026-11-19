@@ -9,11 +9,13 @@ package main
 
 /*
 #cgo CFLAGS: -fobjc-arc
-#cgo LDFLAGS: -framework CoreGraphics -framework ApplicationServices -framework CoreFoundation -framework CoreAudio -framework Foundation -framework AppKit -framework ScreenCaptureKit -framework CoreMedia -framework CoreVideo -framework IOKit -framework AVFoundation
+#cgo LDFLAGS: -framework CoreGraphics -framework ApplicationServices -framework CoreFoundation -framework CoreAudio -framework Foundation -framework AppKit -framework ScreenCaptureKit -framework CoreMedia -framework CoreVideo -framework IOKit -framework AVFoundation -framework VideoToolbox -framework AudioToolbox
 #include "capture.h"
 #include "cursor.h"
 #include <stdlib.h>
 #include "tap.h"
+#include "h264.h"
+#include "aac.h"
 #include <CoreGraphics/CoreGraphics.h>
 #include <ApplicationServices/ApplicationServices.h>
 
@@ -74,6 +76,28 @@ func main() {
 		o := C.probeOpts{seconds: C.double(*secs), width: C.int(*w), height: C.int(*h),
 			animate: b2i(*anim), audio: b2i(*audio), excludeSelf: b2i(*exSelf), excludeBundle: cs, tone: b2i(*tone), excludePid: C.int(*exPid), reportEvery: C.double(*every), moveAt: C.double(*moveAt)}
 		os.Exit(int(C.probeCapture(o)))
+	case "h264":
+		fs := flag.NewFlagSet("h264", flag.ExitOnError)
+		secs := fs.Float64("s", 10, "seconds")
+		w := fs.Int("w", 1920, "width")
+		h := fs.Int("h", 1080, "height")
+		profile := fs.Int("profile", 0, "0 High, 1 Main, 2 Constrained Baseline, 3 Constrained High")
+		full := fs.Bool("full", false, "full-range input (420f)")
+		low := fs.Bool("lowlatency", false, "low-latency rate control")
+		br := fs.Int("bitrate", 8000000, "bits per second")
+		out := fs.String("o", "", "Annex B output file")
+		_ = fs.Parse(os.Args[2:])
+		co := C.CString(*out)
+		defer C.free(unsafe.Pointer(co))
+		os.Exit(int(C.probeH264(C.h264Opts{seconds: C.double(*secs), width: C.int(*w), height: C.int(*h), profile: C.int(*profile),
+			fullRange: b2i(*full), lowLatency: b2i(*low), bitrate: C.int(*br), outPath: co})))
+	case "aac":
+		fs := flag.NewFlagSet("aac", flag.ExitOnError)
+		secs := fs.Float64("s", 10, "seconds of sound")
+		br := fs.Int("bitrate", 192000, "bits per second")
+		sbr := fs.Bool("he", false, "HE-AAC instead of AAC-LC")
+		_ = fs.Parse(os.Args[2:])
+		os.Exit(int(C.probeAAC(C.double(*secs), C.int(*br), b2i(*sbr))))
 	case "cursor-set":
 		fs := flag.NewFlagSet("cursor-set", flag.ExitOnError)
 		secs := fs.Float64("s", 10, "seconds")

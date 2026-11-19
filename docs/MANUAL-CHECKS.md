@@ -56,4 +56,13 @@ At the Mac (or over Screen Sharing), in the project folder (with the worktree of
 
 ## 0.7 The recurring Screen Recording question (SPEC §19 R6)
 
-If macOS asks again whether "mardp probe" (or later "mardp") may record the screen, tell me the date, the exact wording and buttons, and whether a capture or session was running at the time.
+**One is on your screen now** (since before 02:01 on 2026-11-19, during step 0.8): "Probe is requesting to bypass the system private window picker and directly access your screen and audio", with **Allow** and **Open System Settings**. I left it for you. Capture kept working while it stood there. Please:
+
+1. Tell me whether it is still there when you come back (it may have gone away by itself), and which button you pressed.
+2. After that, if `spikes/out/Probe.app` still exists (or in the worktree of 0.6), run one short capture and tell me whether the question comes back:
+
+   ```bash
+   open -W --stdout /dev/stdout spikes/out/Probe.app --args capture -s 5 -w 640 -h 360
+   ```
+
+If macOS asks again later whether "mardp probe" (or later "mardp") may record the screen, tell me the date, the exact wording and buttons, and whether a capture or session was running at the time.
