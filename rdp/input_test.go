@@ -333,14 +333,18 @@ func TestSinksSetLate(t *testing.T) {
 func TestSessionIgnores(t *testing.T) {
 	h := &sinkSessions{sink: newRecordSink(), opened: make(chan *Session, 1)}
 	ts := start(t, Config{Handler: h})
-	c, _ := ts.open(t, rdptest.Options{})
+	c, _ := ts.open(t, rdptest.Options{Channels: channelTestNames})
 	h.next(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// Data on a static channel.
+	// Bytes that are no chunk on a static channel the server does not
+	// read, and a message on one it reads but has no handler for.
 	if err := c.SendData(ctx, func(w *wire.Writer) error {
-		return mcs.WriteSendDataRequest(w, &mcs.SendData{Initiator: c.UserID, ChannelID: c.Joined[2], Data: []byte{1, 2, 3}})
+		return mcs.WriteSendDataRequest(w, &mcs.SendData{Initiator: c.UserID, ChannelID: c.ChannelID("cliprdr"), Data: []byte{1, 2, 3}})
 	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SendChannel(ctx, c.ChannelID("rdpsnd"), []byte{1, 2, 3}); err != nil {
 		t.Fatal(err)
 	}
 	// A Confirm Active, a Control PDU and a FlowPDU, in one Send Data.

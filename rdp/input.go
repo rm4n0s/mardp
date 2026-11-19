@@ -330,8 +330,7 @@ func (sr *sessionReader) tpkt(frame []byte) (bool, error) {
 			"initiator", d.Initiator, "channel", d.ChannelID, "user", c.userID)
 	}
 	if d.ChannelID != ioChannelID {
-		c.log.Debug("static channel data ignored", "channel", d.ChannelID, "length", len(d.Data))
-		return false, nil
+		return false, sr.static(d.ChannelID, d.Data)
 	}
 	pr := wire.NewReader(d.Data)
 	for pr.Remaining() > 0 {

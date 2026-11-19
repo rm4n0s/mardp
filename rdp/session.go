@@ -184,6 +184,8 @@ type Session struct {
 	// video is the session's video output.
 	video   Video
 	pointer Pointer
+	// channels are the static channels the server reads.
+	channels []*staticChannel
 
 	mu sync.Mutex
 	// reason is why the server ended the session; 0 while it is open or
@@ -383,6 +385,7 @@ func serverCaps(width, height int) caps.Caps {
 func (c *conn) activate(desktopSize func(*Client) (int, int)) (*Session, error) {
 	s := &Session{c: c, client: c.newClient()}
 	s.video.s = s
+	s.openChannels()
 	s.width, s.height = s.client.DesktopWidth, s.client.DesktopHeight
 	if desktopSize != nil {
 		s.width, s.height = desktopSize(&s.client)

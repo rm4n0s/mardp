@@ -20,6 +20,7 @@ import (
 	"github.com/rm4n0s/mardp/rdp/internal/gcc"
 	"github.com/rm4n0s/mardp/rdp/internal/mcs"
 	"github.com/rm4n0s/mardp/rdp/internal/sec"
+	"github.com/rm4n0s/mardp/rdp/internal/svc"
 	"github.com/rm4n0s/mardp/rdp/internal/tpkt"
 	"github.com/rm4n0s/mardp/rdp/internal/wire"
 	"github.com/rm4n0s/mardp/rdp/internal/x224"
@@ -135,6 +136,8 @@ type Client struct {
 
 	// reassembly joins fragmented fast-path updates.
 	reassembly fastpath.Reassembler
+	// joiners join the chunks of each static channel ReadChannel reads.
+	joiners map[uint16]*svc.Joiner
 }
 
 // New returns a client on nc that has not sent anything yet.

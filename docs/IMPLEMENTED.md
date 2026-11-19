@@ -386,3 +386,15 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - Two Glutter workarounds in `scripts/build-app.sh`, the first entries of the new `docs/GLUTTER-ISSUES.md`: `glutter-macos build` forces `CGO_ENABLED=0` (a `go` shim in `PATH` turns cgo back on), and it signs only ad hoc (the app is signed again with `scripts/sign.sh`).
   - `mardp.app` is a new identity for macOS (not the probe's), so its permissions are asked for afresh.
 - **Manual checks:** the checklist on first start, Start, a connection from Remmina, with real clicks: pending, see docs/MANUAL-CHECKS.md.
+
+## 3.1 Static virtual channels (2026-11-19)
+- **Built:**
+  - `rdp/internal/svc`: the Channel PDU Header and its flags; `Split`, which cuts a message into chunks with their headers; `Joiner`, which joins chunks into a message, keeping its buffer and growing it with the chunks that arrive, up to a maximum. Tags `SvcCompressed`, `SvcChunkSequence`, `SvcLengthInvalid`, `SvcMessageTooLarge`, `SvcChunkSizeInvalid`.
+  - `rdp`: the session opens `drdynvc` and `rdpsnd` when the client joined them (`channel.go`), one joiner and one handler each; the reading goroutine hands each whole message to the channel's handler (a handler's error ends the session); `sendChannel` queues a message in chunks of 1,600 bytes, one Send Data Indication each, in one packet. Data on other static channels is ignored as before.
+  - `rdptest`: `ChannelID`, `SendChannel`, `SendChannelChunk` and `ReadChannel`, which joins what the server sends on a channel and reports each chunk's header and length.
+  - SPEC §5.3 says how static channel data is joined, limited and sent.
+- **Proved:**
+  - `svc` tests (coverage 100%): Microsoft's annotated Virtual Channel PDU (MS-RDPBCGR 4.4, its decrypted channel data) read and joined, and written back byte for byte by `Split`; Microsoft's chunking example (3.1.5.2.2.1: 2,062 bytes in chunks of 1,000 give FIRST, none, LAST and 1000/1000/62 bytes); 200 seeded random messages and chunk sizes split and joined; every sequence fault with its route, and the joiner starting over after one.
+  - `rdp` tests (TestSessionIgnores now sends a valid chunk on `rdpsnd` and its unread bytes on `cliprdr`): a 5,000-byte message from rdptest on `drdynvc` reaches the server's handler whole, and its echo arrives in four chunks (1600, 1600, 1600, 200 bytes; FIRST, none, none, LAST; each stating 5,000) that rdptest joins; a short message is one chunk with FIRST and LAST; data on `cliprdr` is ignored and on `rdpsnd` without a handler dropped; a handler's error ends the session with its route; a compressed chunk, a chunk without a first one, a message over 1 MiB, lengths that do not add up and a cut header each end the session with their route.
+- **Differs from the plan:** the chunks the server sends carry no CHANNEL_FLAG_SHOW_PROTOCOL, although 3.1.5.2.1 says chunked data "MUST" have it: Microsoft's own example of chunking and FreeRDP's server leave it out, and FreeRDP's client ignores it (SPEC §5.3). The 1 MiB limit on a message from the client is new (SPEC §5.3).
+- **Manual checks:** none.
