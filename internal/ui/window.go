@@ -25,6 +25,8 @@ var (
 	KeyUser      = m.NewValueKey("user")
 	KeyPassword  = m.NewValueKey("password")
 	KeyActionErr = m.NewValueKey("action error")
+	// KeyDisconnect is the connected session's Disconnect button.
+	KeyDisconnect = m.NewValueKey("disconnect")
 )
 
 // KeyCheck is the key of the button of the checklist's line titled title.
@@ -152,6 +154,8 @@ func (s *windowState) do(fn func(ctx context.Context) error, then func(err error
 func (s *windowState) start() { s.do(s.Widget().b.Start, nil) }
 func (s *windowState) stop()  { s.do(s.Widget().b.Stop, nil) }
 
+func (s *windowState) disconnect() { s.do(s.Widget().b.Disconnect, nil) }
+
 func (s *windowState) openSettings(p host.Permission) {
 	s.do(func(ctx context.Context) error { return s.Widget().b.OpenSettings(ctx, p) }, nil)
 }
@@ -189,7 +193,7 @@ func (s *windowState) Build(bc m.BuildContext) m.Widget {
 	if vm.Checklist != nil || s.editing {
 		children = append(children, s.checklistCard(bc, vm))
 	}
-	children = append(children, s.settingsCard(bc))
+	children = append(children, s.eventsCard(bc, vm), s.settingsCard(bc))
 	return m.NewScaffold(m.ScaffoldOpts{
 		AppBar: m.NewAppBar(m.AppBarOpts{Title: m.NewText("mardp")}),
 		Body: m.NewSingleChildScrollView(m.NewPadding(m.NewEdgeInsetsAll(16),
@@ -219,8 +223,8 @@ func (s *windowState) statusCard(bc m.BuildContext, vm ViewModel) m.Widget {
 	if vm.Fingerprint != "" {
 		rows = append(rows, m.NewText(TextFingerprint), m.NewText(vm.Fingerprint))
 	}
-	if vm.Video != "" {
-		rows = append(rows, m.NewText(TextVideo+vm.Video))
+	for _, l := range vm.Session {
+		rows = append(rows, m.NewText(l))
 	}
 	if vm.ViewOnly {
 		rows = append(rows, m.NewText(TextViewOnly))
@@ -242,10 +246,25 @@ func (s *windowState) statusCard(bc m.BuildContext, vm ViewModel) m.Widget {
 		m.NewFilledButton(onStart, m.NewText(TextStart), m.FilledButtonOpts{Key: KeyStart}),
 		m.NewOutlinedButton(onStop, m.NewText(TextStop), m.OutlinedButtonOpts{Key: KeyStop}),
 	}
+	if vm.Session != nil {
+		buttons = append(buttons, m.NewTextButton(ifThen(!s.busy, s.disconnect), m.NewText(TextDisconnect), m.TextButtonOpts{Key: KeyDisconnect}))
+	}
 	if s.busy {
 		buttons = append(buttons, m.NewCircularProgressIndicator())
 	}
 	rows = append(rows, m.NewRow(buttons, m.RowOpts{Spacing: 8}))
+	return card(rows)
+}
+
+// eventsCard is the recent events, the newest first.
+func (s *windowState) eventsCard(bc m.BuildContext, vm ViewModel) m.Widget {
+	rows := []m.Widget{m.NewText(TextEvents, m.TextOpts{Style: m.ThemeOf(bc).TextTheme.TitleLarge})}
+	if len(vm.Events) == 0 {
+		rows = append(rows, m.NewText(TextNoEvents))
+	}
+	for _, e := range vm.Events {
+		rows = append(rows, m.NewText(e))
+	}
 	return card(rows)
 }
 

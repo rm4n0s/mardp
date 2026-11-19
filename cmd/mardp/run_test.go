@@ -506,7 +506,7 @@ func TestAuthenticator(t *testing.T) {
 	now := time.Unix(1000, 0)
 	guard := config.NewGuard(func() time.Time { return now })
 	var log syncBuffer
-	auth := authenticator(func() config.Settings { return s }, guard, slog.New(slog.NewTextHandler(&log, nil)))
+	auth := authenticator(func() config.Settings { return s }, guard, nil, slog.New(slog.NewTextHandler(&log, nil)))
 	remote := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 50000}
 	steps := []struct {
 		name string

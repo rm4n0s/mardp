@@ -474,6 +474,7 @@ func TestSessionAAC(t *testing.T) {
 				}
 				return
 			}
+			wantSound := map[uint16]string{rdp.AudioTagAAC: "AAC", rdp.AudioTagPCM: "PCM"}[tt.want]
 			for k := range 10 {
 				b, err := a.ReadBlock(ctx)
 				if err != nil {
@@ -492,6 +493,9 @@ func TestSessionAAC(t *testing.T) {
 				if err := a.Confirm(ctx, b, 20*time.Millisecond); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if info, ok := s.h.Session(); !ok || info.Sound != wantSound {
+				t.Errorf("session sound %q, %v; want %q", info.Sound, ok, wantSound)
 			}
 			if err := s.c.Close(); err != nil {
 				t.Fatal(err)

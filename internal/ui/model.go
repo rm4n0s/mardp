@@ -80,6 +80,11 @@ type ViewModel struct {
 	Problem string
 	// Video names the connected session's video path; "" when none.
 	Video string
+	// Session are the lines of the connected session's details and
+	// numbers; nil when no client is connected.
+	Session []string
+	// Events are the lines of the recent events, the newest first.
+	Events []string
 	// CanStart and CanStop say which of Start and Stop is shown enabled.
 	CanStart, CanStop bool
 	// Checklist is shown until everything is done; nil then.
@@ -104,6 +109,10 @@ func NewViewModel(st Status) ViewModel {
 	vm.CanStop = running
 	if st.Server == ServerConnected {
 		vm.Video = st.Video
+		vm.Session = SessionLines(st.Session, st.Video)
+	}
+	for i := len(st.Events) - 1; i >= 0; i-- {
+		vm.Events = append(vm.Events, EventText(st.Events[i]))
 	}
 	vm.CanStart = !running && st.ScreenRecording && st.LoginSet
 	checks := []Check{

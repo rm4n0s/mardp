@@ -35,6 +35,9 @@ const (
 // again with saved settings: when no client is connected (SPEC §12.2).
 const restartPoll = 250 * time.Millisecond
 
+// maxEvents is how many recent events the window shows (SPEC §12.2).
+const maxEvents = 50
+
 // stopTimeout is how long the server may take to end its sessions when the
 // app quits.
 const stopTimeout = 10 * time.Second
@@ -71,6 +74,8 @@ type app struct {
 	// poll is how often the app looks whether the server can start again
 	// with saved settings.
 	poll time.Duration
+	// now is the clock of the events.
+	now func() time.Time
 
 	mu       sync.Mutex
 	settings config.Settings
@@ -81,6 +86,8 @@ type app struct {
 	// restarting that a goroutine waits for it; closed that the app quits
 	// and starts no server anymore.
 	pending, restarting, closed bool
+	// events are the recent events, the oldest first.
+	events []ui.Event
 }
 
 // liveServer is a server that serves until cancel; done is closed when it
@@ -92,7 +99,8 @@ type liveServer struct {
 }
 
 func newApp(folder *config.Folder, s config.Settings, sys host.System, m machine, viewOnly bool, log *slog.Logger) *app {
-	return &app{folder: folder, sys: sys, m: m, viewOnly: viewOnly, log: log, interfaces: net.InterfaceAddrs, poll: restartPoll, settings: s}
+	return &app{folder: folder, sys: sys, m: m, viewOnly: viewOnly, log: log, interfaces: net.InterfaceAddrs, poll: restartPoll, now: time.Now,
+		settings: s}
 }
 
 // current returns the settings now.
@@ -117,6 +125,7 @@ func (a *app) Status() ui.Status {
 	s, r := a.settings, a.run
 	st.User, st.LoginSet, st.Problem = s.User, s.Ready(), a.problem
 	st.Settings, st.Pending = s, a.pending && r != nil
+	st.Events = slices.Clone(a.events)
 	a.mu.Unlock()
 	if r == nil {
 		return st
@@ -125,6 +134,7 @@ func (a *app) Status() ui.Status {
 	if r.hst.Sessions() > 0 {
 		st.Server = ui.ServerConnected
 		st.Video = videoText(r.hst.VideoPath())
+		st.Session, _ = r.hst.Session()
 	}
 	st.Fingerprint, st.ViewOnly = r.fingerprint, !r.post
 	port := r.l.Addr().(*net.TCPAddr).Port
@@ -159,7 +169,7 @@ func (a *app) Start(ctx context.Context) error {
 	}
 	a.starting, a.problem = true, ""
 	a.mu.Unlock()
-	srv, err := prepare(ctx, a.folder, a.current, a.sys, a.m, a.viewOnly, a.log)
+	srv, err := prepare(ctx, a.folder, a.current, a.sys, a.m, a.viewOnly, observer{session: a.sessionEvent, refused: a.refused}, a.log)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.starting = false
@@ -202,6 +212,44 @@ func (a *app) Stop(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return errors.NewErr(TagStopTimedOut, ctx.Err())
+	}
+}
+
+// Disconnect implements ui.Backend: it ends the connected client's
+// session.
+func (a *app) Disconnect(ctx context.Context) error {
+	a.mu.Lock()
+	r := a.run
+	a.mu.Unlock()
+	if r == nil {
+		return nil
+	}
+	return r.hst.Disconnect(ctx)
+}
+
+// sessionEvent records a session that opened or ended.
+func (a *app) sessionEvent(e host.Event) {
+	ev := ui.Event{Kind: ui.EventConnected, Client: e.Client, Remote: e.Remote, User: e.User, Ended: e.Ended}
+	if e.Ended != 0 {
+		ev.Kind = ui.EventDisconnected
+	}
+	a.record(ev)
+}
+
+// refused records a refused login.
+func (a *app) refused(user, remote string) {
+	a.record(ui.Event{Kind: ui.EventLoginFailed, User: user, Remote: remote})
+}
+
+// record adds e to the recent events, now, dropping the oldest beyond
+// maxEvents.
+func (a *app) record(e ui.Event) {
+	e.At = a.now()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.events = append(a.events, e)
+	if n := len(a.events) - maxEvents; n > 0 {
+		a.events = slices.Delete(a.events, 0, n)
 	}
 }
 

@@ -56,6 +56,11 @@ type Status struct {
 	// Pending says that saved settings wait for the next session: the
 	// running server starts again with them once no client is connected.
 	Pending bool
+	// Session is the connected session's details and numbers; its zero
+	// value when no client is connected.
+	Session host.SessionInfo
+	// Events are the recent events, the oldest first.
+	Events []Event
 }
 
 // Equal says whether s and o are the same status.
@@ -63,7 +68,8 @@ func (s Status) Equal(o Status) bool {
 	return s.Server == o.Server && slices.Equal(s.Addresses, o.Addresses) && s.Fingerprint == o.Fingerprint &&
 		s.ViewOnly == o.ViewOnly && s.ScreenRecording == o.ScreenRecording && s.Accessibility == o.Accessibility &&
 		s.User == o.User && s.LoginSet == o.LoginSet && s.Problem == o.Problem && s.Video == o.Video &&
-		s.Settings == o.Settings && slices.Equal(s.Displays, o.Displays) && s.Pending == o.Pending
+		s.Settings == o.Settings && slices.Equal(s.Displays, o.Displays) && s.Pending == o.Pending &&
+		s.Session == o.Session && slices.Equal(s.Events, o.Events)
 }
 
 // Backend is what the window shows and does. Status is called on the UI
@@ -90,4 +96,7 @@ type Backend interface {
 	// NewCertificate replaces the server's certificate; it applies at the
 	// next session, like the settings.
 	NewCertificate(ctx context.Context) error
+	// Disconnect ends the connected client's session; it does nothing when
+	// no client is connected.
+	Disconnect(ctx context.Context) error
 }

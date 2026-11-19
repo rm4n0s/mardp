@@ -205,6 +205,10 @@ type Session struct {
 	reason CloseReason
 	// ended is set when the connection is over.
 	ended bool
+	// stopping is set when the server stops: Close then cancels the
+	// session's context before the write, once the reason is set, so that
+	// the handler finds why when its context ends.
+	stopping bool
 	// input and flow are the sinks the application set; inputGen and
 	// flowGen count the times they were set.
 	input    InputSink
@@ -214,6 +218,33 @@ type Session struct {
 
 	// suppressed is set while the client wants no output.
 	suppressed atomic.Bool
+}
+
+// Stats are counts of a session's output since it opened (SPEC §12.2).
+type Stats struct {
+	// Bytes is the bytes written to the connection.
+	Bytes uint64
+	// Frames is the video frames written: each call of Video.SendFrame or
+	// Video.SendRects that sent something is one.
+	Frames uint64
+	// Acknowledged is the frames of the graphics pipeline the client
+	// acknowledged; 0 on the bitmap path.
+	Acknowledged uint64
+	// Delay is the time from sending a frame of the graphics pipeline to
+	// its acknowledgement, averaged over the last frames; 0 before the
+	// first.
+	Delay time.Duration
+}
+
+// Stats returns the counts of the session's output.
+func (s *Session) Stats() Stats {
+	st := Stats{Bytes: s.wr.bytes.Load(), Frames: s.wr.frames.Load()}
+	if g := s.gfx; g != nil {
+		g.mu.Lock()
+		st.Acknowledged, st.Delay = g.acked, g.delay
+		g.mu.Unlock()
+	}
+	return st
 }
 
 // Client returns what the server knows about the client.
@@ -235,7 +266,11 @@ func (s *Session) Close(ctx context.Context, reason CloseReason) error {
 		return nil
 	}
 	s.reason = reason
+	stopping := s.stopping
 	s.mu.Unlock()
+	if stopping {
+		s.cancel()
+	}
 	// The session's context ends after the write: a handler passes its own
 	// context to Close, which would abandon the write at once.
 	defer s.cancel()
@@ -282,8 +317,9 @@ func (s *Session) closeConn() {
 	}
 }
 
-// closedBy returns why the server ended the session, 0 when it did not.
-func (s *Session) closedBy() CloseReason {
+// ClosedBy returns why the server ended the session: 0 while it is open,
+// and when the client ended it or the connection was lost.
+func (s *Session) ClosedBy() CloseReason {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.reason
@@ -538,7 +574,9 @@ func (c *conn) readShare() (caps.PDU, error) {
 // session's context and waits for h before it returns. When ctx is canceled
 // the session is closed with CloseServerStopped.
 func (c *conn) runSession(ctx context.Context, s *Session, h Handler, o *openSession) error {
-	sctx, cancel := context.WithCancel(ctx)
+	// The session's context ends when the stop below has set the reason,
+	// so that the handler finds it with ClosedBy.
+	sctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 	s.cancel = cancel
 	s.wr = newWriter(c.rw, func(err error) {
@@ -547,6 +585,9 @@ func (c *conn) runSession(ctx context.Context, s *Session, h Handler, o *openSes
 	})
 	go s.wr.run()
 	stop := context.AfterFunc(ctx, func() {
+		s.mu.Lock()
+		s.stopping = true
+		s.mu.Unlock()
 		if err := s.Close(context.Background(), CloseServerStopped); err != nil {
 			c.log.Debug("closing the session as the server stops", "err", err)
 		}
@@ -571,7 +612,7 @@ func (c *conn) runSession(ctx context.Context, s *Session, h Handler, o *openSes
 	var wg sync.WaitGroup
 	// A session replaced or stopped before the one it replaced has ended
 	// never reaches the application.
-	if sctx.Err() == nil {
+	if ctx.Err() == nil && sctx.Err() == nil {
 		s.startDVC(s.dvcWait)
 		s.startAudio(s.audioFormats)
 		s.startGFX()
@@ -599,7 +640,7 @@ func (c *conn) readSession(s *Session) error {
 	for {
 		k, f, err := tpkt.ReadFrame(c.rw, c.buf)
 		if err != nil {
-			if r := s.closedBy(); r != 0 {
+			if r := s.ClosedBy(); r != 0 {
 				c.log.Info("session closed", "reason", r.String())
 				return nil
 			}

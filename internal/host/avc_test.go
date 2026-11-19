@@ -517,7 +517,7 @@ func keyWithin(t *testing.T, a *avcClient, n int, what string) {
 func TestSessionPathSwitch(t *testing.T) {
 	video := &PatternVideo{}
 	parts := Parts{Screen: &PatternScreen{}, Video: video}
-	s := serve(t, parts, Options{VideoFPS: 30, MaxBitrate: 500_000}, 640, 360)
+	s := serve(t, parts, Options{VideoFPS: 30, MaxBitrate: 500_000, statsEvery: 50 * time.Millisecond}, 640, 360)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	// Bitmaps first (StartGFX skips their updates; ReadUpdate would skip
@@ -547,6 +547,10 @@ func TestSessionPathSwitch(t *testing.T) {
 	}
 	if p := s.h.VideoPath(); p != rdp.VideoAVC420 {
 		t.Errorf("path %v", p)
+	}
+	// The frames the client acknowledged, and how long it took.
+	if info, ok := s.h.Session(); !ok || info.Video != rdp.VideoAVC420 || info.FPS <= 0 || info.Delay <= 0 || info.Bitrate <= 0 {
+		t.Errorf("session %+v, %v", info, ok)
 	}
 
 	// Without H.264 the session goes back to tiles through the pipeline.

@@ -204,11 +204,19 @@ func TestGFXBacklog(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitBacklog(t, v, Backlog{Frames: 2, Oldest: 40 * time.Millisecond})
+	if st := s.Stats(); st.Acknowledged != 1 || st.Delay != 50*time.Millisecond {
+		t.Errorf("stats after frame 1's acknowledgement %+v", st)
+	}
 	// Frame 3's acknowledgement covers frame 2.
 	if err := c.AckFrame(ctx, ch, 1, 3, 3); err != nil {
 		t.Fatal(err)
 	}
 	waitBacklog(t, v, Backlog{})
+	// Frame 3 was sent 30 ms ago: the average moves an eighth of the way.
+	if st := s.Stats(); st.Acknowledged != 3 || st.Delay != 50*time.Millisecond-20*time.Millisecond/delayWeight ||
+		st.Frames < 3 || st.Bytes == 0 {
+		t.Errorf("stats after frame 3's acknowledgement %+v", st)
+	}
 	if err := c.AckFrame(ctx, ch, 1, 9, 3); err != nil {
 		t.Fatal(err)
 	}

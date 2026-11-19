@@ -79,11 +79,17 @@ type Options struct {
 	// mardp that ends without unmuting it unmutes it at its next start
 	// (RecoverOutput); nil keeps no marker.
 	MuteMarker MuteMarker
+	// OnEvent is told when a session opens and when it ends, on the
+	// session's goroutine; nil is told nothing.
+	OnEvent func(Event)
 
 	// now is the clock of the double clicks; nil is time.Now.
 	now func() time.Time
 	// rateEvery is the H.264 path's rate period; 0 is defaultRateEvery.
 	rateEvery time.Duration
+	// statsEvery is how often a session's numbers are taken; 0 is
+	// defaultStatsEvery.
+	statsEvery time.Duration
 }
 
 // Host runs the sessions of an rdp.Server: it is its rdp.Handler, and its
@@ -94,8 +100,8 @@ type Host struct {
 	log   *slog.Logger
 	// open counts the sessions running now.
 	open atomic.Int64
-	// video is the video of the session that opened last, while it runs.
-	video atomic.Pointer[rdp.Video]
+	// cur is the session that opened last, while it runs.
+	cur atomic.Pointer[live]
 	// mute mutes Parts.Output while sessions get the sound.
 	mute muter
 }
@@ -117,6 +123,9 @@ func New(parts Parts, opts Options) (*Host, error) {
 	opts.MaxBitrate = max(opts.MaxBitrate, MinBitrate)
 	if opts.rateEvery <= 0 {
 		opts.rateEvery = defaultRateEvery
+	}
+	if opts.statsEvery <= 0 {
+		opts.statsEvery = defaultStatsEvery
 	}
 	if opts.MaxHeight < 0 {
 		opts.MaxHeight = 0
@@ -163,8 +172,8 @@ func (h *Host) Sessions() int { return int(h.open.Load()) }
 // VideoPath is the video path of the session running now (SPEC §9.1), for
 // the window; 0 when none runs.
 func (h *Host) VideoPath() rdp.VideoPath {
-	if v := h.video.Load(); v != nil {
-		return v.Path()
+	if l := h.cur.Load(); l != nil {
+		return l.s.Video().Path()
 	}
 	return 0
 }
@@ -189,9 +198,8 @@ func fitSize(dw, dh, cw, ch, maxHeight int) (width, height int) {
 func (h *Host) SessionOpened(ctx context.Context, s *rdp.Session) {
 	h.open.Add(1)
 	defer h.open.Add(-1)
-	v := s.Video()
-	h.video.Store(v)
-	defer h.video.CompareAndSwap(v, nil)
+	l, untrack := h.track(ctx, s)
+	defer untrack()
 	c := s.Client()
 	log := h.log.With("client", c.Name, "remote", c.Remote)
 	d, err := h.parts.Screen.Display(ctx)
@@ -243,7 +251,7 @@ func (h *Host) SessionOpened(ctx context.Context, s *rdp.Session) {
 
 	if h.parts.Sound != nil {
 		var wg sync.WaitGroup
-		wg.Go(func() { h.runSound(ctx, s, log) })
+		wg.Go(func() { h.runSound(ctx, s, l, log) })
 		defer wg.Wait()
 	}
 

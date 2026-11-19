@@ -254,3 +254,20 @@ The tests drive the settings card through Glutter's test binding. This check loo
 9. Set "Frame rate cap" back to 60, save, press Stop and close the window.
 
 Tell me what did not look or behave as expected, with a screenshot of the settings card if something looks wrong.
+
+## 5.2 The session's numbers and the recent events (SPEC §12.2)
+
+The tests check the numbers against the test client. This check compares them with a real Remmina session.
+
+1. Open the app with a log and press Start:
+
+   ```bash
+   open -n build/mardp.app --args -log-file /tmp/mardp.log
+   ```
+
+2. Connect with Remmina using a wrong password once, then the right one. Expected: "Recent events" shows the failed login, then the connection, the newest first.
+3. Play a video on the Mac. Expected: the status card shows Remmina's computer name and address, the desktop size, "H.264 (AVC420) through the graphics pipeline", "Sound: AAC" (or PCM), about 60 frames a second (30 with the frame rate cap at 30), a bitrate of a few Mbit/s, and a delay of tens of milliseconds. The numbers change about once a second.
+4. Press "Disconnect". Expected: Remmina closes saying the server ended the session; the events show "disconnected from this window".
+5. Connect again and quit Remmina. Expected: "the client disconnected".
+
+Tell me the numbers you saw, and anything that looked wrong.

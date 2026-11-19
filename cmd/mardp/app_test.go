@@ -16,6 +16,7 @@ import (
 	"github.com/rm4n0s/mardp/internal/host"
 	"github.com/rm4n0s/mardp/internal/ui"
 	"github.com/rm4n0s/mardp/rdp"
+	"github.com/rm4n0s/mardp/rdp/rdptest"
 )
 
 // newTestApp is the backend of h's folder on m.
@@ -585,5 +586,96 @@ func TestAppClose(t *testing.T) {
 	}
 	if st := a.Status(); st.Server != ui.ServerStopped {
 		t.Errorf("started after closing: %+v", st)
+	}
+}
+
+// TestAppSessionAndEvents: the connected session's details, Disconnect,
+// and the recent events: a refused login, the connections and why each
+// session ended.
+func TestAppSessionAndEvents(t *testing.T) {
+	h := newHome(t, nil)
+	m := newFakeMac(host.ScreenRecording, host.Accessibility)
+	a := newTestApp(t, h, m, false, slog.New(slog.DiscardHandler))
+	at := time.Date(2026, 11, 19, 14, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return at }
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := a.Disconnect(ctx); err != nil {
+		t.Errorf("Disconnect with the server stopped: %v", err)
+	}
+	if err := a.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Disconnect(ctx); err != nil {
+		t.Errorf("Disconnect without a session: %v", err)
+	}
+	if _, err := connect(t, h, testUser, "wrong password"); err == nil {
+		t.Fatal("a wrong password logged in")
+	}
+	session := func() *rdptest.Client {
+		c, err := connect(t, h, testUser, testPassword)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Activate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, "the session", func() bool { return a.Status().Server == ui.ServerConnected })
+		return c
+	}
+	c := session()
+	st := a.Status()
+	if s := st.Session; s.Client != rdptest.DefaultName || s.Remote == "" || s.Width <= 0 || s.Height <= 0 || s.Video != rdp.VideoBitmaps {
+		t.Errorf("session %+v", s)
+	}
+	remote := st.Session.Remote
+	if err := a.Disconnect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, info, err := c.AwaitDisconnect(ctx); err != nil || info == 0 {
+		t.Fatalf("the client was not told: %d %v", info, err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the session's end", func() bool { return len(a.Status().Events) == 3 })
+	if st := a.Status(); st.Server != ui.ServerListening || st.Session != (host.SessionInfo{}) {
+		t.Errorf("after Disconnect %+v", st)
+	}
+
+	// A session the server's stop ends.
+	session()
+	if err := a.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := a.Status().Events
+	host1 := func(remote string) string { h, _, _ := net.SplitHostPort(remote); return h }
+	for i := range got {
+		if host1(got[i].Remote) != host1(remote) {
+			t.Errorf("event %d from %q", i, got[i].Remote)
+		}
+		got[i].Remote = ""
+	}
+	conn := ui.Event{At: at, Kind: ui.EventConnected, Client: rdptest.DefaultName, User: testUser}
+	byOwner, stopped := conn, conn
+	byOwner.Kind, byOwner.Ended = ui.EventDisconnected, host.EndedByOwner
+	stopped.Kind, stopped.Ended = ui.EventDisconnected, host.EndedServerStopped
+	want := []ui.Event{{At: at, Kind: ui.EventLoginFailed, User: testUser}, conn, byOwner, conn, stopped}
+	if !slices.Equal(got, want) {
+		t.Errorf("events\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// TestAppEventsLimit keeps the newest maxEvents.
+func TestAppEventsLimit(t *testing.T) {
+	h := newHome(t, nil)
+	m := newFakeMac(host.ScreenRecording, host.Accessibility)
+	a := newTestApp(t, h, m, false, slog.New(slog.DiscardHandler))
+	for i := range maxEvents + 10 {
+		a.refused("user"+strconv.Itoa(i), "10.0.0.1:1")
+	}
+	ev := a.Status().Events
+	if len(ev) != maxEvents || ev[0].User != "user10" || ev[len(ev)-1].User != "user"+strconv.Itoa(maxEvents+9) {
+		t.Errorf("%d events, from %q to %q", len(ev), ev[0].User, ev[len(ev)-1].User)
 	}
 }

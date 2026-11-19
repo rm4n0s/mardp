@@ -156,6 +156,11 @@ func TestBitmaps(t *testing.T) {
 			if !bytes.Equal(screen.Pix, want.Pix) {
 				t.Error("the rectangle was not drawn")
 			}
+			// Updates sent are frames (a waiting update can take in the next);
+			// bitmaps are not acknowledged.
+			if st := s.Stats(); st.Frames == 0 || st.Bytes == 0 || st.Acknowledged != 0 || st.Delay != 0 {
+				t.Errorf("stats %+v", st)
+			}
 		})
 	}
 }

@@ -24,15 +24,21 @@ import (
 type sessions struct {
 	opened chan *Session
 	ended  chan *Session
+	// reasons are what ClosedBy said when each session's context ended.
+	reasons chan CloseReason
 }
 
 func newSessions() *sessions {
-	return &sessions{opened: make(chan *Session, 8), ended: make(chan *Session, 8)}
+	return &sessions{opened: make(chan *Session, 8), ended: make(chan *Session, 8), reasons: make(chan CloseReason, 8)}
 }
 
 func (h *sessions) SessionOpened(ctx context.Context, s *Session) {
 	h.opened <- s
 	<-ctx.Done()
+	select {
+	case h.reasons <- s.ClosedBy():
+	default:
+	}
 	h.ended <- s
 }
 
@@ -199,12 +205,18 @@ func TestSessionClose(t *testing.T) {
 			}
 			c, nc := ts.open(t, opts)
 			s := h.next(t)
+			if r := s.ClosedBy(); r != 0 {
+				t.Errorf("ClosedBy %v while open", r)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := s.Close(ctx, tt.reason); err != nil {
 				t.Fatal(err)
 			}
 			h.waitEnded(t)
+			if r := s.ClosedBy(); r != tt.reason {
+				t.Errorf("ClosedBy %v, want %v", r, tt.reason)
+			}
 			reason, code, err := c.AwaitDisconnect(ctx)
 			if err != nil {
 				t.Fatal(err)
@@ -269,6 +281,9 @@ func TestClientDisconnects(t *testing.T) {
 	if err := s.Close(ctx, CloseByHost); err != nil {
 		t.Errorf("Close after the end: %v", err)
 	}
+	if r := s.ClosedBy(); r != 0 {
+		t.Errorf("ClosedBy %v, want 0: the client ended it", r)
+	}
 }
 
 func TestClientHangsUp(t *testing.T) {
@@ -303,6 +318,10 @@ func TestServerStopClosesSessions(t *testing.T) {
 	h.next(t)
 	cancel()
 	h.waitEnded(t)
+	// The handler finds why when its context ends.
+	if r := <-h.reasons; r != CloseServerStopped {
+		t.Errorf("ClosedBy %v when the context ended", r)
+	}
 	cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer ccancel()
 	reason, code, err := c.AwaitDisconnect(cctx)

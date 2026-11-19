@@ -3,6 +3,7 @@ package rdp
 import (
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/rm4n0s/errors"
 
@@ -81,6 +82,10 @@ type writer struct {
 	halted sync.Once
 	exited chan struct{}
 
+	// bytes counts the bytes written; frames the video queue's packets
+	// written, a frame each.
+	bytes, frames atomic.Uint64
+
 	mu  sync.Mutex
 	err error // why the writer stopped, nil when it was halted
 }
@@ -150,6 +155,11 @@ func (wr *writer) run() {
 		var err error
 		if _, werr := wr.out.Write(p.w.Bytes()); werr != nil {
 			err = errors.NewErr(TagWriteFailed, werr).SetMetadata("length", p.w.Len(), "queue", q.String())
+		} else {
+			wr.bytes.Add(uint64(p.w.Len()))
+			if q == queueVideo {
+				wr.frames.Add(1)
+			}
 		}
 		if p.done != nil {
 			p.done <- err

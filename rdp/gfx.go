@@ -44,6 +44,10 @@ const gfxChannelName = "Microsoft::Windows::RDS::Graphics"
 // to the output at 0, 0 (SPEC §9.1).
 const gfxSurfaceID uint16 = 1
 
+// delayWeight is the weight of the average of the frames' delay: each
+// acknowledgement moves it by 1/delayWeight of the difference.
+const delayWeight = 8
+
 // gfxSentFrame is a frame the client has not acknowledged yet.
 type gfxSentFrame struct {
 	id uint32
@@ -74,6 +78,10 @@ type gfxPipeline struct {
 	// suspended is set while the client has suspended acknowledgements.
 	unacked   []gfxSentFrame
 	suspended bool
+	// acked counts the frames acknowledged; delay is the time from a
+	// frame's send to its acknowledgement, averaged over the last frames.
+	acked uint64
+	delay time.Duration
 	// raw and wrapped build the messages, region and quant an H.264
 	// frame's metablock; guarded by mu.
 	raw, wrapped wire.Writer
@@ -218,6 +226,13 @@ func (g *gfxPipeline) ack(p gfx.PDU) {
 	g.suspended = false
 	for i, f := range g.unacked {
 		if f.id == p.FrameID {
+			g.acked += uint64(i + 1)
+			d := g.now().Sub(f.at)
+			if g.delay == 0 {
+				g.delay = d
+			} else {
+				g.delay += (d - g.delay) / delayWeight
+			}
 			g.unacked = append(g.unacked[:0], g.unacked[i+1:]...)
 			return
 		}

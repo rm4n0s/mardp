@@ -29,6 +29,8 @@ type fakeBackend struct {
 	saveErr error
 	saved   []config.Settings
 	certs   int
+	// disconnects counts Disconnect.
+	disconnects int
 }
 
 func (f *fakeBackend) Status() Status {
@@ -36,6 +38,7 @@ func (f *fakeBackend) Status() Status {
 	defer f.mu.Unlock()
 	st := f.st
 	st.Addresses = slices.Clone(f.st.Addresses)
+	st.Events = slices.Clone(f.st.Events)
 	return st
 }
 
@@ -103,6 +106,20 @@ func (f *fakeBackend) NewCertificate(ctx context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.certs++
+	return nil
+}
+
+// Disconnect ends the session, which the events say.
+func (f *fakeBackend) Disconnect(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disconnects++
+	if f.st.Server == ServerConnected {
+		info := f.st.Session
+		f.st.Server, f.st.Session, f.st.Video = ServerListening, host.SessionInfo{}, ""
+		f.st.Events = append(f.st.Events, Event{At: info.Since.Add(time.Minute), Kind: EventDisconnected,
+			Client: info.Client, Remote: info.Remote, Ended: host.EndedByOwner})
+	}
 	return nil
 }
 

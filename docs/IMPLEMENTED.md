@@ -714,3 +714,19 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - Nothing is applied to a running session: the plan's "at the next session" is a restart of the server once no client is connected, which keeps one place that reads the settings (prepare).
   - The settings card is always shown, under the status and the checklist.
 - **Manual checks:** the card in the real window, and a restart for saved settings with Remmina: pending, see docs/MANUAL-CHECKS.md (5.1).
+
+## 5.2 Status and events (2026-11-19)
+- **Built:**
+  - `rdp`: `Session.Stats` (bytes and frames written, frames acknowledged on the graphics pipeline, the smoothed acknowledgement delay) and `Session.ClosedBy`, exported from the former `closedBy`. When the server stops, a session's context now ends only after the stop has set the reason (it no longer derives from the server's context), so the handler always finds `CloseServerStopped`; before, it could see the context end first and take the session as ended by the client.
+  - `internal/host`: `Host.Session` returns the running session's details and numbers, taken once a second from `Stats`, and the sound format once the sound starts. `Host.Disconnect` closes the session for the owner. `Options.OnEvent` is told when a session opens and when it ends, with why (`host.Ended`, from `ClosedBy` and whether Disconnect ended it).
+  - `cmd/mardp`: the app keeps the last 50 events (connections, disconnections, refused logins from the authenticator), fills `Status.Session` and `Status.Events`, and implements `Backend.Disconnect`. `prepare` takes an `observer` for the events; the headless server passes none.
+  - `internal/ui`: the session's lines and a Disconnect button in the status card, and a "Recent events" card, the newest first.
+  - SPEC §12.2: the status and events as built.
+- **Proved:**
+  - `gluttertest`, with a fake backend whose state changes: the session's lines and the events shown, the newest first; the numbers and the video path following the backend; Disconnect ending the session and its event shown; "Nothing yet." and no Disconnect without a session.
+  - Unit tests of the session's lines and of every event's text.
+  - `internal/host`, with a real `rdp` server and the test client: the details and numbers on the bitmap path; the frames, bitrate and delay on the H.264 path; the sound format, AAC or PCM; the events of a session that the client, the owner (Disconnect, with Set Error Info to the client) and a failed capture end; Disconnect without a session.
+  - `rdp`: the stats on the bitmap and graphics paths; `ClosedBy` for each close reason, and 0 while open and when the client disconnects; `ClosedBy` is `CloseServerStopped` when the handler's context ends because the server stops.
+  - `cmd/mardp`, with a temporary `MARDP_HOME`: a refused login, a session's details, Disconnect, and a session the server's stop ends, in the events in order; the limit of 50.
+- **Differs from the plan:** the plan's fake host is the fake backend of the window's tests; the real host is tested with the test client instead.
+- **Manual checks:** the numbers with Remmina: pending, see docs/MANUAL-CHECKS.md (5.2).

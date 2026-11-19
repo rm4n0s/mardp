@@ -127,11 +127,20 @@ func serve(ctx context.Context, getenv func(string) string, m machine, viewOnly 
 	if err != nil {
 		return err
 	}
-	srv, err := prepare(ctx, folder, func() config.Settings { return s }, sys, m, viewOnly, log)
+	srv, err := prepare(ctx, folder, func() config.Settings { return s }, sys, m, viewOnly, observer{}, log)
 	if err != nil {
 		return err
 	}
 	return srv.srv.Serve(ctx, srv.l)
+}
+
+// observer is told what a server does, for the window's recent events
+// (SPEC §12.2); a nil func is told nothing.
+type observer struct {
+	// session is told when a session opens and when it ends.
+	session func(host.Event)
+	// refused is told of a refused login.
+	refused func(user, remote string)
 }
 
 // server is a server that listens, ready to serve.
@@ -153,9 +162,10 @@ type server struct {
 // Accessibility or with viewOnly (SPEC §7.1, §7.3, §8, §13). It unmutes
 // the output a mardp that ended left muted, and, when the sound plays on
 // the client only, gives the host the output to mute (SPEC §10.1). Logins are
-// checked against what settings returns at the time.
+// checked against what settings returns at the time; obs is told of the
+// sessions and the refused logins.
 func prepare(ctx context.Context, folder *config.Folder, settings func() config.Settings, sys host.System,
-	m machine, viewOnly bool, log *slog.Logger) (*server, error) {
+	m machine, viewOnly bool, obs observer, log *slog.Logger) (*server, error) {
 	s := settings()
 	if !s.Ready() {
 		return nil, errors.New(TagNoPassword, "no user name and password are set: set them in mardp's window")
@@ -188,13 +198,13 @@ func prepare(ctx context.Context, folder *config.Folder, settings func() config.
 		parts.Output = out
 	}
 	hst, err := host.New(parts, host.Options{VideoFPS: s.MaxFPS, MaxBitrate: s.MaxBitrate, MaxHeight: s.MaxHeight,
-		MuteMarker: folder, Logger: log})
+		MuteMarker: folder, Logger: log, OnEvent: obs.session})
 	if err != nil {
 		return nil, err
 	}
 	srv, err := rdp.NewServer(rdp.Config{
 		Certificate:   cert.TLS,
-		Authenticator: authenticator(settings, config.NewGuard(nil), log),
+		Authenticator: authenticator(settings, config.NewGuard(nil), obs.refused, log),
 		Handler:       hst,
 		DesktopSize:   hst.DesktopSize,
 		AudioFormats:  hst.AudioFormats(),
@@ -214,8 +224,8 @@ func prepare(ctx context.Context, folder *config.Folder, settings func() config.
 
 // authenticator checks a login against the settings that settings returns,
 // with guard making an address wait after failed logins (SPEC §8.2). It logs
-// a refusal, never the password.
-func authenticator(settings func() config.Settings, guard *config.Guard, log *slog.Logger) rdp.Authenticator {
+// a refusal, never the password, and tells refused of it; refused may be nil.
+func authenticator(settings func() config.Settings, guard *config.Guard, refused func(user, remote string), log *slog.Logger) rdp.Authenticator {
 	return func(r rdp.LoginRequest) bool {
 		remote := ""
 		if r.Remote != nil {
@@ -224,6 +234,9 @@ func authenticator(settings func() config.Settings, guard *config.Guard, log *sl
 		res := guard.Login(remote, func() bool { return settings().CheckLogin(r.User, r.Password) })
 		if !res.OK {
 			log.Warn("login refused", "user", r.User, "remote", remote, "failures", res.Failures, "wait", res.Wait)
+			if refused != nil {
+				refused(r.User, remote)
+			}
 		}
 		return res.OK
 	}
