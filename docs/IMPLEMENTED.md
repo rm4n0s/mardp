@@ -775,3 +775,16 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - `gluttertest`: the three messages shown, and gone once over.
 - **Differs from the plan:** the plan names the two settings only. Also built: the setting follows an item the user takes out in System Settings, and an item waiting for approval is said in the window.
 - **Manual checks:** logging out and in with both settings on, and the login items in System Settings: pending, see docs/MANUAL-CHECKS.md (5.5).
+
+## 5.6 The bundle and the README (2026-11-19)
+- **Built:**
+  - `scripts/icon`: draws the app's icon, 1024 pixels with macOS's margins and smooth edges; `scripts/build-app.sh` passes it to `glutter-macos -icon`.
+  - `scripts/build-app.sh`: builds for macOS 14 (D20): the executable's deployment target through the `go` shim, `LSMinimumSystemVersion` written before signing, and a check of the executable's `minos`. Until now the bundle said 12.0 and the executable needed the building Mac's macOS (27.2).
+  - The README: requirements, installing, the first start and its checklist, macOS's recurring Screen Recording question (R6), using the app, the screen lock while away (R3 is still pending, so it says to turn the lock off), the Linux side (`openh264`, not `noopenh264`; R5), the Remmina profile (TLS, "GFX AVC420 (32 bpp)", sound, the fingerprint), what mardp does not protect against (§8.3), the signing identity.
+  - SPEC §4.1: the row of `scripts/icon` (standard library only), which `internal/archtest` checks; SPEC §16 as built.
+- **Proved:**
+  - A clone of the repository with nothing else in it builds `build/mardp.app` with `scripts/build-app.sh`; the bundle passes `codesign --verify --deep --strict`, has the icon, `minos` 14.0 and `LSMinimumSystemVersion` 14.0, prints its version with `-version`, and starts (with `MARDP_HOME` in a temporary folder, its log says it started; stopped with SIGTERM, exit 0).
+  - A compile of everything for macOS 14 with `-Wunguarded-availability` gives no warning: nothing newer than macOS 14 is called unguarded.
+  - The icon's test: its size, the clear margin and corners, the white frame and foot, the blue body.
+- **Differs from the plan:** also built: the minimum macOS of the bundle (a Glutter workaround, docs/GLUTTER-ISSUES.md), and a row of the package table for the icon's program.
+- **Manual checks:** the icon in the Dock and Finder, and reading the README: pending, see docs/MANUAL-CHECKS.md (5.6).

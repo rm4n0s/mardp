@@ -25,3 +25,8 @@ What mardp works around in Glutter (CLAUDE.md, "Glutter"). Each entry says what 
 - **What:** `gluttertest.FakeDesktop` serves the tray over a fake D-Bus (StatusNotifierItem), so a test of a `desktop.SystemTray` must run as on Linux; without it the tray reports `TrayUnavailable` and the test fails. The macOS tray (`NSStatusItem`) has no fake.
 - **Workaround:** the window's tests set the target platform to Linux (`internal/ui/ui_test.go`, `newDesktopTester`, `// Glutter:` comment there); the icon in the macOS menu bar is a manual check (docs/MANUAL-CHECKS.md, 5.3).
 - **Fix in Glutter:** a fake of the macOS tray in `gluttertest`, or a fake tray that does not depend on the platform.
+
+## glutter-macos builds for the macOS that builds
+- **What:** `glutter-macos build` writes `LSMinimumSystemVersion` 12.0 into `Info.plist` but leaves the deployment target of the cgo code and the link to clang, whose default is the macOS of the building machine (27.2 on the owner's Mac), so the executable does not open on older systems. It has no flag for the minimum either; mardp's is macOS 14 (SPEC D20).
+- **Workaround:** `scripts/build-app.sh` sets `MACOSX_DEPLOYMENT_TARGET=14.0` in its `go` shim, writes `LSMinimumSystemVersion` 14.0 with `plutil` before signing, and checks the executable's `minos` (`# Glutter:` comments there).
+- **Fix in Glutter:** build with `MACOSX_DEPLOYMENT_TARGET` set to the minimum it writes, and take `-min-macos` for both.

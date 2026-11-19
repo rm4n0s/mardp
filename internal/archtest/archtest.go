@@ -218,6 +218,11 @@ func forbidden(module, dir, imp string, test bool) string {
 			return "internal/ui imports only internal/host and internal/config of mardp (SPEC §4.1)"
 		}
 		return ""
+	case under(dir, "scripts"):
+		if k != kindStd {
+			return "the Go programs of scripts/ import only the standard library (SPEC §4.1)"
+		}
+		return ""
 	case dir == "internal/archtest":
 		if k == kindOwn {
 			return "internal/archtest imports nothing of mardp"

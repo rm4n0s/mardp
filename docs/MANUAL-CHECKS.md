@@ -335,3 +335,18 @@ The tests check the setting's logic with a fake of macOS's login items; no test 
 5. Turn "Open the app at login" on again and save; then turn it off and save. Expected: mardp is in the list, then gone. Turn "Start the server when the app opens" off and save if you do not want it.
 
 Tell me what did not look or behave as expected.
+
+## 5.6 The bundle and the README (SPEC §16)
+
+1. Build the app and open it:
+
+   ```bash
+   scripts/build-app.sh
+   ```
+
+   ```bash
+   open -n build/mardp.app
+   ```
+
+2. Expected: the Dock and Finder show mardp's icon (a white screen on a stand with a pointer, on a blue rounded square), not Glutter's.
+3. Read the README's "Installing", "The Remmina profile" and "What mardp does not protect against", and tell me what is unclear or does not match what you see.

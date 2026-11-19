@@ -65,6 +65,10 @@ func TestForbidden(t *testing.T) {
 		{"spikes cgo", "spikes/probe", "C", false, `import "C"`},
 		{"archtest stdlib", "internal/archtest", "go/parser", false, ""},
 		{"archtest own", "internal/archtest", testModule + "/rdp", false, "nothing of mardp"},
+		{"scripts stdlib", "scripts/icon", "image/png", false, ""},
+		{"scripts own", "scripts/icon", testModule + "/internal/ui", false, "only the standard library"},
+		{"scripts errors", "scripts/icon", errorsModule, false, "only the standard library"},
+		{"scripts glutter", "scripts/icon", glutterModule, false, "Glutter"},
 		{"unknown package", "internal/foo", "fmt", false, "not in the table"},
 		{"module root", ".", "fmt", false, "module root"},
 	}

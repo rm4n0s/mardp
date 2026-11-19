@@ -86,6 +86,7 @@ Features planned after 1.0 are in §17 (M7): Network Level Authentication, the c
 | `internal/mac/system` | Permissions (Screen Recording, Accessibility), keeping the display awake, the list of displays, the sound output's mute (Core Audio), the notice of a logout or shutdown | cgo, standard library, `errors`, `internal/host` (the types it implements) |
 | `internal/config` | Settings file, password hash, TLS certificate | standard library, `errors` |
 | `internal/ui` | The Glutter app: window, tray, settings. The only package that imports Glutter | `glutter`, `internal/host`, `internal/config` |
+| `scripts/icon` | A program that draws the app's icon for `scripts/build-app.sh` (§16) | standard library |
 | `internal/archtest` | Tests that check this table: who may import what, and that `import "C"` appears only under `internal/mac` | |
 
 Rules:
@@ -501,6 +502,7 @@ Kept in `docs/MANUAL-CHECKS.md` with the exact steps: connect from Remmina; watc
 - For the tests with a real client (§15.3): UTM and a Fedora guest, downloaded after the owner agrees to each download; about 4 CPUs, 4 GB of memory and 25 GB of disk for the machine.
 - macOS 14 or newer on the Mac that runs mardp, Apple silicon or Intel (D20). Development and every measurement happen on the owner's Apple silicon Mac; Intel is built but not tested.
 - Build: `go build ./...`; the app: Glutter's `glutter-macos build`, wrapped by `scripts/build-app.sh`, which also signs with the development identity (§7.1).
+  - As built in 5.6: `scripts/build-app.sh` gives the bundle the icon `scripts/icon` draws (a white screen on a stand, with a pointer, on a blue rounded square), builds for macOS 14 (the executable's `minos` and `LSMinimumSystemVersion`; it fails if the executable needs a newer one), and signs it. The bundle's version is the last version tag; `mardp -version` prints the version Go records from git, the same at a tagged commit. The README covers installing, the permissions and the recurring Screen Recording question, the Linux side and the Remmina profile, the screen lock while away, the signing identity and §8.3.
 - On Linux, `go build ./...` and `go test ./...` pass: the library and the pipeline are tested there, the Mac parts are stubs.
 - The client: a current Remmina, whose FreeRDP is built with H.264 for the video path. On Fedora that is the packaged FreeRDP with Cisco's `openh264` installed, not the stub `noopenh264` (§19 R5).
 
