@@ -28,6 +28,14 @@ type Display struct {
 	Main bool
 }
 
+// Image is rdp.Image, so the packages under internal/mac, which import
+// only internal/host of mardp (SPEC §4.1), can make frames.
+type Image = rdp.Image
+
+// MaxDesktopSide is rdp.MaxDesktopSide: the largest width or height of a
+// desktop.
+const MaxDesktopSide = rdp.MaxDesktopSide
+
 // Frame is one captured picture for the bitmap paths (SPEC §9.6).
 type Frame struct {
 	// Image is the display's picture at the session's desktop size.

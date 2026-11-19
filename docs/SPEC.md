@@ -199,7 +199,8 @@ macOS ties these permissions to the app's code signature. A build that is signed
 
 - The captured display is the main display, or the one chosen in the settings. A display is remembered by its UUID (`CGDisplayCreateUUIDFromDisplayID`), never by its display ID: the ID changes when the monitor comes back from sleep (§19 R1).
 - While a client is connected mardp wakes the display (`IOPMAssertionDeclareUserActivity`) and holds a power assertion that keeps it awake (`PreventUserIdleDisplaySleep`); the assertion is released when the session ends. A display that was asleep is awake as soon as the first call returns, and ScreenCaptureKit delivers frames from it at once (§19 R1).
-- Waking can make macOS take the monitor away and add it back with a new display ID, a moment after the wake. A stream on the old display then stops with `SCStreamErrorDomain` -3815 ("failed to find any displays or windows to capture"). So the capture follows display changes (`CGDisplayRegisterReconfigurationCallback`): when the captured display goes away, or the stream stops with that error, it finds the display again by its UUID, or the main display, and starts a new stream at the session's size. The client sees a pause and then a key frame, not a dropped connection. The same path covers a monitor that is unplugged and plugged in again.
+- Waking can make macOS take the monitor away and add it back with a new display ID, a moment after the wake. A stream on the old display then stops with `SCStreamErrorDomain` -3815 ("failed to find any displays or windows to capture"). So the capture follows display changes: when the stream stops with that error, or a check once a second finds that the captured display ID is no longer active or no longer the display with the UUID, it finds the display again by its UUID, or the main display, and starts a new stream at the session's size. (A check, not `CGDisplayRegisterReconfigurationCallback`: that callback arrives through the main thread's run loop, and the error comes first anyway, 0.7 s after the change in R1.) Streams that stop for other passing reasons (the capture service's connection lost, the system stopping the stream) are started again too; five failed starts or quick stops in a row end the session. The client sees a pause and then a key frame, not a dropped connection. The same path covers a monitor that is unplugged and plugged in again.
+- The capture never asks for Screen Recording: it checks the permission first (`CGPreflightScreenCaptureAccess`) and ends with `CapturePermissionDenied` without it, so only the checklist's button shows macOS's question. A stream that macOS stops for the permission (SCStreamError -3801) ends the same way (§19 R6).
 - The pointer is not drawn into the captured frames. Its shape and position are sent separately (§10.3), so the client draws it with no delay.
 - mardp's own window is captured like any other window.
 
@@ -282,7 +283,7 @@ The goal is that the client always shows the newest picture, never an old one th
 
 ### 9.6 The fallback paths
 
-The host asks ScreenCaptureKit for BGRA frames and the changed rectangles of each frame, and gives them to `SendRects`. The frame rate cap is 30. These paths exist so that every client gets a picture; they are not tuned for video.
+The host asks ScreenCaptureKit for BGRA frames (sRGB) and the changed rectangles of each frame, and gives them to `SendRects`. The frame rate cap is 30. The rectangles are in the pixels of the scaled frame; on macOS 27 they come as the dictionary form of `CGRect`, not as `NSValue` as the header says (2.4). The first frame of a stream, and the first after frames were dropped, is sent whole. While a stream runs, macOS's capture indicator in the menu bar changes and shows up as small rectangles at the top right. These paths exist so that every client gets a picture; they are not tuned for video.
 
 How the rectangles are sent as fast-path Bitmap Updates (MS-RDPBCGR 2.2.9.1.2.1.2):
 
@@ -423,7 +424,7 @@ Every parser of client data has a test with truncated, oversized and random inpu
 ### 15.5 The host
 
 - `internal/host` is tested with fakes: flow control, rate control, the sound gap rule, the release of keys at the end of a session.
-- The packages under `internal/mac` have tests with the build tag `mardp_mac` that use the real frameworks. They need the permissions, run alone, and are not part of the default run. A test never posts keyboard or mouse events into the user's desktop: input injection is checked by hand, or against a window the test itself opens.
+- The packages under `internal/mac` have tests with the build tag `mardp_mac` that use the real frameworks. They need the permissions, run alone, and are not part of the default run. `scripts/mactest.sh <package>` runs them as a signed app with the M0 probe's identifier and the development identity (D22), so they have the Screen Recording the owner granted the probe; tests that need a permission the process lacks are skipped, never ask for it. A test never posts keyboard or mouse events into the user's desktop: input injection is checked by hand, or against a window the test itself opens.
 - `scripts/perf.sh` runs `mardp -headless` with a test-pattern source and `rdptest` as the client and prints the numbers of §14 that a machine can measure by itself. The others are manual checks.
 
 ### 15.6 The UI
