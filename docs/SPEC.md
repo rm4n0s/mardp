@@ -149,21 +149,24 @@ Limits before login: at most 8 connections that have not logged in (one more is 
 - Virtual channels, sound, frame acknowledgement, Surface Commands.
 - No orders, no glyph or offscreen caches, no RemoteFX: drawing is the graphics pipeline, or bitmap updates as the fallback.
 
+What the server's Demand Active holds (from user 1002, share 0x000103ea, source descriptor "RDP"): General (OS type as in Microsoft's example, fast-path output, long credentials, no bitmap compression header, Refresh Rect and Suppress Output), Bitmap (32 bpp, the session's size, no desktop resize), Order (all orders off), Pointer (colour, cache of 25), Input (scancodes, extended mouse, Unicode, fast-path input, horizontal wheel), Virtual Channel (no compression), Share, Font, Multifragment Update (8 MiB), Large Pointer (96 and 384), Surface Commands (Surface Bits, Frame Marker, Stream Surface Bits) and Frame Acknowledge. Confirm Active is parsed leniently: sets the server does not read are skipped, and padding and uncompressedLength are not checked, since Microsoft's own examples get them wrong. The client's finalization PDUs are answered as each arrives: Synchronize with Synchronize, Control Cooperate with Cooperate, Control Request with Granted, Font List with Font Map; other Data PDUs before Font List (Persistent Key List) are ignored.
+
 ### 5.3 What the client may send during a session
 
 Input events (fast-path, and the slow-path form too), Suppress Output (the client's window is minimized: capture pauses; it resumes with a key frame), Refresh Rect (the server sends a key frame), Shutdown Request, a disconnect. Every other PDU is parsed as far as its header and ignored.
 
 ### 5.4 Ending a session
 
-The server ends a session with Set Error Info (the reason) and an MCS Disconnect Provider Ultimatum: logged out by the app's user, replaced by another client (D13), server stopped, login failed. Set Error Info is sent only to a client whose core data says it supports it (RNS_UD_CS_SUPPORT_ERRINFO_PDU); the ultimatum's reason is rn-provider-initiated. A failed login sends ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED (0x0A), see §20. A connection that goes silent is closed by TCP keep-alive (15 s idle, 5 s interval, 3 probes).
+The server ends a session with Set Error Info (the reason) and an MCS Disconnect Provider Ultimatum: logged out by the app's user (`CloseByHost`, ERRINFO_RPC_INITIATED_DISCONNECT 0x01), replaced by another client (`CloseReplaced`, ERRINFO_DISCONNECTED_BY_OTHERCONNECTION 0x05, D13), server stopped (`CloseServerStopped`, ERRINFO_SERVER_SHUTDOWN 0x19, sent by the library itself when `Serve`'s context ends), login failed. After the ultimatum the server waits up to 2 seconds for the client to hang up before it closes the connection, so that a reset cannot lose the reason. A client ends a session with its own ultimatum, or by closing the connection. Set Error Info is sent only to a client whose core data says it supports it (RNS_UD_CS_SUPPORT_ERRINFO_PDU); the ultimatum's reason is rn-provider-initiated. A failed login sends ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED (0x0A), see §20. A connection that goes silent is closed by TCP keep-alive (15 s idle, 5 s interval, 3 probes).
 
 ## 6. The library's API
 
 The exact Go names are decided in the implementation; this is the shape.
 
 - `rdp.NewServer(config)` and `Server.Serve(ctx, listener)`. The config holds the TLS certificate, the `Authenticator` (a function that gets the user name and password and answers yes or no), the `Handler`, the limits of §5.1 and a `slog.Logger`.
-- `Handler.SessionOpened(ctx, session)` is called when a client has finished the connection sequence. The session is over when its context is cancelled; `Session.Close(reason)` ends it from the app.
-- `Session.Client()`: what the client is: name, address, the desktop size it asked for, keyboard layout, whether it decodes H.264 (AVC420), the audio formats it has, the largest pointer it shows.
+- `Handler.SessionOpened(ctx, session)` (or a `HandlerFunc`) is called on a goroutine of its own when a client has finished the connection sequence. The session is over when its context is cancelled; `Session.Close(ctx, reason)` ends it from the app (§5.4). The connection is kept until the handler has returned.
+- `Config.DesktopSize(client) (width, height)` decides the session's size from what the client asked for (§9.2), before Demand Active; nil gives the client its own size. `Session.DesktopSize()` returns it.
+- `Session.Client()`: what the client is: name, address, user and domain, build, the desktop size it asked for, keyboard layout and type, whether it supports the graphics pipeline, its static channels, and from its Confirm Active fast-path output, the input it sends, its pointer cache, the largest pointer it shows, its largest fast-path update, surface commands and frame acknowledgement. Whether it decodes H.264 (AVC420) and its audio formats come with the channels that negotiate them.
 - **Video.** `Session.Video()` gives one of two things, chosen by the library from the client's capabilities:
   - *H.264*: `SendFrame(annexB, keyFrame)`. The library wraps it as a GFX frame (Start Frame, Wire To Surface with the AVC420 stream, End Frame).
   - *Bitmaps*: `SendRects(image, rects)`. The library compresses the rectangles (Planar) and sends them through GFX, or as fast-path Bitmap Updates when the client has no graphics pipeline.

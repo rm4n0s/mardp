@@ -81,6 +81,8 @@ type conn struct {
 	// I/O channel, then the static channels in the client's order.
 	channels []uint16
 	joined   []bool
+	// user and domain are what the client logged in as.
+	user, domain string
 }
 
 // serveConn runs the connection sequence on nc. It returns when the
@@ -122,7 +124,16 @@ func (s *Server) serveConn(ctx context.Context, nc net.Conn, log *slog.Logger, r
 	if err := c.login(s.auth); err != nil {
 		return err
 	}
-	return c.awaitSession()
+	sess, err := c.activate(s.desktopSize)
+	if err != nil {
+		return err
+	}
+	// From here the session closes the connection when ctx is canceled,
+	// after telling the client why.
+	if !stop() {
+		return nil
+	}
+	return c.runSession(ctx, sess, s.handler)
 }
 
 // send writes one TPKT whose contents body appends.
@@ -359,15 +370,4 @@ func (c *conn) channelIndex(id uint16) int {
 		}
 	}
 	return -1
-}
-
-// awaitSession holds a logged-in connection until the client or the server
-// ends it. The capability exchange and the session come in step 1.7; until
-// then what the client sends is read and dropped.
-func (c *conn) awaitSession() error {
-	for {
-		if _, _, err := tpkt.ReadFrame(c.rw, c.buf); err != nil {
-			return err
-		}
-	}
 }

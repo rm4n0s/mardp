@@ -140,6 +140,7 @@ func (c *conn) login(auth Authenticator) error {
 		return errors.NewErr(TagClearDeadlineFailed, err)
 	}
 	c.release()
+	c.user, c.domain = ci.UserName, ci.Domain
 	c.log.Info("logged in", "user", ci.UserName, "domain", ci.Domain)
 	return nil
 }

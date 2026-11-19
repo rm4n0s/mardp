@@ -97,3 +97,38 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   A test renders the whole log, at debug level, as JSON and finds neither password in it, while the user, the reason and `"password":true` are there. `TestLoggedInLeavesThePendingCount` logs in 5 clients with `MaxPending` 2. Route tests in `rdp` cover a wrong password, Client Info on a static channel and from another user, an encrypted header, another PDU instead of Client Info, a missing Authenticator, and a deadline that cannot be cleared. The `rdptest` tests cover the license, the refusal with and without Set Error Info, another license status and cut PDUs. Six repeated runs with `-race` pass. Coverage: `rdp` 91.4%.
 - **Differs from the plan:** MS-RDPBCGR has no "logon failure" Set Error Info code. The server sends ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED (0x0A) and then the ultimatum. This is open question Q1 in SPEC §20, and step 1.13 checks what FreeRDP and Remmina do with it. SPEC §5.1, §5.4 and §8.2 now spell out the login. The address wait of §8.2 is the app's job (step 2.x), and `LoginRequest.Remote` gives it the address. After login the connection reads and drops what the client sends until 1.7 adds the capability exchange.
 - **Manual checks:** none.
+
+## 1.7 Capabilities and the open session (2026-11-19)
+- **Built:** `rdp/internal/caps`:
+  - Share Control and Share Data Headers (`ReadPDU`, which skips T.128 FlowPDUs; `ParseData`, which refuses bulk compression; `BeginControl`/`EndControl`, `BeginData`/`EndData`).
+  - Demand Active and Confirm Active with the capability sets the server reads or writes: General, Bitmap, Order (written, all orders off), Pointer, Input, Virtual Channel, Sound, Share, Font, Multifragment Update, Large Pointer, Surface Commands, Frame Acknowledge. Other sets are skipped.
+  - Synchronize, Control, Font List and Font Map.
+  - 6 tags.
+
+  In `rdp`:
+  - `Config.Handler` (required) and `Config.DesktopSize`; `Handler`, `HandlerFunc`, `Session` (`Client`, `DesktopSize`, `Close(ctx, reason)`), `Client`, and `CloseReason` (`CloseByHost` 0x01, `CloseReplaced` 0x05, `CloseServerStopped` 0x19).
+  - After the license, the server sends Demand Active with the sets of SPEC §5.2. It reads Confirm Active, answers each finalization PDU as it arrives, and opens the session after Font Map: the handler runs on its own goroutine while the connection's goroutine reads.
+  - A client ultimatum or hang-up ends the session. `Close` sends Set Error Info and the ultimatum, then gives the client 2 s to hang up. When `Serve` stops, the server closes each session with `CloseServerStopped`.
+  - 5 new tags in `rdp`.
+
+  `rdptest`: `Activate` (with FreeRDP-like capabilities and `Options.EditCaps`), `ServerCaps`/`ShareID`/`ServerSource`, `SendShare`, `AwaitDisconnect`, `Disconnect`; 1 new tag.
+- **Proved:**
+  - **Microsoft's examples:** the ten examples of MS-RDPBCGR 4.1.13 to 4.1.22 are now in `rdp/testdata/ms-rdpbcgr`. Demand Active and Confirm Active read field by field. Each set the server writes is written back and compared with Microsoft's bytes, except where Microsoft's bytes are uninitialized (Share pad, Input IME name, Input pad). The Font set is not compared because Microsoft's has 4 bytes against the structure's 8. The eight finalization PDUs are parsed and written. Client PDUs match exactly; server PDUs differ only in the pad1, streamID and uncompressedLength that Microsoft's server fills with garbage, and in the Synchronize targetUser. The README lists these faults.
+  - **caps tests:** round trips of 2000 random capability sets, two PDUs in one buffer, and FlowPDUs. Every example is cut at every length, and 50000 mutations are fed to the parsers: every failure is tagged. Writing and parsing make 0 allocations, every tag has a route test, and coverage is 94.2%.
+  - **The handler sees the client's data:** `TestSessionOpened` checks name, address, user, domain, build, the asked size, keyboard, channels, fast-path output, input flags, pointer cache, a large pointer of 384, MaxRequestSize and frame acknowledgement. It also checks what Demand Active said: 32 bpp, the session's size, the input flags and the sets.
+  - **Desktop size:** `TestDesktopSize` checks that `Config.DesktopSize` sets the size, before Confirm Active is known. `TestDesktopSizeInvalid` covers 0, -1 and 8193.
+  - **Ending the session:**
+    - `TestSessionClose`: each reason reaches the client with its code and rn-provider-initiated, with no Set Error Info for a client without the flag, and the session's context ends.
+    - `TestSessionCloseWaitsForTheClient`: a client that does not hang up is hung up on after 2 s.
+    - `TestClientDisconnects` and `TestClientHangsUp`.
+    - `TestServerStopClosesSessions`: the client gets 0x19.
+    - Every new tag has a route test: in `rdp`, against `serveConn` for the activation errors and a connection whose read deadline fails for `Close`; in `rdptest`, against the scripted fake server.
+  - Five repeated `-race` runs pass. Coverage: `rdp` 90.5%.
+- **Differs from the plan:**
+  - `Close` takes a `ctx` (SPEC §6: every method that does I/O does).
+  - The connection writes under a mutex until the writer goroutine of step 1.8.
+  - `Client` does not yet say whether the client decodes H.264 or which audio formats it has; those come with the GFX and rdpsnd channels (SPEC §6 updated).
+  - What the session's client sends is read and dropped until step 1.9.
+  - A bug found by the route test: `Close` had canceled the session's context before writing, so a handler passing its own context abandoned the write. The context is now canceled after the write.
+  - SPEC §5.2 (what Demand Active holds and how finalization is answered), §5.4 (close codes and the 2 s wait) and §6 (names) are updated.
+- **Manual checks:** none.

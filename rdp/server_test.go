@@ -17,6 +17,7 @@ import (
 
 	"github.com/rm4n0s/errors"
 
+	"github.com/rm4n0s/mardp/rdp/internal/caps"
 	"github.com/rm4n0s/mardp/rdp/internal/gcc"
 	"github.com/rm4n0s/mardp/rdp/internal/mcs"
 	"github.com/rm4n0s/mardp/rdp/internal/sec"
@@ -112,6 +113,10 @@ func attr(rec slog.Record, key string) slog.Value {
 	return v
 }
 
+// nopHandler leaves each session open until the client or the server ends
+// it.
+var nopHandler = HandlerFunc(func(context.Context, *Session) {})
+
 type testServer struct {
 	addr string
 	log  *recorder
@@ -128,6 +133,9 @@ func start(t *testing.T, cfg Config) *testServer {
 	cfg.Logger = slog.New(rec)
 	if cfg.Authenticator == nil {
 		cfg.Authenticator = StaticAuthenticator(testUser, testPassword)
+	}
+	if cfg.Handler == nil {
+		cfg.Handler = nopHandler
 	}
 	s, err := NewServer(cfg)
 	if err != nil {
@@ -439,7 +447,7 @@ func TestLoginTimeout(t *testing.T) {
 
 func TestServeStops(t *testing.T) {
 	p := certs(t)
-	s, err := NewServer(Config{Certificate: p.server, Authenticator: StaticAuthenticator(testUser, testPassword)})
+	s, err := NewServer(Config{Certificate: p.server, Authenticator: StaticAuthenticator(testUser, testPassword), Handler: nopHandler})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,13 +535,13 @@ func tcpPair(t *testing.T) (client, server net.Conn) {
 
 func TestErrors(t *testing.T) {
 	p := certs(t)
-	s, err := NewServer(Config{Certificate: p.server, Authenticator: StaticAuthenticator(testUser, testPassword)})
+	s, err := NewServer(Config{Certificate: p.server, Authenticator: StaticAuthenticator(testUser, testPassword), Handler: nopHandler})
 	if err != nil {
 		t.Fatal(err)
 	}
 	upTo := func(n int) func(ctx context.Context, c *rdptest.Client) error {
 		return func(ctx context.Context, c *rdptest.Client) error {
-			for _, step := range []func(context.Context) error{c.Negotiate, c.StartTLS, c.ConnectMCS, c.Attach, c.JoinAll, c.Login}[:n] {
+			for _, step := range []func(context.Context) error{c.Negotiate, c.StartTLS, c.ConnectMCS, c.Attach, c.JoinAll, c.Login, c.Activate}[:n] {
 				if err := step(ctx); err != nil {
 					return err
 				}
@@ -554,6 +562,22 @@ func TestErrors(t *testing.T) {
 	}
 	data := func(body func(w *wire.Writer) error) func(ctx context.Context, c *rdptest.Client) error {
 		return func(ctx context.Context, c *rdptest.Client) error { return c.SendData(ctx, body) }
+	}
+	in := rdptest.Options{User: testUser, Password: testPassword}
+	share := func(bodies ...func(w *wire.Writer) error) func(ctx context.Context, c *rdptest.Client) error {
+		return func(ctx context.Context, c *rdptest.Client) error {
+			for _, body := range bodies {
+				if err := c.SendShare(ctx, body); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}
+	confirm := func(id uint32) func(w *wire.Writer) error {
+		return func(w *wire.Writer) error {
+			return caps.WriteConfirmActive(w, &caps.ConfirmActive{ShareID: id, Source: ioChannelID + 3, Originator: serverInitiator})
+		}
 	}
 	tests := []struct {
 		name   string
@@ -590,6 +614,38 @@ func TestErrors(t *testing.T) {
 		{"join request instead of client info", rdptest.Options{}, then(upTo(5), data(func(w *wire.Writer) error {
 			return mcs.WriteChannelJoinRequest(w, &mcs.ChannelJoinRequest{Initiator: ioChannelID + 3, ChannelID: ioChannelID})
 		})), "Server.serveConn->conn.login->ReadSendDataRequest->readSendData." + mcs.TagUnexpectedPDU},
+		{"data instead of confirm active", in, then(upTo(6), share(func(w *wire.Writer) error {
+			return caps.WriteSynchronize(w, shareID, ioChannelID+3, serverInitiator)
+		})), "Server.serveConn->conn.activate." + TagPDUUnexpected},
+		{"confirm active for another share", in, then(upTo(6), share(confirm(shareID+1))),
+			"Server.serveConn->conn.activate." + TagShareIDInvalid},
+		{"confirm active without sets", in, then(upTo(6), share(func(w *wire.Writer) error {
+			off := caps.BeginControl(w, caps.TypeConfirmActive, ioChannelID+3)
+			w.U32LE(shareID)
+			return caps.EndControl(w, off)
+		})), "Server.serveConn->conn.activate->ParseConfirmActive->Reader.U16LE." + wire.TagTruncated},
+		{"share PDU cut", in, then(upTo(6), share(func(w *wire.Writer) error { w.Write([]byte{9, 0, 0x13, 0}); return nil })),
+			"Server.serveConn->conn.activate->conn.readShare->ReadPDU." + caps.TagLengthInvalid},
+		{"data on an unknown channel", in, then(upTo(6), data(func(w *wire.Writer) error {
+			return mcs.WriteSendDataRequest(w, &mcs.SendData{Initiator: ioChannelID + 3, ChannelID: ioChannelID + 9, Data: []byte{0}})
+		})), "Server.serveConn->conn.activate->conn.readShare." + TagChannelInvalid},
+		{"data for another share", in, then(upTo(6), share(confirm(shareID), func(w *wire.Writer) error {
+			return caps.WriteSynchronize(w, shareID+1, ioChannelID+3, serverInitiator)
+		})), "Server.serveConn->conn.activate->conn.finalize." + TagShareIDInvalid},
+		{"deactivate all in the finalization", in, then(upTo(6), share(confirm(shareID), func(w *wire.Writer) error {
+			return caps.EndControl(w, caps.BeginControl(w, caps.TypeDeactivateAll, ioChannelID+3))
+		})), "Server.serveConn->conn.activate->conn.finalize." + TagPDUUnexpected},
+		{"compressed data in the finalization", in, then(upTo(6), share(confirm(shareID), func(w *wire.Writer) error {
+			off := caps.BeginData(w, shareID, ioChannelID+3, caps.Type2Synchronize)
+			w.U16LE(1)
+			w.U16LE(serverInitiator)
+			if err := caps.EndData(w, off); err != nil {
+				return err
+			}
+			b := w.Bytes()
+			b[off+15] = 0x20 // compressedType: PACKET_COMPRESSED
+			return nil
+		})), "Server.serveConn->conn.activate->conn.finalize->ParseData." + caps.TagCompressed},
 		{"connection request cut", rdptest.Options{}, then(raw(3, 0, 0, 20, 14, 0xe0), func(_ context.Context, c *rdptest.Client) error { return c.CloseWrite() }),
 			"Server.serveConn->conn.negotiate->conn.readTPKT->ReadFrame." + tpkt.TagReadFailed},
 	}
@@ -648,12 +704,16 @@ func TestErrors(t *testing.T) {
 		assertRoute(t, s.serveConn(context.Background(), sc, s.log, func() {}), "Server.serveConn."+TagDeadlineFailed)
 	})
 	t.Run("no certificate", func(t *testing.T) {
-		_, err := NewServer(Config{Authenticator: StaticAuthenticator("u", "p")})
+		_, err := NewServer(Config{Authenticator: StaticAuthenticator("u", "p"), Handler: nopHandler})
 		assertRoute(t, err, "NewServer."+TagCertificateMissing)
 	})
 	t.Run("no authenticator", func(t *testing.T) {
-		_, err := NewServer(Config{Certificate: p.server})
+		_, err := NewServer(Config{Certificate: p.server, Handler: nopHandler})
 		assertRoute(t, err, "NewServer."+TagAuthenticatorMissing)
+	})
+	t.Run("no handler", func(t *testing.T) {
+		_, err := NewServer(Config{Certificate: p.server, Authenticator: StaticAuthenticator("u", "p")})
+		assertRoute(t, err, "NewServer."+TagHandlerMissing)
 	})
 	t.Run("deadline cannot be cleared", func(t *testing.T) {
 		cc, sc := tcpPair(t)
@@ -708,13 +768,19 @@ func TestLogin(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, nc, err := ts.login(t, tt.opts)
+			c, nc, err := ts.login(t, tt.opts)
 			if tt.reason == "" {
 				if err != nil {
 					t.Fatal(err)
 				}
 				// The login deadline no longer applies.
-				stillOpen(t, nc, 2*timeout)
+				time.Sleep(2 * timeout)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := c.Activate(ctx); err != nil {
+					t.Fatal(err)
+				}
+				stillOpen(t, nc, timeout)
 				return
 			}
 			assertRoute(t, err, "Client.Login."+rdptest.TagLoginRefused)

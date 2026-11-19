@@ -15,6 +15,7 @@ import (
 
 	"github.com/rm4n0s/errors"
 
+	"github.com/rm4n0s/mardp/rdp/internal/caps"
 	"github.com/rm4n0s/mardp/rdp/internal/gcc"
 	"github.com/rm4n0s/mardp/rdp/internal/mcs"
 	"github.com/rm4n0s/mardp/rdp/internal/sec"
@@ -97,6 +98,9 @@ type Options struct {
 	// EditClientData changes the client's data blocks before they are
 	// sent, to test what the server makes of them.
 	EditClientData func(cd *gcc.ClientData)
+	// EditCaps changes the capability sets of Confirm Active before they
+	// are sent.
+	EditCaps func(c *caps.Caps)
 }
 
 // Client is one connection to a server. Connect runs the whole sequence; the
@@ -120,6 +124,11 @@ type Client struct {
 	// Joined are the channels joined, in order: the user channel, the I/O
 	// channel, then the static channels.
 	Joined []uint16
+	// ShareID, ServerSource and ServerCaps are the share ID, the source and
+	// the capability sets of the server's Demand Active.
+	ShareID      uint32
+	ServerSource uint16
+	ServerCaps   caps.Caps
 }
 
 // New returns a client on nc that has not sent anything yet.

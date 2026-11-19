@@ -25,6 +25,8 @@ const (
 	TagCertificateMissing = "ServerCertificateMissing"
 	// TagAuthenticatorMissing: a Config without an Authenticator.
 	TagAuthenticatorMissing = "ServerAuthenticatorMissing"
+	// TagHandlerMissing: a Config without a Handler.
+	TagHandlerMissing = "ServerHandlerMissing"
 	// TagAcceptFailed: the listener failed for another reason than the
 	// server being stopped; the cause is kept.
 	TagAcceptFailed = "ServerAcceptFailed"
@@ -42,6 +44,13 @@ type Config struct {
 	Certificate tls.Certificate
 	// Authenticator decides who may log in (SPEC §8.2). It is required.
 	Authenticator Authenticator
+	// Handler gets the sessions (SPEC §6). It is required.
+	Handler Handler
+	// DesktopSize decides a session's desktop size from what the client
+	// asked for (SPEC §9.2), before the server states it in Demand Active.
+	// Both sides have to be from 1 to MaxDesktopSide. Nil gives the client
+	// the size it asked for.
+	DesktopSize func(c *Client) (width, height int)
 	// Logger receives the server's log. Nil discards it.
 	Logger *slog.Logger
 	// MaxPending is how many connections may be open before they log in;
@@ -58,6 +67,8 @@ type Config struct {
 type Server struct {
 	tls          *tls.Config
 	auth         Authenticator
+	handler      Handler
+	desktopSize  func(*Client) (int, int)
 	log          *slog.Logger
 	maxPending   int
 	loginTimeout time.Duration
@@ -71,12 +82,17 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.Authenticator == nil {
 		return nil, errors.New(TagAuthenticatorMissing, "the server needs an Authenticator")
 	}
+	if cfg.Handler == nil {
+		return nil, errors.New(TagHandlerMissing, "the server needs a Handler")
+	}
 	s := &Server{
 		tls: &tls.Config{
 			Certificates: []tls.Certificate{cfg.Certificate},
 			MinVersion:   tls.VersionTLS12,
 		},
 		auth:         cfg.Authenticator,
+		handler:      cfg.Handler,
+		desktopSize:  cfg.DesktopSize,
 		log:          cfg.Logger,
 		maxPending:   cfg.MaxPending,
 		loginTimeout: cfg.LoginTimeout,
