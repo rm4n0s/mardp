@@ -131,13 +131,14 @@ The library implements the server side of these Microsoft Open Specifications. E
 2. **TLS handshake** (§8).
 3. **MCS Connect Initial / Response** with the GCC blocks: the server reads the client's core data (desktop size, colour depth, keyboard layout, client name, the flag that says it supports the graphics pipeline), its channel list and its monitor block, and answers with the server core, security (no RDP encryption: TLS does it) and network blocks. Static channels the server opens: `drdynvc` and `rdpsnd`. Others the client asks for are accepted and ignored.
    The DomainParameters' integers are read as unsigned, so an INTEGER whose top bit is set is not taken as negative: Microsoft's own Connect-Initial example writes maxMCSPDUsize 65535 as `02 02 ff ff`, which strict BER reads as -1. The server writes its own integers in strict BER (65535 as `02 03 00 ff ff`).
-4. **MCS Erect Domain, Attach User, Channel Joins.**
+   Whatever the client proposes, the server answers with the domain parameters of Microsoft's Connect-Response (34 channel IDs, 3 user IDs, 0 token IDs, 1 priority, throughput 0, height 1, PDUs up to 65528 bytes, protocol version 2); RDP relies on none of them beyond what they allow. Channel IDs follow Microsoft's example too: the I/O channel is 1003, the static channels the client lists get 1004 onwards in its order, and the user ID comes after them. The X.224 Connection Confirm says EXTENDED_CLIENT_DATA_SUPPORTED. A client core block whose serverSelectedProtocol is not TLS ends the connection: it is what a downgrade between the two steps would leave.
+4. **MCS Erect Domain, Attach User, Channel Joins.** The client joins its user channel, the I/O channel and every static channel; a channel the server did not hand out is refused with rt-no-such-channel, and a join from another user ID ends the connection. The server does not offer to skip the joins.
 5. **Client Info**: user name, password, time zone, flags. The login of §8.2 happens here.
 6. **Licensing**: the server sends the "valid client" status. There is no license server.
 7. **Demand Active / Confirm Active**: capabilities (§5.2).
 8. **Synchronize, Control, Font List / Font Map.** After Font Map the session is open and the library calls the app (§6).
 
-Limits before login: at most 8 connections that have not logged in, 10 seconds from the TCP connection to Client Info, and every length field read from the client is checked against the size of the PDU and a maximum. A client that breaks a limit is disconnected. No client input may make the library panic (§15.4).
+Limits before login: at most 8 connections that have not logged in (one more is closed as soon as it is accepted), 10 seconds from the TCP connection to Client Info (a deadline on the connection, so it covers the TLS handshake and every read and write before login), and every length field read from the client is checked against the size of the PDU and a maximum. A client that breaks a limit is disconnected. No client input may make the library panic (§15.4).
 
 ### 5.2 Capabilities
 
