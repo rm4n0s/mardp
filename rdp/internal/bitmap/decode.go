@@ -100,18 +100,50 @@ func Draw(screen *Image, d Data) error {
 	return decodePlanar(&t, w, d.Bitmap)
 }
 
-// target is where a bitmap of height rows, its scan lines bottom-up, is
-// drawn on the screen: the w×h area at x, y.
+// DrawTile draws a tile of the graphics pipeline into screen at x, y: the
+// width × height pixels, or a Planar stream, its scan lines top-down
+// (AppendTile). The pixels are XRGB_8888, whose fourth byte means
+// nothing: alpha is drawn as 0xFF, unless a Planar stream has an alpha
+// plane.
+func DrawTile(screen *Image, x, y, width, height int, planar bool, data []byte) error {
+	if width <= 0 || height <= 0 || width*height > MaxTile || x < 0 || y < 0 || x+width > screen.Width || y+height > screen.Height {
+		return errors.New(TagRectInvalid, "the tile is not inside the screen",
+			"x", x, "y", y, "width", width, "height", height)
+	}
+	t := target{screen: screen, x: x, y: y, w: width, h: height, height: height, topDown: true}
+	if planar {
+		return decodePlanar(&t, width, data)
+	}
+	if len(data) != 4*width*height {
+		return errors.New(TagLengthInvalid, "the tile's length is not that of its pixels",
+			"length", len(data), "width", width, "height", height)
+	}
+	for row := range height {
+		line := screen.Pix[(y+row)*screen.Stride+4*x : (y+row)*screen.Stride+4*(x+width)]
+		copy(line, data[4*width*row:4*width*(row+1)])
+		for i := 3; i < len(line); i += 4 {
+			line[i] = 0xff
+		}
+	}
+	return nil
+}
+
+// target is where a bitmap of height rows, its scan lines bottom-up or
+// top-down, is drawn on the screen: the w×h area at x, y.
 type target struct {
 	screen     *Image
 	x, y, w, h int
 	height     int
+	topDown    bool
 }
 
 // set sets byte c of the pixel at scan line row, column col, when it is
 // inside the area.
 func (t *target) set(row, col, c int, v byte) {
 	y := t.height - 1 - row
+	if t.topDown {
+		y = row
+	}
 	if col < t.w && y < t.h {
 		t.screen.Pix[(t.y+y)*t.screen.Stride+4*(t.x+col)+c] = v
 	}

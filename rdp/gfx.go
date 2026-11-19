@@ -1,11 +1,13 @@
 package rdp
 
 import (
+	"image"
 	"sync"
 	"time"
 
 	"github.com/rm4n0s/errors"
 
+	"github.com/rm4n0s/mardp/rdp/internal/bitmap"
 	"github.com/rm4n0s/mardp/rdp/internal/gfx"
 	"github.com/rm4n0s/mardp/rdp/internal/wire"
 )
@@ -93,7 +95,12 @@ func (g *gfxPipeline) dvcReceived(_ *dvc, msg []byte) error {
 func (g *gfxPipeline) handle(p gfx.PDU) error {
 	switch p.Cmd {
 	case gfx.CmdCapsAdvertise:
-		return g.caps(p.CapSets)
+		ready, err := g.caps(p.CapSets)
+		if ready {
+			// The new surface is black until the whole desktop is sent.
+			g.s.wantKeyFrame()
+		}
+		return err
 	case gfx.CmdFrameAcknowledge:
 		g.ack(p)
 		return nil
@@ -126,16 +133,16 @@ func gfxChoose(sets []gfx.CapSet) (gfx.CapSet, bool) {
 
 // caps handles the client's Caps Advertise: the server confirms the newest
 // set both have, echoing the client's flags, and creates the surface of the
-// desktop. With none in common it closes the channel. A second advertise
-// starts over after a confirmed 10.3 or newer (MS-RDPEGFX 3.2.5.19), and
-// is ignored after an older one.
-func (g *gfxPipeline) caps(sets []gfx.CapSet) error {
+// desktop, and reports whether it did. With none in common it closes the
+// channel. A second advertise starts over after a confirmed 10.3 or newer
+// (MS-RDPEGFX 3.2.5.19), and is ignored after an older one.
+func (g *gfxPipeline) caps(sets []gfx.CapSet) (bool, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.confirmed.Version != 0 {
 		if g.confirmed.Version < gfx.Version103 {
 			g.s.c.log.Debug("a second graphics Caps Advertise ignored", "confirmed", g.confirmed.Version)
-			return nil
+			return false, nil
 		}
 		g.ready, g.unacked, g.suspended = false, nil, false
 	}
@@ -146,12 +153,12 @@ func (g *gfxPipeline) caps(sets []gfx.CapSet) error {
 			versions[i] = c.Version
 		}
 		g.s.c.log.Warn("no graphics pipeline version in common; closing it", "versions", versions)
-		return g.d.close()
+		return false, g.d.close()
 	}
 	c.Data = append([]byte(nil), c.Data...)
 	err := g.sendLocked(queueControl, func(w *wire.Writer) error { gfx.AppendCapsConfirm(w, c); return nil })
 	if err != nil {
-		return err
+		return false, err
 	}
 	g.confirmed, g.avc420 = c, c.AVC420()
 	s := g.s
@@ -167,11 +174,11 @@ func (g *gfxPipeline) caps(sets []gfx.CapSet) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	g.ready = true
 	s.c.log.Info("graphics pipeline ready", "version", c.Version, "flags", c.Flags(), "avc420", g.avc420)
-	return nil
+	return true, nil
 }
 
 // ack handles a Frame Acknowledge: the frame and those sent before it are
@@ -219,6 +226,11 @@ func (g *gfxPipeline) sendLocked(q queue, build func(w *wire.Writer) error) erro
 func (g *gfxPipeline) sendFrame(build func(w *wire.Writer) error) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.sendFrameLocked(build)
+}
+
+// sendFrameLocked is sendFrame with g.mu held.
+func (g *gfxPipeline) sendFrameLocked(build func(w *wire.Writer) error) error {
 	if !g.ready {
 		return errors.New(TagGFXNotReady, "a frame before the graphics pipeline is ready", "confirmed", g.confirmed.Version)
 	}
@@ -239,6 +251,38 @@ func (g *gfxPipeline) sendFrame(build func(w *wire.Writer) error) error {
 		g.unacked = append(g.unacked, gfxSentFrame{id: id, at: at})
 	}
 	return nil
+}
+
+// isReady reports whether the surface is created and frames can be sent.
+func (g *gfxPipeline) isReady() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.ready
+}
+
+// sendTiles sends rects of img, clipped to bounds, as one frame of tiles
+// when the pipeline is ready, and reports whether it was.
+func (g *gfxPipeline) sendTiles(img *bitmap.Image, rects []image.Rectangle, bounds image.Rectangle) (bool, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.ready {
+		return false, nil
+	}
+	return true, g.sendFrameLocked(func(w *wire.Writer) error { return appendTiles(w, img, rects, bounds) })
+}
+
+// wantKeyFrame tells the flow sink that the client needs the whole desktop,
+// unless output is suppressed: its resume asks for it then.
+func (s *Session) wantKeyFrame() {
+	if s.suppressed.Load() {
+		return
+	}
+	s.mu.Lock()
+	f := s.flow
+	s.mu.Unlock()
+	if f != nil {
+		f.KeyFrameWanted()
+	}
 }
 
 // Backlog is the video sent and not yet acknowledged by the client (SPEC

@@ -174,8 +174,8 @@ The exact Go names are decided in the implementation; this is the shape.
 - **Video.** `Session.Video()` gives one of two things, chosen by the library from the client's capabilities:
   - *H.264*: `SendFrame(annexB, keyFrame)`. The library wraps it as a GFX frame (Start Frame, Wire To Surface with the AVC420 stream, End Frame).
   - *Bitmaps*: `SendRects(image, rects)`. The library compresses the rectangles (Planar) and sends them through GFX, or as fast-path Bitmap Updates when the client has no graphics pipeline (§9.6). The `Image` is BGRA pixels, rows top-down `Stride` bytes apart, its top left corner the desktop's; rectangles are clipped to it and to the desktop, and rectangles that miss both send nothing.
-  - `Video.Path()` says which path the session uses (`VideoBitmaps` until M3 adds the GFX paths), for the window (§9.1).
-  - Both report flow: `Backlog()` (frames sent through the graphics pipeline and not yet acknowledged, and the age of the oldest; zero on the bitmap path and while the client has suspended acknowledgements). The callbacks come through a `FlowSink` the app sets on the session with `Session.SetFlowSink`: `KeyFrameWanted()` (on Refresh Rect, and after output resumes) and `OutputSuppressed(bool)` (only when the state changes; a resume is followed by `KeyFrameWanted`). `Session.OutputSuppressed()` reports the state at any time.
+  - `Video.Path()` says which path the session uses, for the window (§9.1): `VideoBitmaps`, or `VideoPlanar` once the graphics pipeline's surface exists (and back to `VideoBitmaps` if its channel closes).
+  - Both report flow: `Backlog()` (frames sent through the graphics pipeline and not yet acknowledged, and the age of the oldest; zero on the bitmap path and while the client has suspended acknowledgements). The callbacks come through a `FlowSink` the app sets on the session with `Session.SetFlowSink`: `KeyFrameWanted()` (on Refresh Rect, after output resumes, and when the graphics pipeline's surface is created, since it starts black) and `OutputSuppressed(bool)` (only when the state changes; a resume is followed by `KeyFrameWanted`). `Session.OutputSuppressed()` reports the state at any time.
 - **Sound.** `Session.Audio()`: the negotiated format (AAC, PCM or none) and `Write(data, timestamp)`. It reports the delay the client's confirmations show.
 - **Pointer.** `Session.Pointer()`: `SetShape(image, hotX, hotY)` (the library caches shapes and sends a cached index when a shape repeats), `Hide()`, `Default()` (the client's own pointer), `Move(x, y)` (clamped to the desktop). Like `SendRects` they queue without waiting for the network, on the queue of control updates, and fail when it is full. How shapes are encoded is in §10.3.
 - **Input.** The app sets an `InputSink` with `Session.SetInputSink` (nil drops input): `Key(scancode, extended, down)`, `Unicode(rune, down)`, `MouseMove(x, y)`, `MouseButton(button, down, x, y)`, `Wheel(dx, dy)`, `SyncLocks(caps, num, scroll)`. Calls arrive in the order the client sent them, on the session's reading goroutine, so a sink must not block.
@@ -301,6 +301,12 @@ How the rectangles are sent as fast-path Bitmap Updates (MS-RDPBCGR 2.2.9.1.2.1.
 - Each tile is 32 bpp, compressed with RDP 6.0 Planar (MS-RDPEGDI 2.2.2.5.1), lossless: ARGB, color loss level 0, no chroma subsampling. Its planes are run-length encoded when that is smaller, sent plain when that is smaller, and the tile goes uncompressed when even that is not smaller than its pixels.
 - A client that sets `DRAW_ALLOW_SKIP_ALPHA` (`Client.SkipAlpha`) gets no alpha plane; otherwise the alpha plane is 0xFF everywhere, since the screen is opaque.
 - Planar scan lines go bottom-up, as in an uncompressed bitmap; FreeRDP decodes them so (step 1.13, `docs/INTEROP.md`).
+
+How the rectangles are sent through the graphics pipeline, when the client has it but not H.264 (and until the H.264 path starts):
+
+- Each `SendRects` is one frame (Start Frame, the tiles, End Frame). Each rectangle is cut into tiles of at most 64×64 pixels, each a Wire To Surface 1 on surface 1, `XRGB_8888`, its rectangle's right and bottom exclusive (MS-RDPEGFX 2.2.2.1).
+- Each tile is Planar (codec 0x000A) without an alpha plane, its planes run-length encoded or plain, whichever is smaller; it goes uncompressed (codec 0x0000) when even that is not smaller than its pixels, which only happens to tiles of one or two pixels.
+- Planar scan lines go top-down here, unlike in Bitmap Updates (FreeRDP decodes GFX Planar without flipping it).
 
 ## 10. Sound, input, pointer
 

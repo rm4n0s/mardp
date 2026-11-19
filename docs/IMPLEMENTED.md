@@ -430,3 +430,22 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - The DVC tests' client no longer says it supports the pipeline, so that the server's own channel does not take ID 1.
   - `Video.Path()` stays `VideoBitmaps` until 3.4 sends pictures through the pipeline.
 - **Manual checks:** none.
+
+## 3.4 Planar through the graphics pipeline (2026-11-19)
+- **Built:**
+  - `rdp/internal/bitmap`: `AppendTile` (a tile of up to 64×64 for the graphics pipeline: Planar without an alpha plane, its scan lines top-down, or the pixels uncompressed when that is not smaller) and `DrawTile`, its decoder. `MaxTile`.
+  - `rdp/internal/gfx`: Wire To Surface 1, written with `BeginWireToSurface1`/`EndWireToSurface1` (the codec and the lengths patched once the bitmap data is in) and read by `ReadServer`; the codec IDs Uncompressed, Planar and AVC420.
+  - `rdp`: once the pipeline's surface exists, `SendRects` sends one frame of Wire To Surface 1 PDUs, tiles of 64×64; it falls back to Bitmap Updates before that and after the channel closes. `Video.Path()` returns the new `VideoPlanar` while the surface exists. The flow sink gets `KeyFrameWanted` when the surface is created, since it starts black.
+  - `rdptest`: `Screen.DrawGFX`, which draws Wire To Surface 1 on surface 1 and notes the frames that end. Tag `ClientGFXUnsupported`.
+  - SPEC §6 (`Path`, `KeyFrameWanted`) and §9.6 (the tiles through the pipeline).
+- **Proved:**
+  - `bitmap` tests: 400 random tiles of five kinds of picture drawn back pixel for pixel; Planar is chosen for every tile of more than two pixels; the bytes of an uncompressed tile, of plain planes and of RLE planes show the scan lines top-down; every fault of both functions with its route; cuts and mutations of tiles without a panic; no allocations.
+  - `gfx` tests: Wire To Surface 1 byte for byte and read back; a wrong bitmap data length and a cut PDU with their routes.
+  - `rdp` TestGFXBitmaps, the pixel-for-pixel test of 1.10 over the pipeline: for the default desktop, a picture larger and smaller than it, and a small desktop, six rounds of random rectangles each arrive as exactly one frame that makes the client's screen the picture; frame IDs go 1 to 6, the acknowledgements empty the backlog, both codecs are used, the flow sink is asked for a key frame once the surface exists, and after the client closes the channel the path is bitmaps again and a rectangle arrives as a Bitmap Update.
+  - `rdptest` TestDrawGFX: three tiles drawn, XRGB's fourth byte drawn as 0xFF, and each refusal with its route.
+- **Differs from the plan:**
+  - Without an alpha plane, plain Planar planes are always smaller than the pixels, so only tiles of one or two pixels go uncompressed.
+  - The `KeyFrameWanted` when the surface is created is new: without it a desktop that does not change would stay black after the switch (SPEC §6).
+  - Whether FreeRDP shows these tiles is for 3.9's interop test.
+  - Not part of the step: CLAUDE.md and rule 14 now say that the session chooses the version of a publish without asking (the owner, 2026-11-19), the next minor version for a milestone.
+- **Manual checks:** none.

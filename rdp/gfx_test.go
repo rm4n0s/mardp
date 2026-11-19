@@ -161,7 +161,7 @@ func TestGFXBacklog(t *testing.T) {
 	ts, c, s, clock := gfxOpen(t)
 	ctx := gfxContext(t)
 	v := s.Video()
-	assertRoute(t, s.gfx.sendFrame(emptyFrame), "gfxPipeline.sendFrame."+TagGFXNotReady)
+	assertRoute(t, s.gfx.sendFrame(emptyFrame), "gfxPipeline.sendFrame->gfxPipeline.sendFrameLocked."+TagGFXNotReady)
 	g, err := c.StartGFX(ctx, []gfx.CapSet{gfx.NewCapSet(gfx.Version107, 0)})
 	if err != nil {
 		t.Fatal(err)
@@ -262,8 +262,8 @@ func TestGFXBacklog(t *testing.T) {
 	if ts.log.count("graphics PDU ignored") != 1 {
 		t.Errorf("ignored %d PDUs", ts.log.count("graphics PDU ignored"))
 	}
-	if v.Path() != VideoBitmaps {
-		t.Errorf("path %v", v.Path())
+	if p := v.Path(); p != VideoPlanar {
+		t.Errorf("path %v", p)
 	}
 }
 
@@ -375,7 +375,7 @@ func TestGFXNoCommonVersion(t *testing.T) {
 	if v, _ := attr(rec, "versions").Any().([]uint32); !reflect.DeepEqual(v, []uint32{gfx.Version8, gfx.Version101, 0x000B0000}) {
 		t.Errorf("logged versions %v", attr(rec, "versions"))
 	}
-	assertRoute(t, s.gfx.sendFrame(emptyFrame), "gfxPipeline.sendFrame."+TagGFXNotReady)
+	assertRoute(t, s.gfx.sendFrame(emptyFrame), "gfxPipeline.sendFrame->gfxPipeline.sendFrameLocked."+TagGFXNotReady)
 }
 
 // TestGFXUnavailable covers the sessions without the graphics pipeline: a
@@ -409,7 +409,7 @@ func TestGFXUnavailable(t *testing.T) {
 			t.Fatal(err)
 		}
 		ts.log.find(t, "graphics pipeline unavailable")
-		assertRoute(t, s.gfx.sendFrame(emptyFrame), "gfxPipeline.sendFrame."+TagGFXNotReady)
+		assertRoute(t, s.gfx.sendFrame(emptyFrame), "gfxPipeline.sendFrame->gfxPipeline.sendFrameLocked."+TagGFXNotReady)
 	})
 	t.Run("closed", func(t *testing.T) {
 		ts, c, s, _ := gfxOpen(t)
@@ -427,7 +427,7 @@ func TestGFXUnavailable(t *testing.T) {
 		}
 		ts.log.find(t, "dynamic channel closed by the client")
 		waitBacklog(t, s.Video(), Backlog{})
-		assertRoute(t, s.gfx.sendFrame(emptyFrame), "gfxPipeline.sendFrame."+TagGFXNotReady)
+		assertRoute(t, s.gfx.sendFrame(emptyFrame), "gfxPipeline.sendFrame->gfxPipeline.sendFrameLocked."+TagGFXNotReady)
 	})
 }
 

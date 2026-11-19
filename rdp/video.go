@@ -7,6 +7,7 @@ import (
 
 	"github.com/rm4n0s/mardp/rdp/internal/bitmap"
 	"github.com/rm4n0s/mardp/rdp/internal/fastpath"
+	"github.com/rm4n0s/mardp/rdp/internal/gfx"
 	"github.com/rm4n0s/mardp/rdp/internal/wire"
 )
 
@@ -29,11 +30,17 @@ const (
 	// VideoBitmaps is fast-path Bitmap Updates of the changed rectangles,
 	// for a client without the graphics pipeline.
 	VideoBitmaps VideoPath = iota + 1
+	// VideoPlanar is Planar of the changed rectangles through the graphics
+	// pipeline.
+	VideoPlanar
 )
 
 func (p VideoPath) String() string {
-	if p == VideoBitmaps {
+	switch p {
+	case VideoBitmaps:
 		return "bitmaps"
+	case VideoPlanar:
+		return "planar"
 	}
 	return "unknown"
 }
@@ -47,23 +54,35 @@ type Video struct {
 // Video returns the session's video output.
 func (s *Session) Video() *Video { return &s.video }
 
-// Path returns how the session sends the desktop.
-func (v *Video) Path() VideoPath { return VideoBitmaps }
+// Path returns how the session sends the desktop: through the graphics
+// pipeline once its surface is created, otherwise as bitmaps.
+func (v *Video) Path() VideoPath {
+	if g := v.s.gfx; g != nil && g.isReady() {
+		return VideoPlanar
+	}
+	return VideoBitmaps
+}
 
-// The tiles a rectangle is cut into: each fits in one Bitmap Data and in
-// one fast-path PDU whatever its compression.
+// The tiles a rectangle is cut into for Bitmap Updates: each fits in one
+// Bitmap Data and in one fast-path PDU whatever its compression.
 const (
 	tileWidth  = 64
 	tileHeight = bitmap.MaxArea / tileWidth
 )
 
+// gfxTile is the side of the tiles a rectangle is cut into for the
+// graphics pipeline.
+const gfxTile = 64
+
 // SendRects sends the rectangles rects of img, which have changed, without
-// waiting for the network (SPEC §9.6): cut into tiles of 64×63, each
-// compressed with Planar or sent as it is when that is smaller, in Bitmap
-// Updates as large as the client takes. Rectangles are clipped to the image
-// and the desktop. All of them go in one packet of the video queue, so that
-// the client gets the whole change or, when the queue is full
-// (TagQueueFull), none of it. img is not used after SendRects returns.
+// waiting for the network (SPEC §9.6). Once the graphics pipeline is ready
+// they go as one frame of Wire To Surface 1 PDUs, tiles of 64×64 in Planar
+// or uncompressed when that is not smaller; otherwise as tiles of 64×63
+// compressed the same way, in Bitmap Updates as large as the client takes.
+// Rectangles are clipped to the image and the desktop. All of them go in
+// one packet of the video queue, so that the client gets the whole change
+// or, when the queue is full (TagQueueFull), none of it. img is not used
+// after SendRects returns.
 func (v *Video) SendRects(img *Image, rects []image.Rectangle) error {
 	s := v.s
 	if img == nil || img.Width <= 0 || img.Height <= 0 || img.Stride < 4*img.Width ||
@@ -86,15 +105,47 @@ func (v *Video) SendRects(img *Image, rects []image.Rectangle) error {
 	if !some {
 		return nil
 	}
+	b := (*bitmap.Image)(img)
+	if g := s.gfx; g != nil {
+		if sent, err := g.sendTiles(b, rects, bounds); sent {
+			return err
+		}
+	}
 	if !s.client.FastPathOutput {
 		return errors.New(TagFastPathUnsupported, "the client did not confirm fast-path output", "code", fastpath.UpdateBitmap)
 	}
-	b := (*bitmap.Image)(img)
 	noAlpha := s.client.SkipAlpha
 	limit := fastpath.MaxUpdate(s.client.MaxRequestSize)
 	return s.wr.send(queueVideo, func(p *packet) error {
 		return appendBitmaps(&p.w, &p.tmp, b, rects, bounds, noAlpha, limit)
 	})
+}
+
+// appendTiles appends to w a Wire To Surface 1 for each tile of rects,
+// clipped to bounds.
+func appendTiles(w *wire.Writer, img *bitmap.Image, rects []image.Rectangle, bounds image.Rectangle) error {
+	for _, r := range rects {
+		r = r.Intersect(bounds)
+		for y := r.Min.Y; y < r.Max.Y; y += gfxTile {
+			for x := r.Min.X; x < r.Max.X; x += gfxTile {
+				t := bitmap.Rect{X: x, Y: y, Width: min(gfxTile, r.Max.X-x), Height: min(gfxTile, r.Max.Y-y)}
+				off := gfx.BeginWireToSurface1(w, gfxSurfaceID, gfx.PixelFormatXRGB,
+					uint16(t.X), uint16(t.Y), uint16(t.X+t.Width), uint16(t.Y+t.Height))
+				planar, err := bitmap.AppendTile(w, img, t)
+				if err != nil {
+					return err
+				}
+				codec := gfx.CodecUncompressed
+				if planar {
+					codec = gfx.CodecPlanar
+				}
+				if err := gfx.EndWireToSurface1(w, off, codec); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // appendBitmaps appends to w the Bitmap Updates of rects, clipped to

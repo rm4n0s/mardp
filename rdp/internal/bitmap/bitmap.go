@@ -82,6 +82,10 @@ const (
 // its compression; RectSize(MaxArea) is the most bytes it takes.
 const MaxArea = 4032
 
+// MaxTile is the most pixels a tile of the graphics pipeline holds
+// (AppendTile): 64×64, the tiles Windows sends.
+const MaxTile = 64 * 64
+
 // rectHeaderLen is a Bitmap Data without its bitmap.
 const rectHeaderLen = 18
 
@@ -133,7 +137,7 @@ func AppendRect(w *wire.Writer, img *Image, r Rect, noAlpha bool) error {
 	start := w.Len()
 	raw := 4 * r.Width * r.Height
 	f := FlagCompression | FlagNoCompressionHeader
-	if !appendPlanar(w, img, r, noAlpha, raw) {
+	if !appendPlanar(w, img, r, noAlpha, false, raw) {
 		w.Truncate(start)
 		appendRaw(w, img, r)
 		f = 0
@@ -153,11 +157,36 @@ func appendRaw(w *wire.Writer, img *Image, r Rect) {
 	}
 }
 
+// AppendTile appends the area r of img for a Wire To Surface of the
+// graphics pipeline (MS-RDPEGFX 2.2.2.1), its scan lines top-down: a
+// Planar stream without an alpha plane when that is smaller than the
+// pixels, otherwise the pixels themselves, whose alpha the client ignores.
+// It reports whether it wrote Planar.
+func AppendTile(w *wire.Writer, img *Image, r Rect) (bool, error) {
+	if r.Width <= 0 || r.Height <= 0 || r.Width*r.Height > MaxTile || r.X < 0 || r.Y < 0 ||
+		r.X+r.Width > img.Width || r.Y+r.Height > img.Height || img.Stride < 4*img.Width ||
+		len(img.Pix) < (img.Height-1)*img.Stride+4*img.Width {
+		return false, errors.New(TagAreaInvalid, "the area is not one tile of the image",
+			"x", r.X, "y", r.Y, "width", r.Width, "height", r.Height,
+			"imageWidth", img.Width, "imageHeight", img.Height, "stride", img.Stride, "len", len(img.Pix))
+	}
+	start := w.Len()
+	if appendPlanar(w, img, r, true, true, 4*r.Width*r.Height) {
+		return true, nil
+	}
+	w.Truncate(start)
+	for row := r.Y; row < r.Y+r.Height; row++ {
+		off := row*img.Stride + 4*r.X
+		w.Write(img.Pix[off : off+4*r.Width])
+	}
+	return false, nil
+}
+
 // appendPlanar appends the Planar stream of r and reports whether it is
 // smaller than limit bytes: the planes run-length encoded when that is
 // smaller than the planes themselves. The scan lines go bottom-up, as in an
-// uncompressed bitmap.
-func appendPlanar(w *wire.Writer, img *Image, r Rect, noAlpha bool, limit int) bool {
+// uncompressed bitmap, or top-down for the graphics pipeline.
+func appendPlanar(w *wire.Writer, img *Image, r Rect, noAlpha, topDown bool, limit int) bool {
 	planes := 4
 	header := byte(planarRLE)
 	if noAlpha {
@@ -166,7 +195,7 @@ func appendPlanar(w *wire.Writer, img *Image, r Rect, noAlpha bool, limit int) b
 	}
 	start := w.Len()
 	w.U8(header)
-	p := plane{img: img, r: r}
+	p := plane{img: img, r: r, topDown: topDown}
 	for i := 4 - planes; i < 4; i++ {
 		p.c = planeChannel[i]
 		p.appendRLE(w)
@@ -198,11 +227,12 @@ func appendPlanar(w *wire.Writer, img *Image, r Rect, noAlpha bool, limit int) b
 var planeChannel = [4]int{-1, 2, 1, 0}
 
 // plane is one color plane of an area of an image, its scan lines
-// bottom-up.
+// bottom-up or top-down.
 type plane struct {
-	img *Image
-	r   Rect
-	c   int
+	img     *Image
+	r       Rect
+	c       int
+	topDown bool
 }
 
 // at is the plane's value in scan line row, column col.
@@ -210,7 +240,11 @@ func (p *plane) at(row, col int) byte {
 	if p.c < 0 {
 		return 0xff
 	}
-	return p.img.Pix[(p.r.Y+p.r.Height-1-row)*p.img.Stride+4*(p.r.X+col)+p.c]
+	y := p.r.Y + p.r.Height - 1 - row
+	if p.topDown {
+		y = p.r.Y + row
+	}
+	return p.img.Pix[y*p.img.Stride+4*(p.r.X+col)+p.c]
 }
 
 // value is what the run-length encoder takes for scan line row, column col
@@ -232,7 +266,7 @@ func (p *plane) value(row, col int) byte {
 // appendRLE appends the plane run-length encoded (3.1.9.2), each scan line
 // in segments of its own.
 func (p *plane) appendRLE(w *wire.Writer) {
-	var buf [MaxArea]byte
+	var buf [MaxTile]byte
 	line := buf[:p.r.Width]
 	for row := range p.r.Height {
 		for col := range line {

@@ -70,6 +70,13 @@ func TestPDUs(t *testing.T) {
 		{"map surface to output", func(w *wire.Writer) error { AppendMapSurfaceToOutput(w, 1, 2, 3); return nil },
 			"0f 00 00 00 14 00 00 00  01 00 00 00 02 00 00 00 03 00 00 00", ReadServer,
 			PDU{Cmd: CmdMapSurfaceToOutput, SurfaceID: 1, OriginX: 2, OriginY: 3}},
+		{"wire to surface 1", func(w *wire.Writer) error {
+			off := BeginWireToSurface1(w, 1, PixelFormatXRGB, 1, 2, 3, 4)
+			w.Write([]byte{9, 8})
+			return EndWireToSurface1(w, off, CodecPlanar)
+		},
+			"01 00 00 00 1b 00 00 00  01 00 0a 00 20  01 00 02 00 03 00 04 00  02 00 00 00  09 08", ReadServer,
+			PDU{Cmd: CmdWireToSurface1, SurfaceID: 1, CodecID: CodecPlanar, PixelFormat: PixelFormatXRGB, Left: 1, Top: 2, Right: 3, Bottom: 4, Body: []byte{9, 8}}},
 		{"start frame", func(w *wire.Writer) error { AppendStartFrame(w, 0x12345678, 7); return nil },
 			"0b 00 00 00 10 00 00 00  78 56 34 12 07 00 00 00", ReadServer,
 			PDU{Cmd: CmdStartFrame, Timestamp: 0x12345678, FrameID: 7}},
@@ -261,6 +268,12 @@ func TestErrors(t *testing.T) {
 		{"too many entries offered", func() error {
 			return ReadClient(unhex(t, "10 00 00 00 0a 00 00 00 56 15"), func(PDU) error { return nil })
 		}, "ReadClient->readPDUs->parseClient." + TagCountInvalid},
+		{"bitmap data length wrong", func() error {
+			return ReadServer(unhex(t, "01 00 00 00 1b 00 00 00 01 00 0a 00 20 01 00 02 00 03 00 04 00 03 00 00 00 09 08"), func(PDU) error { return nil })
+		}, "ReadServer->readPDUs->parseServer->parseWireToSurface1." + TagLengthInvalid},
+		{"wire to surface 1 cut", func() error {
+			return ReadServer(unhex(t, "01 00 00 00 0c 00 00 00 01 00 0a 00"), func(PDU) error { return nil })
+		}, "ReadServer->readPDUs->parseServer->parseWireToSurface1->Reader.U8." + wire.TagTruncated},
 		{"too many slots imported", func() error {
 			return ReadServer(unhex(t, "11 00 00 00 0a 00 00 00 56 15"), func(PDU) error { return nil })
 		}, "ReadServer->readPDUs->parseServer." + TagCountInvalid},

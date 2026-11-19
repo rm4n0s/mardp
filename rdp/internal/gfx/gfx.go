@@ -91,6 +91,21 @@ const (
 	PixelFormatARGB uint8 = 0x21
 )
 
+// The codecs of a Wire To Surface 1 (2.2.2.1).
+const (
+	// CodecUncompressed: the pixels left to right, top to bottom, in the
+	// surface's format.
+	CodecUncompressed uint16 = 0x0000
+	// CodecPlanar: MS-RDPEGDI's Planar stream, its scan lines top-down.
+	CodecPlanar uint16 = 0x000A
+	// CodecAVC420: H.264 in YUV420, with its metablock (2.2.4.4).
+	CodecAVC420 uint16 = 0x000B
+)
+
+// wireToSurface1Len is the length of a Wire To Surface 1 before its bitmap
+// data.
+const wireToSurface1Len = HeaderLen + 17
+
 // The queueDepth of a frame acknowledgement that suspends them (2.2.2.13).
 const SuspendFrameAcknowledgement uint32 = 0xFFFFFFFF
 
@@ -195,6 +210,11 @@ type PDU struct {
 	SurfaceID        uint16
 	PixelFormat      uint8
 	OriginX, OriginY uint32
+	// CodecID, Left, Top, Right and Bottom are a Wire To Surface 1's, with
+	// its SurfaceID and PixelFormat and its bitmap data in Body; Right and
+	// Bottom are exclusive.
+	CodecID                  uint16
+	Left, Top, Right, Bottom uint16
 	// Body is what follows the header of a PDU the package does not
 	// parse.
 	Body []byte
@@ -350,6 +370,8 @@ func parseServer(p *PDU, r *wire.Reader) error {
 			return err
 		}
 		p.OriginY, err = r.U32LE()
+	case CmdWireToSurface1:
+		return parseWireToSurface1(p, r)
 	case CmdStartFrame:
 		if p.Timestamp, err = r.U32LE(); err != nil {
 			return err
@@ -375,6 +397,34 @@ func parseServer(p *PDU, r *wire.Reader) error {
 		p.Body = r.Rest()
 	}
 	return err
+}
+
+func parseWireToSurface1(p *PDU, r *wire.Reader) error {
+	var err error
+	if p.SurfaceID, err = r.U16LE(); err != nil {
+		return err
+	}
+	if p.CodecID, err = r.U16LE(); err != nil {
+		return err
+	}
+	if p.PixelFormat, err = r.U8(); err != nil {
+		return err
+	}
+	for _, v := range []*uint16{&p.Left, &p.Top, &p.Right, &p.Bottom} {
+		if *v, err = r.U16LE(); err != nil {
+			return err
+		}
+	}
+	n, err := r.U32LE()
+	if err != nil {
+		return err
+	}
+	if int64(n) != int64(r.Remaining()) {
+		return errors.New(TagLengthInvalid, "a bitmap data length that is not the rest of the PDU",
+			"length", n, "rest", r.Remaining())
+	}
+	p.Body = r.Rest()
+	return nil
 }
 
 func parseResetGraphics(p *PDU, r *wire.Reader) error {
@@ -503,6 +553,36 @@ func AppendMapSurfaceToOutput(w *wire.Writer, id uint16, x, y uint32) {
 	w.U16LE(0)
 	w.U32LE(x)
 	w.U32LE(y)
+}
+
+// BeginWireToSurface1 starts a Wire To Surface 1 of the area left, top to
+// right, bottom (exclusive) of surface, and returns its offset; the bitmap
+// data is appended next, and EndWireToSurface1 finishes the PDU.
+func BeginWireToSurface1(w *wire.Writer, surface uint16, format uint8, left, top, right, bottom uint16) int {
+	off := w.Len()
+	header(w, CmdWireToSurface1, 0)
+	w.U16LE(surface)
+	w.U16LE(0)
+	w.U8(format)
+	w.U16LE(left)
+	w.U16LE(top)
+	w.U16LE(right)
+	w.U16LE(bottom)
+	w.U32LE(0)
+	return off
+}
+
+// EndWireToSurface1 finishes the Wire To Surface 1 that
+// BeginWireToSurface1 started at off: its codec, the length of its bitmap
+// data and its own.
+func EndWireToSurface1(w *wire.Writer, off int, codec uint16) error {
+	if err := w.PatchU16LE(off+HeaderLen+2, codec); err != nil {
+		return err
+	}
+	if err := w.PatchU32LE(off+wireToSurface1Len-4, uint32(w.Len()-off-wireToSurface1Len)); err != nil {
+		return err
+	}
+	return End(w, off)
 }
 
 // AppendStartFrame appends a Start Frame.

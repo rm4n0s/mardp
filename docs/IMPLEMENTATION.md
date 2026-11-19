@@ -19,7 +19,7 @@ Status: see `docs/IMPLEMENTED.md` for the finished steps.
 11. No test, script or check uses the owner's real settings: each sets `MARDP_HOME` to a temporary folder (§13). No test posts keyboard or mouse events into the owner's desktop (§15.5).
 12. Code under `spikes/` is throwaway: it is never imported by the product, and step 0.9 deletes it. What it taught lives in the specification.
 13. The protocol is written from Microsoft's documents (§5, §18). No code of another RDP implementation is read for copying or porting. Reading FreeRDP's *log output*, or recording its bytes on the wire, to see what a real client does is allowed and expected.
-14. **GitHub gets milestones, not steps.** When the last step of a milestone is merged, `main` and the step tags are pushed once, with a version tag: ask the owner for the number first (CLAUDE.md, "Git and GitHub"). If the push keeps failing, stop and ask.
+14. **GitHub gets milestones, not steps.** When the last step of a milestone is merged, `main` and the step tags are pushed once, with a version tag whose number the session chooses without asking: the next minor version (CLAUDE.md, "Git and GitHub"). If the push keeps failing, stop and ask.
 
 ## M0. Checks first
 
