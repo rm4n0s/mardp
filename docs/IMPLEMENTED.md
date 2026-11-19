@@ -859,3 +859,11 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - `cmd/mardp`: the measurer logs the process line with the host's sessions and captures.
 - **Differs from the plan:** "no encoder session left" is proved through the captures: the H.264 encoder session lives inside the video capture and is closed when it returns (tested in `internal/mac/video`), so no video capture running means no encoder session. The run uses the test pattern (VideoToolbox, AAC), not the real screen, so it needs no permission and never touches the Mac's sound.
 - **Manual checks:** none.
+
+## 6.6 Version 1.0 (2026-11-19)
+- **Built:**
+  - SPEC: the status says version 1.0, with the owner's checks in docs/MANUAL-CHECKS.md; the paragraph of §12.2 that held only before M5 now says what the window does (closing it keeps the app and the server running, §7.3); §14 says this Mac met every target it measures without a change, and the owner's numbers are pending.
+  - README: where the measured numbers are, and what still waits for a check on the owner's machines.
+- **Proved:** on a clean clone of the branch, `scripts/check.sh` (gofmt, vet, golangci-lint, the tests with and without `debug_mode`, with `-race`, the library on Linux) and the lints with the tags `mardp_mac`, `mardp_freerdp` and `mardp_perf` pass, and the tree stays clean.
+- **Differs from the plan:** none so far; v1.0.0 is published with the owner's word.
+- **Manual checks:** the ones of earlier steps that are still open: pending, see docs/MANUAL-CHECKS.md.
