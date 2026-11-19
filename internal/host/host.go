@@ -109,6 +109,22 @@ type Host struct {
 	cur atomic.Pointer[live]
 	// mute mutes Parts.Output while sessions get the sound.
 	mute muter
+	// screens, videos and sounds count the captures running now.
+	screens, videos, sounds atomic.Int64
+}
+
+// Captures is how many captures of each source a Host runs now.
+type Captures struct {
+	// Screen counts the captures of the bitmap paths, Video those into the
+	// encoder (each with its encoder session open), Sound those of the
+	// sound.
+	Screen, Video, Sound int
+}
+
+// Captures is how many captures the host runs now: none once every
+// session has ended (SPEC §15.5, `-measure`).
+func (h *Host) Captures() Captures {
+	return Captures{Screen: int(h.screens.Load()), Video: int(h.videos.Load()), Sound: int(h.sounds.Load())}
 }
 
 // New makes a Host of the parts.
@@ -323,6 +339,8 @@ func (p *picture) runBitmaps(ctx context.Context, cancel func()) error {
 		pic.onFrame = p.poll.kickNow
 	}
 	p.sw.set(pic, false, cancel)
+	h.screens.Add(1)
+	defer h.screens.Add(-1)
 	return h.parts.Screen.Capture(ctx, ScreenConfig{Width: p.width, Height: p.height, MaxFPS: h.opts.MaxFPS}, pic.frame)
 }
 
@@ -349,6 +367,8 @@ func (p *picture) runAVC(ctx context.Context, cancel func()) error {
 	wg.Go(func() { a.run(tctx, interval/2, h.opts.rateEvery) })
 	defer wg.Wait()
 	defer stopTicker()
+	h.videos.Add(1)
+	defer h.videos.Add(-1)
 	return h.parts.Video.CaptureVideo(ctx, cfg, a.started, a.frame)
 }
 

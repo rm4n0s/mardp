@@ -15,6 +15,9 @@
 #                          Screen Recording, is view-only and plays the
 #                          sound on both, so it posts nothing and never
 #                          touches the Mac's output.
+#   scripts/perf.sh long   the test pattern for one session (default 1800 s),
+#                          then 100 sessions in turn: the memory, dropouts,
+#                          and what is left after the sessions end.
 set -eu
 cd "$(dirname "$0")/.."
 TMPDIR=$(cd "${TMPDIR:-/tmp}" && pwd -P)/
@@ -23,8 +26,9 @@ case "${1:-}" in
 "") test='^TestPerf$' seconds=${MARDP_PERF_SECONDS:-60} ;;
 idle) test='^TestPerfIdle$' seconds=${MARDP_PERF_SECONDS:-300} ;;
 screen) test='^TestPerfScreen$' seconds=${MARDP_PERF_SECONDS:-300} ;;
+long) test='^TestPerfLong$' seconds=${MARDP_PERF_SECONDS:-1800} ;;
 *)
-	echo "usage: scripts/perf.sh [idle|screen]" >&2
+	echo "usage: scripts/perf.sh [idle|screen|long]" >&2
 	exit 2
 	;;
 esac

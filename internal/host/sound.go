@@ -225,6 +225,8 @@ func (h *Host) runSound(ctx context.Context, s *rdp.Session, l *live, log *slog.
 	}
 	defer l.setSound("")
 	defer h.mute.hold(ctx)()
+	h.sounds.Add(1)
+	defer h.sounds.Add(-1)
 	if err := h.parts.Sound.Capture(sctx, p.buffer); err != nil && sctx.Err() == nil {
 		log.Warn("the sound capture stopped", "err", err)
 	}

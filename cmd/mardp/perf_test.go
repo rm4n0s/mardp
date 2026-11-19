@@ -143,7 +143,8 @@ func logFields(t *testing.T, path, msg string) map[string]string {
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	sc.Buffer(nil, 1<<20)
 	for sc.Scan() {
-		if strings.Contains(sc.Text(), "msg=\""+msg+"\"") {
+		// slog quotes a message only when it has spaces.
+		if strings.Contains(sc.Text(), "msg=\""+msg+"\"") || strings.Contains(sc.Text(), "msg="+msg+" ") {
 			last = sc.Text()
 		}
 	}
@@ -575,5 +576,273 @@ func TestPerfScreen(t *testing.T) {
 	}
 	if r.frames > int64(r.span.Seconds()) {
 		t.Logf("the screen was not still: %d frames in %v", r.frames, r.span.Round(time.Second))
+	}
+}
+
+// The measurement of step 6.5: a long run. mardp -headless -test-pattern
+// -measure serves 30 minutes of video and sound to one session, then 100
+// sessions in turn that each connect, get the first picture and
+// disconnect. It checks that the memory does not grow, that neither the
+// video nor the sound drops out, and that once the sessions have ended no
+// session, capture (and so no encoder session) or goroutine is left, from
+// mardp's "process" log line. scripts/perf.sh long runs it:
+//
+//	scripts/perf.sh long                        # 1800 seconds
+//	MARDP_PERF_SECONDS=300 scripts/perf.sh long
+
+// processLine is mardp's "process" log line (-measure).
+type processLine struct {
+	goroutines, sessions, captures int
+	heap                           int64
+}
+
+// awaitProcess waits for a "process" line that mardp logs after the call
+// and that settled accepts, and returns it; after three such lines (30 s)
+// it returns the last one, settled or not.
+func awaitProcess(t *testing.T, path string, settled func(processLine) bool) processLine {
+	t.Helper()
+	count := func() int {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bytes.Count(b, []byte("msg=process "))
+	}
+	from := count()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		if n := count(); n > from {
+			f := logFields(t, path, "process")
+			num := func(k string) int64 {
+				v, err := strconv.ParseInt(f[k], 10, 64)
+				if err != nil {
+					t.Fatalf("process line: %s=%q", k, f[k])
+				}
+				return v
+			}
+			p := processLine{goroutines: int(num("goroutines")), sessions: int(num("sessions")),
+				captures: int(num("screenCaptures") + num("videoCaptures") + num("soundCaptures")), heap: num("heapBytes")}
+			if settled(p) || n >= from+3 {
+				return p
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("mardp logs no process line in a minute")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// longSession is what the long session saw.
+type longSession struct {
+	perSecond []int         // H.264 frames each second
+	rss       []int64       // mardp's memory every 10 s
+	blocks    int           // sound blocks confirmed
+	gap       time.Duration // the longest wait between two blocks of sound
+	gapAt     time.Duration // when, from the start
+}
+
+// watchLong connects at 1920×1080 with H.264 and sound and watches for
+// watch, acknowledging every frame and confirming every block.
+func watchLong(t *testing.T, h *home, pid int, watch time.Duration) longSession {
+	t.Helper()
+	c, err := connectSized(t, h, testUser, testPassword, 1920, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), watch+time.Minute)
+	defer cancel()
+	if err := c.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c.KeepChannel(c.ChannelID("rdpsnd"))
+	c.KeepChannel(c.ChannelID("drdynvc"))
+	g, err := c.StartGFX(ctx, rdptest.AVC420Caps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snd, err := c.NegotiateAudio(ctx, rdptest.AudioOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var (
+		r        longSession
+		total    uint32
+		inSecond int
+		start    = time.Now()
+		second   = start.Add(time.Second)
+		sample   = start
+		end      = start.Add(watch)
+		last     time.Time
+	)
+	for time.Now().Before(end) {
+		f, err := c.ReadGFXFrame(ctx, g.ChannelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		total++
+		if err := c.AckFrame(ctx, g.ChannelID, 0, f.ID, total); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.H264) > 0 {
+			inSecond++
+		}
+		for snd.Pending() {
+			b, err := snd.ReadBlock(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := snd.Confirm(ctx, b, 0); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			if !last.IsZero() && now.Sub(last) > r.gap {
+				r.gap, r.gapAt = now.Sub(last), now.Sub(start)
+			}
+			last = now
+			r.blocks++
+		}
+		now := time.Now()
+		for ; !now.Before(second); second = second.Add(time.Second) {
+			r.perSecond = append(r.perSecond, inSecond)
+			inSecond = 0
+		}
+		if !now.Before(sample) {
+			r.rss = append(r.rss, rss(t, pid))
+			sample = sample.Add(10 * time.Second)
+		}
+	}
+	if err := c.Disconnect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// cycle connects with H.264 and sound, waits for the first picture and
+// disconnects.
+func cycle(t *testing.T, h *home) {
+	t.Helper()
+	c, err := connectSized(t, h, testUser, testPassword, 1920, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := c.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c.KeepChannel(c.ChannelID("rdpsnd"))
+	c.KeepChannel(c.ChannelID("drdynvc"))
+	g, err := c.StartGFX(ctx, rdptest.AVC420Caps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.NegotiateAudio(ctx, rdptest.AudioOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var total uint32
+	for {
+		f, err := c.ReadGFXFrame(ctx, g.ChannelID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		total++
+		if err := c.AckFrame(ctx, g.ChannelID, 0, f.ID, total); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.H264) > 0 {
+			break
+		}
+	}
+	if err := c.Disconnect(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPerfLong(t *testing.T) {
+	watch := perfSeconds(t, 1800*time.Second)
+	const cycles = 100
+	h := newHome(t, nil)
+	p := startPerf(t, h)
+	pid := p.cmd.Process.Pid
+	idle := func(l processLine) bool { return l.sessions == 0 && l.captures == 0 }
+	before := awaitProcess(t, p.log, idle)
+
+	r := watchLong(t, h, pid, watch)
+	afterLong := awaitProcess(t, p.log, func(l processLine) bool { return idle(l) && l.goroutines <= before.goroutines })
+	rssAfterLong := rss(t, pid)
+
+	var rssCycles []int64
+	start := time.Now()
+	for i := range cycles {
+		cycle(t, h)
+		if i == 9 || i == cycles-1 {
+			rssCycles = append(rssCycles, rss(t, pid))
+		}
+	}
+	cycled := time.Since(start)
+	after := awaitProcess(t, p.log, func(l processLine) bool { return idle(l) && l.goroutines <= before.goroutines })
+	rssEnd := rss(t, pid)
+	_, maxRSS := p.stop(t)
+	b, err := os.ReadFile(p.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	steady := r.perSecond[1:]
+	var sum int
+	under := 0
+	for _, n := range steady {
+		sum += n
+		if n < 57 {
+			under++
+		}
+	}
+	mean := float64(sum) / float64(len(steady))
+	fewest := slices.Min(steady)
+	mb := func(b int64) float64 { return float64(b) / (1 << 20) }
+	// The memory of the session's first five minutes after its first
+	// minute, and of its last five.
+	window := min(30, len(r.rss)/3)
+	early, late := slices.Max(r.rss[min(6, len(r.rss)-window):][:window]), slices.Max(r.rss[len(r.rss)-window:])
+	t.Logf("one session of %v at 1920×1080, 60 fps cap, with sound", watch)
+	t.Logf("frames a second, after the first: mean %.1f, fewest %d, %d of %d seconds under 57", mean, fewest, under, len(steady))
+	t.Logf("sound: %d blocks confirmed (%.1f a second), the longest wait between two %v (at %v)",
+		r.blocks, float64(r.blocks)/watch.Seconds(), r.gap.Round(time.Millisecond), r.gapAt.Round(time.Second))
+	t.Logf("memory of mardp: %.1f MB after 10 s, at most %.1f MB early on, %.1f MB in the last stretch, %.1f MB at the end",
+		mb(r.rss[1]), mb(early), mb(late), mb(rssAfterLong))
+	t.Logf("%d sessions in turn in %v (%v each): memory %.1f MB after 10, %.1f MB after %d, %.1f MB at the end; at most %.1f MB",
+		cycles, cycled.Round(time.Second), (cycled / cycles).Round(time.Millisecond), mb(rssCycles[0]), mb(rssCycles[1]), cycles,
+		mb(rssEnd), mb(maxRSS))
+	t.Logf("goroutines: %d before any session, %d after the long one, %d after the %d; heap %.1f, %.1f, %.1f MB",
+		before.goroutines, afterLong.goroutines, after.goroutines, cycles, mb(before.heap), mb(afterLong.heap), mb(after.heap))
+	t.Logf("left after the sessions: %d sessions, %d captures", after.sessions, after.captures)
+
+	if mean < 57 || fewest < 30 {
+		t.Errorf("the video dropped: mean %.1f frames a second, fewest %d", mean, fewest)
+	}
+	if r.gap > 250*time.Millisecond {
+		t.Errorf("the sound dropped: %v without a block, at %v", r.gap, r.gapAt)
+	}
+	if late > early+early/10 {
+		t.Errorf("the memory grew: %.1f MB at most early on, %.1f MB in the last stretch", mb(early), mb(late))
+	}
+	if rssCycles[1] > rssCycles[0]+rssCycles[0]/10 {
+		t.Errorf("the memory grew over the sessions: %.1f MB after 10, %.1f MB after %d", mb(rssCycles[0]), mb(rssCycles[1]), cycles)
+	}
+	if afterLong.sessions != 0 || afterLong.captures != 0 || after.sessions != 0 || after.captures != 0 {
+		t.Errorf("left after the sessions ended: %+v after the long one, %+v after the %d", afterLong, after, cycles)
+	}
+	if after.goroutines > before.goroutines || afterLong.goroutines > before.goroutines {
+		t.Errorf("goroutines left: %d before any session, %d after the long one, %d after the %d",
+			before.goroutines, afterLong.goroutines, after.goroutines, cycles)
+	}
+	if n := bytes.Count(b, []byte("level=ERROR")); n > 0 {
+		t.Errorf("%d errors in mardp's log", n)
+	}
+	for l := range bytes.Lines(b) {
+		if bytes.Contains(l, []byte("level=WARN")) {
+			t.Logf("warning in mardp's log: %s", bytes.TrimSpace(l))
+		}
 	}
 }

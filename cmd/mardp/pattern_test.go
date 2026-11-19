@@ -88,8 +88,14 @@ func servePattern(t *testing.T, args []string, want string, stills int) {
 	}
 }
 
-// TestMeasurer: the timing of each period with frames is logged, and each
-// session's when it ends.
+// counts is a hostCounts.
+type counts struct{}
+
+func (counts) Sessions() int           { return 1 }
+func (counts) Captures() host.Captures { return host.Captures{Video: 1, Sound: 1} }
+
+// TestMeasurer: the timing of each period with frames is logged, each
+// session's when it ends, and the process every period.
 func TestMeasurer(t *testing.T) {
 	var buf syncBuffer
 	me := newMeasurer(slog.New(slog.NewTextHandler(&buf, nil)), time.Millisecond)
@@ -97,7 +103,7 @@ func TestMeasurer(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		me.run(ctx)
+		me.run(ctx, counts{})
 	}()
 	now := time.Now()
 	me.frame(host.FrameTiming{Captured: now, Encoded: now, Queued: now, Written: now.Add(3 * time.Millisecond), Bytes: 10})
@@ -115,5 +121,9 @@ func TestMeasurer(t *testing.T) {
 	}
 	if strings.Count(log, "msg=\"video timing\"") != 1 {
 		t.Errorf("periods without frames logged:\n%s", log)
+	}
+	if !strings.Contains(log, "msg=process goroutines=") ||
+		!strings.Contains(log, "sessions=1 screenCaptures=0 videoCaptures=1 soundCaptures=1") {
+		t.Errorf("no process line:\n%s", log)
 	}
 }

@@ -165,23 +165,26 @@ func serve(ctx context.Context, getenv func(string) string, m machine, opts serv
 		return err
 	}
 	var obs observer
+	var me *measurer
 	if opts.measure {
-		me := newMeasurer(log, measureEvery)
+		me = newMeasurer(log, measureEvery)
 		obs.session, obs.timing = me.event, me.frame
+	}
+	srv, err := prepare(ctx, folder, func() config.Settings { return s }, sys, m, opts.viewOnly, obs, log)
+	if err != nil {
+		return err
+	}
+	if me != nil {
 		mctx, stop := context.WithCancel(ctx)
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			me.run(mctx)
+			me.run(mctx, srv.hst)
 		}()
 		defer func() {
 			stop()
 			<-done
 		}()
-	}
-	srv, err := prepare(ctx, folder, func() config.Settings { return s }, sys, m, opts.viewOnly, obs, log)
-	if err != nil {
-		return err
 	}
 	return srv.srv.Serve(ctx, srv.l)
 }

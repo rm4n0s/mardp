@@ -587,6 +587,41 @@ func keyWithin(t *testing.T, a *avcClient, n int, what string) {
 // TestSessionPathSwitch starts on the bitmap path, goes to H.264 when the
 // client's surface takes it, and back to the bitmap path (Planar through
 // the pipeline) when the client advertises again without H.264.
+// TestCaptures: the host counts the captures it runs: the screen's on the
+// bitmap path, the encoder's once the graphics pipeline takes H.264, the
+// sound's once the client takes sound, and none after the client
+// disconnects.
+func TestCaptures(t *testing.T) {
+	parts := Parts{Screen: &PatternScreen{}, Video: &PatternVideo{}, Sound: &ToneSource{}}
+	s := serve(t, parts, Options{}, 640, 480)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	await := func(what string, want Captures) {
+		t.Helper()
+		for s.h.Captures() != want {
+			if ctx.Err() != nil {
+				t.Fatalf("%s: captures %+v, want %+v", what, s.h.Captures(), want)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	await("the bitmap path", Captures{Screen: 1})
+	s.c.KeepChannel(s.c.ChannelID("rdpsnd"))
+	s.c.KeepChannel(s.c.ChannelID("drdynvc"))
+	if _, err := s.c.StartGFX(ctx, rdptest.AVC420Caps()); err != nil {
+		t.Fatal(err)
+	}
+	await("the H.264 path", Captures{Video: 1})
+	if _, err := s.c.NegotiateAudio(ctx, rdptest.AudioOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	await("the sound", Captures{Video: 1, Sound: 1})
+	if err := s.c.Disconnect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	await("after the session", Captures{})
+}
+
 func TestSessionPathSwitch(t *testing.T) {
 	video := &PatternVideo{}
 	parts := Parts{Screen: &PatternScreen{}, Video: video}

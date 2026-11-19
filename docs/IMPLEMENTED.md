@@ -846,3 +846,16 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - `cmd/mardp`: `-still` serves the still pattern with no permission; `-still` without `-test-pattern` is refused with exit code 2.
 - **Differs from the plan:** "every periodic wake-up" is read as SPEC §11 rule 6 says it, no timers that wake many times a second: what still runs while idle is the pointer read 4 times a second (SPEC §10.3: macOS has no notification for a change of the pointer; one read is about 0.1 ms) and, once a second, the session's numbers, the bitrate decision and the capture's check of its display. A still screen already sent nothing (ScreenCaptureKit's idle frames and frames without dirty rectangles are dropped in C) and silence already sent no sound. The proof's idle desktop is the still test pattern, since this Mac's screen is not still while the session works on it (the app's own animations, about 5 frames a second); the real screen's number is reported beside it.
 - **Manual checks:** none new; the owner's idle CPU with Remmina is part of 6.3 (docs/MANUAL-CHECKS.md).
+
+## 6.5 A long run (2026-11-19)
+- **Built:**
+  - `internal/host`: `Host.Captures`, the screen, video and sound captures running now (each video capture holds an encoder session).
+  - `mardp -measure` logs the process every 10 seconds ("process"): goroutines, the Go heap in use, the memory Go got from the system, the sessions and the captures running.
+  - `scripts/perf.sh long` (`TestPerfLong`): one session of the moving pattern and the tone for 30 minutes (`MARDP_PERF_SECONDS`), then 100 sessions in turn that each connect, get the first picture and disconnect; fails on a dropout, memory growth, a session, capture or goroutine left after the sessions, or an error in mardp's log.
+  - SPEC §13 (the "process" line) and §15.5 as built; docs/PERFORMANCE.md.
+- **Proved:**
+  - `scripts/perf.sh long` on the Apple M6: 30 minutes at a mean of 60.0 frames a second (fewest 59), 84 375 sound blocks with the longest wait 52 ms; memory 76.4 MB after 10 s, 78.6 MB at most in the last 5 minutes; 100 sessions in turn in 10 s, memory 99.7 MB after 10 and 100.1 MB after 100; goroutines 4 before any session and 4 after each stretch; 0 sessions and 0 captures left. The numbers are in docs/PERFORMANCE.md.
+  - `internal/host`: the captures counted on the bitmap path, on the H.264 path with sound, and none after the session ends.
+  - `cmd/mardp`: the measurer logs the process line with the host's sessions and captures.
+- **Differs from the plan:** "no encoder session left" is proved through the captures: the H.264 encoder session lives inside the video capture and is closed when it returns (tested in `internal/mac/video`), so no video capture running means no encoder session. The run uses the test pattern (VideoToolbox, AAC), not the real screen, so it needs no permission and never touches the Mac's sound.
+- **Manual checks:** none.
