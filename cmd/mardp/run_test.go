@@ -79,6 +79,7 @@ type fakeMac struct {
 	mu       sync.Mutex
 	posts    []bool
 	patterns int
+	stills   int
 }
 
 func newFakeMac(granted ...host.Permission) *fakeMac {
@@ -166,9 +167,12 @@ func (f *fakeMac) parts(sys host.System, _ config.Settings, post bool, _ *slog.L
 
 // pattern is the fake test pattern: host.PatternVideo, and a tone unless
 // the sound is off.
-func (f *fakeMac) pattern(s config.Settings, _ *slog.Logger) (host.Parts, error) {
+func (f *fakeMac) pattern(s config.Settings, still bool, _ *slog.Logger) (host.Parts, error) {
 	f.mu.Lock()
 	f.patterns++
+	if still {
+		f.stills++
+	}
 	f.mu.Unlock()
 	p := host.Parts{Screen: &host.PatternScreen{Frames: 1}, Video: &host.PatternVideo{}}
 	if s.Sound != config.SoundOff {
@@ -377,6 +381,7 @@ func TestRunFlags(t *testing.T) {
 		{"log file", []string{"-headless", "-log-file", missing}, exitFailed, "", "the log file"},
 		{"test pattern without -headless", []string{"-test-pattern"}, exitUsage, "", "need -headless"},
 		{"measure without -headless", []string{"-measure"}, exitUsage, "", "need -headless"},
+		{"still without -test-pattern", []string{"-headless", "-still"}, exitUsage, "", "-still needs -test-pattern"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

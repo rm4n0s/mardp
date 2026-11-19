@@ -156,6 +156,16 @@ func (s *ToneSource) Capture(ctx context.Context, buf func(*SoundBuffer)) error 
 	}
 }
 
+// QuietSource is a sound source where nothing plays: it delivers no
+// buffers, as the capture of a Mac drops silent ones.
+type QuietSource struct{}
+
+// Capture implements SoundSource.
+func (QuietSource) Capture(ctx context.Context, _ func(*SoundBuffer)) error {
+	<-ctx.Done()
+	return nil
+}
+
 // InputKind is the kind of an InputEvent.
 type InputKind int
 

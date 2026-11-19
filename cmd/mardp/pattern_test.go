@@ -12,14 +12,31 @@ import (
 	"github.com/rm4n0s/mardp/rdp/rdptest"
 )
 
-// TestServePattern: `mardp -headless -test-pattern -measure` needs no
-// permission of the Mac, serves the machine's test pattern over H.264
-// without making the screen's parts, and logs the session's timing when
-// it ends.
+// TestServePattern: `mardp -headless -test-pattern -measure`, moving or
+// -still, needs no permission of the Mac, serves the machine's test
+// pattern over H.264 without making the screen's parts, and logs the
+// session's timing when it ends.
 func TestServePattern(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		args   []string
+		log    string
+		stills int
+	}{
+		{"moving", []string{"-headless", "-test-pattern", "-measure"}, "serving a test pattern and a tone", 0},
+		{"still", []string{"-headless", "-test-pattern", "-still", "-measure"}, "serving a still test pattern and no sound", 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) { servePattern(t, tt.args, tt.log, tt.stills) })
+	}
+}
+
+// servePattern runs mardp with args, a session of 10 H.264 frames, and
+// checks the log has want, and the machine made the pattern once, still
+// stills times, and never the screen's parts.
+func servePattern(t *testing.T, args []string, want string, stills int) {
 	h := newHome(t, func(s *config.Settings) { s.Sound = config.SoundOff })
 	m := newFakeMac() // nothing granted
-	r := start(t, h, m, "-headless", "-test-pattern", "-measure")
+	r := start(t, h, m, args...)
 	c, err := connect(t, h, testUser, testPassword)
 	if err != nil {
 		t.Fatal(err)
@@ -59,15 +76,15 @@ func TestServePattern(t *testing.T) {
 	}
 	r.stop(t)
 	log := r.log.String()
-	for _, want := range []string{"serving a test pattern", "sessions are view-only", "timing.total.p95="} {
-		if !strings.Contains(log, want) {
-			t.Errorf("the log has no %q:\n%s", want, log)
+	for _, w := range []string{want, "sessions are view-only", "timing.total.p95="} {
+		if !strings.Contains(log, w) {
+			t.Errorf("the log has no %q:\n%s", w, log)
 		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.patterns != 1 || len(m.posts) != 0 {
-		t.Errorf("the pattern made %d times, the screen's parts %d times", m.patterns, len(m.posts))
+	if m.patterns != 1 || m.stills != stills || len(m.posts) != 0 {
+		t.Errorf("the pattern made %d times, %d still, the screen's parts %d times", m.patterns, m.stills, len(m.posts))
 	}
 }
 

@@ -46,6 +46,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	viewOnly := fs.Bool("view-only", false, "drop the client's keyboard and mouse, as without Accessibility")
 	testPattern := fs.Bool("test-pattern", false,
 		"with -headless: serve a moving test pattern and a tone instead of the screen and its sound, without permissions (scripts/perf.sh)")
+	still := fs.Bool("still", false,
+		"with -test-pattern: the pattern does not move and nothing plays, an idle desktop (scripts/perf.sh idle)")
 	measure := fs.Bool("measure", false,
 		"with -headless: log how long the H.264 frames take from capture to the socket, every 10 seconds and for each session")
 	if err := fs.Parse(args); err != nil {
@@ -57,6 +59,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	if (*testPattern || *measure) && !*headless {
 		complain(stderr, "mardp: -test-pattern and -measure need -headless\n")
+		return exitUsage
+	}
+	if *still && !*testPattern {
+		complain(stderr, "mardp: -still needs -test-pattern\n")
 		return exitUsage
 	}
 	if *showVersion {
@@ -84,7 +90,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	log.Info("mardp starting", "version", version(), "headless", *headless)
 	var err error
 	if *headless {
-		err = serve(ctx, getenv, m, serveOptions{viewOnly: *viewOnly, testPattern: *testPattern, measure: *measure}, log)
+		err = serve(ctx, getenv, m, serveOptions{viewOnly: *viewOnly, testPattern: *testPattern, still: *still, measure: *measure}, log)
 	} else {
 		err = window(ctx, getenv, m, *viewOnly, log)
 	}
@@ -133,6 +139,8 @@ type serveOptions struct {
 	// testPattern serves the test pattern and a tone instead of the screen
 	// and its sound (SPEC §15.5).
 	testPattern bool
+	// still makes the test pattern still and silent.
+	still bool
 	// measure logs the H.264 frames' timing (SPEC §14).
 	measure bool
 }
@@ -145,8 +153,12 @@ func serve(ctx context.Context, getenv func(string) string, m machine, opts serv
 		return err
 	}
 	if opts.testPattern {
-		log.Info("serving a test pattern and a tone instead of the screen (-test-pattern)")
-		m = patterned{m}
+		if opts.still {
+			log.Info("serving a still test pattern and no sound instead of the screen (-test-pattern -still)")
+		} else {
+			log.Info("serving a test pattern and a tone instead of the screen (-test-pattern)")
+		}
+		m = patterned{machine: m, still: opts.still}
 	}
 	sys, err := m.system()
 	if err != nil {

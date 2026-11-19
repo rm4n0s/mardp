@@ -15,15 +15,19 @@ var patternDisplay = host.Display{ID: "test-pattern", Name: "Test pattern", Widt
 // instead of the screen and its sound (SPEC §15.5): its system grants Screen
 // Recording and not Accessibility, so sessions are view-only and nothing is
 // posted to the Mac, and it has no output to mute, so the Mac's volume is
-// never touched.
-type patterned struct{ machine }
+// never touched. When still, the pattern does not move and nothing plays:
+// an idle desktop.
+type patterned struct {
+	machine
+	still bool
+}
 
 func (patterned) system() (host.System, error) {
 	return host.NewFakeSystem([]host.Display{patternDisplay}, host.ScreenRecording), nil
 }
 
 func (p patterned) parts(sys host.System, s config.Settings, _ bool, log *slog.Logger) (host.Parts, error) {
-	parts, err := p.pattern(s, log)
+	parts, err := p.pattern(s, p.still, log)
 	if err != nil {
 		return host.Parts{}, err
 	}

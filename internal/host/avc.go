@@ -62,10 +62,12 @@ type videoOut interface {
 // avcPath sends a session's picture on the H.264 path while one capture
 // into the encoder runs. It is the flow sink then: a Refresh Rect and a
 // resume force a key frame, and the encoder skips while output is
-// suppressed. A ticker reads the backlog: the encoder skips while more
-// than maxUnacked frames are on their way or video waits in the queue, so
-// that an encoded frame always goes and none waits (SPEC §9.5); and once a
-// period it sets the bitrate. The path ends (stop is called) when the
+// suppressed. The backlog is read after each frame sent: the encoder skips
+// while more than maxUnacked frames are on their way or video waits in the
+// queue, so that an encoded frame always goes and none waits (SPEC §9.5).
+// While it skips for the backlog, a ticker reads the backlog again until
+// it clears; otherwise the path wakes only once a period, to set the
+// bitrate (SPEC §11 rule 6). The path ends (stop is called) when the
 // session leaves the H.264 path.
 type avcPath struct {
 	out  videoOut
@@ -77,6 +79,9 @@ type avcPath struct {
 	onFrame  func()
 	// times, when set, measures the frames sent (Options.OnFrameTiming).
 	times *frameTimes
+	// wake tells run that the backlog began to need watching; nil in
+	// tests that tick by hand.
+	wake chan struct{}
 
 	mu       sync.Mutex
 	enc      VideoEncoder
@@ -85,6 +90,8 @@ type avcPath struct {
 	since      time.Time
 	suppressed bool
 	closed     bool
+	// busy says the backlog held the encoder back when last read.
+	busy bool
 	// What the current rate period saw.
 	sent    int
 	skipped bool
@@ -154,6 +161,13 @@ func (a *avcPath) decide(afterSend bool) {
 	b := a.out.Backlog()
 	a.oldest = max(a.oldest, b.Oldest)
 	busy := b.Frames > maxUnacked || (!afterSend && b.Queued > 0)
+	if busy && !a.busy {
+		select {
+		case a.wake <- struct{}{}:
+		default:
+		}
+	}
+	a.busy = busy
 	switch {
 	case !busy:
 		a.since = time.Time{}
@@ -169,8 +183,9 @@ func (a *avcPath) decide(afterSend bool) {
 }
 
 // tick is the ticker's work: the skip flag, and the end of the path when
-// the session left it.
-func (a *avcPath) tick() {
+// the session left it. watch says the backlog still holds the encoder
+// back, so the ticker should go on.
+func (a *avcPath) tick() (watch bool) {
 	if a.out.Path() != rdp.VideoAVC420 {
 		a.mu.Lock()
 		closed := a.closed
@@ -179,11 +194,12 @@ func (a *avcPath) tick() {
 		if !closed {
 			a.stop()
 		}
-		return
+		return false
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.decide(false)
+	return a.busy && !a.closed
 }
 
 // period ends a rate period: the bitrate is decided from what it saw.
@@ -207,10 +223,12 @@ func (a *avcPath) period() {
 	}
 }
 
-// run ticks every tick and ends a rate period every rateEvery, until ctx
-// ends.
+// run ends a rate period every rateEvery, with a tick, and ticks every
+// tick while the backlog holds the encoder back, until ctx ends. While
+// frames go freely, or none are captured, it wakes once a period.
 func (a *avcPath) run(ctx context.Context, tick, rateEvery time.Duration) {
 	t := time.NewTicker(tick)
+	t.Stop()
 	defer t.Stop()
 	r := time.NewTicker(rateEvery)
 	defer r.Stop()
@@ -218,9 +236,16 @@ func (a *avcPath) run(ctx context.Context, tick, rateEvery time.Duration) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-a.wake:
+			t.Reset(tick)
 		case <-t.C:
-			a.tick()
+			if !a.tick() {
+				t.Stop()
+			}
 		case <-r.C:
+			if a.tick() {
+				t.Reset(tick)
+			}
 			a.period()
 		}
 	}

@@ -104,6 +104,17 @@ func TestToneSource(t *testing.T) {
 	}
 }
 
+// TestQuietSource: nothing is delivered, and the end of ctx ends the
+// capture without an error.
+func TestQuietSource(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	got := 0
+	if err := (QuietSource{}).Capture(ctx, func(*SoundBuffer) { got++ }); err != nil || got != 0 {
+		t.Errorf("err %v, %d buffers", err, got)
+	}
+}
+
 func TestFakeSystem(t *testing.T) {
 	s := NewFakeSystem([]Display{{ID: "a"}}, ScreenRecording)
 	if !s.Granted(ScreenRecording) || s.Granted(Accessibility) {

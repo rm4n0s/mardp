@@ -50,6 +50,7 @@ type fakeOut struct {
 	path    rdp.VideoPath
 	err     error
 	sent    []bool // key flags
+	reads   int    // Backlog calls
 }
 
 func (o *fakeOut) SendFrame(_ []byte, key bool) error {
@@ -65,6 +66,7 @@ func (o *fakeOut) SendFrame(_ []byte, key bool) error {
 func (o *fakeOut) Backlog() rdp.Backlog {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.reads++
 	return o.backlog
 }
 
@@ -265,6 +267,75 @@ func (r *recordSink) OutputSuppressed(s bool) {
 		r.calls = append(r.calls, "suppressed")
 	} else {
 		r.calls = append(r.calls, "resumed")
+	}
+}
+
+// TestAVCPathIdle: run reads the backlog only once a rate period while
+// frames go freely or none come (SPEC §11 rule 6), ticks while the backlog
+// holds the encoder back, clearing the skip as soon as it drains, and stops
+// ticking then.
+func TestAVCPathIdle(t *testing.T) {
+	out := &fakeOut{path: rdp.VideoAVC420}
+	enc := &fakeEncoder{}
+	a := &avcPath{out: out, log: slog.New(&recorder{}), rate: &rateControl{bitrate: StartBitrate, max: DefaultMaxBitrate},
+		stop: func() {}, interval: 16 * time.Millisecond, wake: make(chan struct{}, 1)}
+	a.started(enc)
+	reads := func() int {
+		out.mu.Lock()
+		defer out.mu.Unlock()
+		return out.reads
+	}
+	skipping := func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return enc.skip
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		a.run(ctx, time.Millisecond, time.Hour)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	f := &EncodedFrame{Data: []byte{0, 0, 0, 1, 5}, Key: true}
+
+	// Frames that go freely, then none: no ticks.
+	a.frame(f)
+	a.frame(f)
+	time.Sleep(100 * time.Millisecond)
+	if n := reads(); n != 2 {
+		t.Errorf("the backlog was read %d times for two frames and 100 ms of nothing, want 2", n)
+	}
+
+	// The backlog holds the encoder back: the ticker reads it until it
+	// drains.
+	out.set(func(o *fakeOut) { o.backlog = rdp.Backlog{Frames: maxUnacked + 1} })
+	a.frame(f)
+	if !skipping() {
+		t.Fatal("the encoder does not skip behind a backlog")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for reads() < 10 {
+		if time.Now().After(deadline) {
+			t.Fatalf("the backlog was read %d times in 5 s while it held the encoder back", reads())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	out.set(func(o *fakeOut) { o.backlog = rdp.Backlog{} })
+	for skipping() {
+		if time.Now().After(deadline) {
+			t.Fatal("the skip stayed after the backlog drained")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond)
+	before := reads()
+	time.Sleep(100 * time.Millisecond)
+	if n := reads() - before; n != 0 {
+		t.Errorf("the backlog was read %d times in 100 ms after it drained", n)
 	}
 }
 

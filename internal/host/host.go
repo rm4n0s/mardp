@@ -330,7 +330,8 @@ func (p *picture) runBitmaps(ctx context.Context, cancel func()) error {
 func (p *picture) runAVC(ctx context.Context, cancel func()) error {
 	h := p.h
 	interval := time.Second / time.Duration(h.opts.VideoFPS)
-	a := &avcPath{out: p.s.Video(), log: p.log, rate: p.rate, stop: cancel, interval: interval}
+	a := &avcPath{out: p.s.Video(), log: p.log, rate: p.rate, stop: cancel, interval: interval,
+		wake: make(chan struct{}, 1)}
 	defer a.end()
 	if h.opts.OnFrameTiming != nil {
 		a.times = &frameTimes{tell: h.opts.OnFrameTiming}

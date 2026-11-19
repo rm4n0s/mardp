@@ -23,20 +23,24 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/rm4n0s/errors"
 
 	"github.com/rm4n0s/mardp/internal/config"
 	"github.com/rm4n0s/mardp/rdp/rdptest"
 )
 
-// perfSeconds is how long the client watches, from MARDP_PERF_SECONDS.
-func perfSeconds(t *testing.T) time.Duration {
+// perfSeconds is how long the client watches, from MARDP_PERF_SECONDS,
+// or def.
+func perfSeconds(t *testing.T, def time.Duration) time.Duration {
 	t.Helper()
 	v := os.Getenv("MARDP_PERF_SECONDS")
 	if v == "" {
-		return 60 * time.Second
+		return def
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 5 {
@@ -52,9 +56,9 @@ type perfMardp struct {
 	log string
 }
 
-// startPerf builds mardp and runs it on h with the test pattern and
-// -measure, until it listens.
-func startPerf(t *testing.T, h *home) *perfMardp {
+// startPerf builds mardp and runs it on h with the test pattern, -measure
+// and args, until it listens.
+func startPerf(t *testing.T, h *home, args ...string) *perfMardp {
 	t.Helper()
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "mardp")
@@ -64,7 +68,7 @@ func startPerf(t *testing.T, h *home) *perfMardp {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 	p := &perfMardp{log: filepath.Join(dir, "mardp.log")}
-	p.cmd = exec.Command(exe, "-headless", "-test-pattern", "-measure", "-log-file", p.log)
+	p.cmd = exec.Command(exe, append([]string{"-headless", "-test-pattern", "-measure", "-log-file", p.log}, args...)...)
 	p.cmd.Env = append(os.Environ(), config.HomeEnv+"="+h.dir)
 	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := p.cmd.Start(); err != nil {
@@ -166,7 +170,7 @@ func ms(t *testing.T, fields map[string]string, key string) time.Duration {
 }
 
 func TestPerf(t *testing.T) {
-	watch := perfSeconds(t)
+	watch := perfSeconds(t, 60*time.Second)
 	h := newHome(t, nil) // 60 frames a second, 20 Mbit/s, the sound on the client
 	p := startPerf(t, h)
 	dialed := time.Now()
@@ -300,5 +304,276 @@ func TestPerf(t *testing.T) {
 	}
 	if bitrate, err := strconv.Atoi(timing["timing.bitrate"]); err != nil || bitrate > h.s.MaxBitrate {
 		t.Errorf("bitrate %q, the cap is %d", timing["timing.bitrate"], h.s.MaxBitrate)
+	}
+}
+
+// The measurements of step 6.4 (SPEC §11 rule 6, §14): an idle session,
+// connected on the H.264 path with sound, while the picture is still and
+// nothing plays. scripts/perf.sh runs them:
+//
+//	scripts/perf.sh idle     # mardp -test-pattern -still, 300 seconds
+//	scripts/perf.sh screen   # the real screen, 300 seconds
+//
+// The first needs no permission and fails above the target. The second
+// runs mardp as a bundle signed as the M0 probe (scripts/probe-app.sh),
+// whose Screen Recording the owner granted; it is -view-only and plays the
+// sound on both, so it posts nothing and never touches the Mac's output.
+// It only reports: the screen may not be still.
+
+// idleApp builds mardp into a probe-signed bundle, opens it on h with
+// -headless -view-only -measure and returns its pid and its log's path once
+// it listens. It is stopped when the test ends.
+func idleApp(t *testing.T, h *home) (pid int, logPath string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(root, "build", "perf", "MardpIdle.app")
+	exe := filepath.Join(app, "Contents", "MacOS", "mardp")
+	if ps := exePids(t, exe); len(ps) > 0 {
+		t.Fatalf("mardp of an earlier run still runs: %v", ps)
+	}
+	if err := os.RemoveAll(app); err != nil {
+		t.Fatal(err)
+	}
+	run := func(name string, args ...string) {
+		if out, err := exec.CommandContext(ctx, name, args...).CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, out)
+		}
+	}
+	run("go", "build", "-o", exe, ".")
+	run(filepath.Join(root, "scripts", "probe-app.sh"), app, "mardp")
+	logPath = filepath.Join(t.TempDir(), "mardp.log")
+	run("open", "-n", "--env", config.HomeEnv+"="+h.dir, "--stdout", logPath, "--stderr", logPath,
+		app, "--args", "-headless", "-view-only", "-measure")
+	t.Cleanup(func() { stopExe(t, exe) })
+	for {
+		b, _ := os.ReadFile(logPath) // not there yet at first
+		switch {
+		case bytes.Contains(b, []byte("msg=listening")):
+			ps := exePids(t, exe)
+			if len(ps) != 1 {
+				t.Fatalf("mardp runs as %v", ps)
+			}
+			return ps[0], logPath
+		case bytes.Contains(b, []byte("mardp stopped")):
+			t.Fatalf("mardp did not start:\n%s", b)
+		case ctx.Err() != nil:
+			t.Fatalf("mardp does not listen:\n%s", b)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// exePids is the processes running exe.
+func exePids(t *testing.T, exe string) []int {
+	t.Helper()
+	out, _ := exec.Command("pgrep", "-f", exe).Output() // exit 1: none
+	var ps []int
+	for f := range strings.FieldsSeq(string(out)) {
+		if p, err := strconv.Atoi(f); err == nil {
+			ps = append(ps, p)
+		}
+	}
+	return ps
+}
+
+// stopExe ends the processes running exe with SIGTERM, and SIGKILL after
+// 10 s.
+func stopExe(t *testing.T, exe string) {
+	t.Helper()
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		for _, p := range exePids(t, exe) {
+			if err := syscall.Kill(p, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+				t.Error(err)
+			}
+		}
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+			if len(exePids(t, exe)) == 0 {
+				return
+			}
+		}
+		t.Errorf("mardp did not stop on %v", sig)
+	}
+}
+
+// cpuTime is the CPU time pid has used, from ps.
+func cpuTime(t *testing.T, pid int) time.Duration {
+	t.Helper()
+	out, err := exec.Command("ps", "-o", "time=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		t.Fatalf("ps: %v", err)
+	}
+	// [hours:]minutes:seconds.hundredths
+	var d time.Duration
+	parts := strings.Split(strings.TrimSpace(string(out)), ":")
+	for i, p := range parts {
+		f, err := strconv.ParseFloat(p, 64)
+		if err != nil {
+			t.Fatalf("ps: %q", out)
+		}
+		unit := time.Second
+		for range len(parts) - 1 - i {
+			unit *= 60
+		}
+		d += time.Duration(f * float64(unit))
+	}
+	return d
+}
+
+// wakeups is how many times pid was woken from idle in a sample of
+// seconds, by top.
+func wakeups(t *testing.T, pid int, seconds int) int {
+	t.Helper()
+	out, err := exec.Command("top", "-l", "2", "-s", strconv.Itoa(seconds), "-pid", strconv.Itoa(pid), "-stats", "pid,idlew").Output()
+	if err != nil {
+		t.Fatalf("top: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	f := strings.Fields(lines[len(lines)-1])
+	if len(f) != 2 || f[0] != strconv.Itoa(pid) {
+		t.Fatalf("top: %q", lines[len(lines)-1])
+	}
+	n, err := strconv.Atoi(strings.TrimSuffix(f[1], "+"))
+	if err != nil {
+		t.Fatalf("top: %q", lines[len(lines)-1])
+	}
+	return n
+}
+
+// idleResult is what an idle session measured.
+type idleResult struct {
+	span, cpu      time.Duration
+	frames, blocks int64
+	woken, sample  int
+}
+
+// share is the CPU used, in percent of one core.
+func (r idleResult) share() float64 { return 100 * r.cpu.Seconds() / r.span.Seconds() }
+
+// idleSession connects to mardp at pid on h on the H.264 path with sound,
+// acknowledges every frame and confirms every block of sound, and measures
+// the CPU of mardp and its wake-ups for watch, after 10 s to settle.
+func idleSession(t *testing.T, h *home, pid int, watch time.Duration) idleResult {
+	t.Helper()
+	c, err := connectSized(t, h, testUser, testPassword, 1920, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), watch+2*time.Minute)
+	defer cancel()
+	if err := c.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c.KeepChannel(c.ChannelID("rdpsnd"))
+	c.KeepChannel(c.ChannelID("drdynvc"))
+	g, err := c.StartGFX(ctx, rdptest.AVC420Caps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snd, err := c.NegotiateAudio(ctx, rdptest.AudioOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The client reads until the end of the measurement closes its
+	// connection.
+	var frames, blocks atomic.Int64
+	rctx, stopReading := context.WithCancel(ctx)
+	read := make(chan error, 1)
+	go func() {
+		var total uint32
+		for {
+			f, err := c.ReadGFXFrame(rctx, g.ChannelID)
+			if err != nil {
+				read <- err
+				return
+			}
+			total++
+			if err := c.AckFrame(rctx, g.ChannelID, 0, f.ID, total); err != nil {
+				read <- err
+				return
+			}
+			if len(f.H264) > 0 {
+				frames.Add(1)
+			}
+			for snd.Pending() {
+				b, err := snd.ReadBlock(rctx)
+				if err != nil {
+					read <- err
+					return
+				}
+				if err := snd.Confirm(rctx, b, 0); err != nil {
+					read <- err
+					return
+				}
+				blocks.Add(1)
+			}
+		}
+	}()
+	for frames.Load() == 0 {
+		select {
+		case err := <-read:
+			t.Fatalf("the client stopped before the first picture: %v", err)
+		case <-ctx.Done():
+			t.Fatal("no picture came")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	time.Sleep(10 * time.Second) // the session's start
+
+	r := idleResult{sample: 30}
+	framesBefore, blocksBefore := frames.Load(), blocks.Load()
+	cpuBefore, start := cpuTime(t, pid), time.Now()
+	r.woken = wakeups(t, pid, r.sample)
+	if rest := watch - time.Since(start); rest > 0 {
+		select {
+		case err := <-read:
+			t.Fatalf("the client stopped: %v", err)
+		case <-time.After(rest):
+		}
+	}
+	r.cpu, r.span = cpuTime(t, pid)-cpuBefore, time.Since(start)
+	r.frames, r.blocks = frames.Load()-framesBefore, blocks.Load()-blocksBefore
+	stopReading()
+	t.Logf("the client stopped reading: %v", <-read) // the end of rctx
+	t.Logf("idle %v at 1920×1080 on the H.264 path, with sound, after 10 s to settle", r.span.Round(time.Second))
+	t.Logf("frames the client got meanwhile: %d; blocks of sound: %d", r.frames, r.blocks)
+	t.Logf("CPU of mardp: %v, %.2f%% of one core", r.cpu.Round(10*time.Millisecond), r.share())
+	t.Logf("woken from idle: %d times in %d s, %.1f a second", r.woken, r.sample, float64(r.woken)/float64(r.sample))
+	return r
+}
+
+func TestPerfIdle(t *testing.T) {
+	watch := perfSeconds(t, 300*time.Second)
+	h := newHome(t, nil) // the sound on the client: the still pattern has no output to mute
+	p := startPerf(t, h, "-still")
+	r := idleSession(t, h, p.cmd.Process.Pid, watch)
+	p.stop(t)
+	if r.frames > 0 || r.blocks > 0 {
+		t.Errorf("%d frames and %d blocks of sound from a still pattern where nothing plays", r.frames, r.blocks)
+	}
+	if r.share() >= 2 {
+		t.Errorf("mardp used %.2f%% of one core while idle, the target is under 2%%", r.share())
+	}
+}
+
+func TestPerfScreen(t *testing.T) {
+	watch := perfSeconds(t, 300*time.Second)
+	h := newHome(t, func(s *config.Settings) { s.Sound = config.SoundBoth })
+	pid, logPath := idleApp(t, h)
+	r := idleSession(t, h, pid, watch)
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("msg=\"capturing sound\"")) {
+		t.Errorf("mardp did not capture sound:\n%s", b)
+	}
+	if r.frames > int64(r.span.Seconds()) {
+		t.Logf("the screen was not still: %d frames in %v", r.frames, r.span.Round(time.Second))
 	}
 }

@@ -81,8 +81,33 @@ Each row with what is measured so far. "This Mac" is `scripts/perf.sh` (the test
 | Sound | no dropout in 10 minutes | every block confirmed, 46.9 a second | pending |
 | Picture and sound apart | ≤ 100 ms | (needs a person) | pending |
 | CPU during the video | < 60% of one core | 14.9% | pending |
-| CPU idle, client connected | < 2% of one core | step 6.4 | pending |
+| CPU idle, client connected | < 2% of one core | 0.03% (still pattern, 5 minutes); 1.68% on the real screen, not still | pending |
 | Memory during the video | < 300 MB, not growing | 77 MB, not growing | pending |
 | Bitrate | ≤ cap (20 Mbit/s) | 18.5 Mbit/s | pending |
 | From "Connect" to the first picture | < 2 s | 0.26 s from the TCP connection | pending |
 
+
+## Idle (6.4, 2026-11-19)
+
+SPEC §11 rule 6: no timers that wake up many times a second while the screen is still and nothing plays.
+
+```sh
+scripts/perf.sh idle      # 300 seconds; MARDP_PERF_SECONDS sets it
+scripts/perf.sh screen
+```
+
+`scripts/perf.sh idle` runs `mardp -headless -test-pattern -still -measure`: the pattern is encoded once (and again only for a key frame the session asks for) and nothing plays, an idle desktop with no permission needed. `rdptest` connects at 1920×1080 on the H.264 path with sound, as in 6.1; after 10 seconds to settle, the CPU of mardp over the watch comes from `ps`, and how often it was woken from idle in 30 seconds from `top` (IDLEW). It fails at 2% of one core, or if anything was sent. `scripts/perf.sh screen` does the same on the real screen and its sound, as a bundle signed as the M0 probe (view-only, the sound on both, so the Mac's output is never touched), and only reports.
+
+Apple M6, macOS 27.2:
+
+| Run | Sent meanwhile | CPU of mardp | Woken from idle |
+|---|---|---|---|
+| Idle, before the change (60 s) | nothing | 0.60% of one core | 321 a second |
+| Idle, after (5 minutes) | nothing | 0.03% (80 ms in 300 s) | 9.7 a second |
+| Real screen, after (60 s) | 287 frames, no sound | 1.68% | 364 a second |
+
+Notes:
+
+- The change: the H.264 path read its backlog on a ticker at half a frame's time, 120 times a second at 60 frames a second, for the whole session. It now ticks only while the backlog holds the encoder back, and stops as soon as it clears; otherwise the path wakes once a second for the bitrate.
+- What still wakes an idle session: the pointer read, 4 times a second (SPEC §10.3; not in the still pattern, which has no pointer), and once a second the session's numbers, the bitrate decision and the capture's check of its display; the rest is the Go runtime.
+- The real screen was not still: this Mac's screen shows the app the session runs in, with its animations, about 5 frames a second. Most of its wake-ups are ScreenCaptureKit's own threads delivering frames and sound buffers (silent ones are dropped before Go sees them). Its CPU, with those frames encoded and sent, is still under the idle target.

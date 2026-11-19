@@ -186,6 +186,63 @@ func TestPattern(t *testing.T) {
 	}
 }
 
+// TestStill: the still pattern submits picture 0 at once and again for
+// each forced key frame, through the encoder the session got, and nothing
+// else; each refusal is logged; the end of ctx ends it with the encoder closed.
+func TestStill(t *testing.T) {
+	enc := &fakeEncoder{statuses: []int{-12902}}
+	var logged bytes.Buffer
+	s := NewPattern(Options{Still: true, Logger: slog.New(slog.NewTextHandler(&logged, nil))})
+	submitted := make(chan struct{}, 10)
+	s.newEncoder = func(o vtenc.Options, frame func(*vtenc.Frame)) (encoder, error) {
+		enc.opts, enc.frame = o, frame
+		return &submitSignal{fakeEncoder: enc, done: submitted}, nil
+	}
+	s.tick = func(time.Duration) (<-chan time.Time, func()) {
+		t.Error("the still pattern made a clock")
+		return nil, func() {}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	startedWith := make(chan host.VideoEncoder, 1)
+	go func() {
+		done <- s.CaptureVideo(ctx, host.VideoConfig{Width: 1920, Height: 1080, MaxFPS: 60, Bitrate: 8e6},
+			func(e host.VideoEncoder) { startedWith <- e }, func(*host.EncodedFrame) {})
+	}()
+	e := <-startedWith
+	<-submitted
+	e.ForceKeyFrame()
+	<-submitted
+	e.ForceKeyFrame()
+	<-submitted
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(enc.pictures) != 3 || enc.pictures[0] != 0 || enc.pictures[1] != 0 || enc.pictures[2] != 0 || enc.forced != 2 {
+		t.Errorf("pictures %v, %d key frames forced", enc.pictures, enc.forced)
+	}
+	if n := bytes.Count(logged.Bytes(), []byte("refused the still test pattern")); n != 3 {
+		t.Errorf("%d warnings for three refused pictures:\n%s", n, logged.String())
+	}
+	if enc.closed != 1 {
+		t.Errorf("the encoder was closed %d times", enc.closed)
+	}
+}
+
+// submitSignal tells done of each picture submitted.
+type submitSignal struct {
+	*fakeEncoder
+	done chan struct{}
+}
+
+func (e *submitSignal) SubmitPattern(n uint32) int {
+	st := e.fakeEncoder.SubmitPattern(n)
+	e.done <- struct{}{}
+	return st
+}
+
 // TestNew: New's encoder is VideoToolbox's, which refuses a bad size on
 // every system.
 func TestNew(t *testing.T) {

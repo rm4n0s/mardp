@@ -29,7 +29,7 @@ type machine interface {
 	// pattern makes the parts of `mardp -headless -test-pattern` for the
 	// settings s: a moving test pattern through the real encoder and a
 	// tone, without capture and without input (SPEC §15.5).
-	pattern(s config.Settings, log *slog.Logger) (host.Parts, error)
+	pattern(s config.Settings, still bool, log *slog.Logger) (host.Parts, error)
 }
 
 // mac is the real Mac.
@@ -67,7 +67,15 @@ func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger
 	return parts, nil
 }
 
-func (mac) pattern(s config.Settings, log *slog.Logger) (host.Parts, error) {
+func (mac) pattern(s config.Settings, still bool, log *slog.Logger) (host.Parts, error) {
+	if still {
+		parts := host.Parts{Screen: &host.PatternScreen{Frames: 1}, Video: video.NewPattern(video.Options{Logger: log, Still: true})}
+		if s.Sound != config.SoundOff {
+			parts.Sound = host.QuietSource{}
+			parts.AAC = aacParts(log)
+		}
+		return parts, nil
+	}
 	parts := host.Parts{Screen: &host.PatternScreen{}, Video: video.NewPattern(video.Options{Logger: log})}
 	if s.Sound != config.SoundOff {
 		parts.Sound = &host.ToneSource{}

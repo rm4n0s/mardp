@@ -21,6 +21,10 @@ type Options struct {
 	Profile vtenc.Profile
 	// Logger receives the log; nil discards it.
 	Logger *slog.Logger
+	// Still makes the test pattern a still picture: it is submitted once,
+	// and again each time the session forces a key frame, as a still
+	// display would be (`mardp -test-pattern -still`).
+	Still bool
 }
 
 // capturer is what a Source needs of the capture.
@@ -97,6 +101,12 @@ func (s *Source) CaptureVideo(ctx context.Context, cfg host.VideoConfig, started
 		return err
 	}
 	defer enc.Close()
+	if s.capture == nil && s.opts.Still {
+		k := &keyWatch{encoder: enc, want: make(chan struct{}, 1)}
+		started(k)
+		s.still(ctx, k)
+		return nil
+	}
 	started(enc)
 	if s.capture == nil {
 		s.pattern(ctx, enc, max(cfg.MaxFPS, 1))
@@ -104,6 +114,37 @@ func (s *Source) CaptureVideo(ctx context.Context, cfg host.VideoConfig, started
 	}
 	return s.capture.CaptureVideo(ctx, host.ScreenConfig{Width: cfg.Width, Height: cfg.Height, MaxFPS: cfg.MaxFPS},
 		capture.VideoOutput{Encoder: enc, FullRange: true})
+}
+
+// keyWatch is the encoder of the still pattern: it tells still when the
+// session forces a key frame.
+type keyWatch struct {
+	encoder
+	want chan struct{}
+}
+
+// ForceKeyFrame implements host.VideoEncoder.
+func (k *keyWatch) ForceKeyFrame() {
+	k.encoder.ForceKeyFrame()
+	select {
+	case k.want <- struct{}{}:
+	default:
+	}
+}
+
+// still submits picture 0 of the test pattern to k, and again each time a
+// key frame is forced, until ctx ends: nothing runs in between.
+func (s *Source) still(ctx context.Context, k *keyWatch) {
+	for {
+		if st := k.SubmitPattern(0); st != 0 && st != 1 && s.opts.Logger != nil {
+			s.opts.Logger.Warn("the encoder refused the still test pattern", "status", st)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-k.want:
+		}
+	}
 }
 
 // pattern submits the test pattern to enc fps times a second until ctx
