@@ -692,7 +692,7 @@ func TestErrors(t *testing.T) {
 		if err := cc.Close(); err != nil {
 			t.Fatal(err)
 		}
-		assertRoute(t, <-done, "Server.serveConn->conn.negotiate->conn.send."+TagWriteFailed)
+		assertRoute(t, <-done, "Server.serveConn->conn.negotiate->conn.send->conn.write."+TagWriteFailed)
 	})
 	t.Run("deadline fails", func(t *testing.T) {
 		cc, sc := net.Pipe()

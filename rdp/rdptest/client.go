@@ -16,6 +16,7 @@ import (
 	"github.com/rm4n0s/errors"
 
 	"github.com/rm4n0s/mardp/rdp/internal/caps"
+	"github.com/rm4n0s/mardp/rdp/internal/fastpath"
 	"github.com/rm4n0s/mardp/rdp/internal/gcc"
 	"github.com/rm4n0s/mardp/rdp/internal/mcs"
 	"github.com/rm4n0s/mardp/rdp/internal/sec"
@@ -129,6 +130,11 @@ type Client struct {
 	ShareID      uint32
 	ServerSource uint16
 	ServerCaps   caps.Caps
+	// Caps are the capability sets the client confirmed.
+	Caps caps.Caps
+
+	// reassembly joins fragmented fast-path updates.
+	reassembly fastpath.Reassembler
 }
 
 // New returns a client on nc that has not sent anything yet.

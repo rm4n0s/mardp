@@ -89,6 +89,7 @@ func (c *Client) Activate(ctx context.Context) error {
 	if c.opts.EditCaps != nil {
 		c.opts.EditCaps(&ca.Caps)
 	}
+	c.Caps = ca.Caps
 	if err := c.sendShare(func(w *wire.Writer) error { return caps.WriteConfirmActive(w, &ca) }); err != nil {
 		return err
 	}

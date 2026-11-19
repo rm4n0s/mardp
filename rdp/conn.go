@@ -136,14 +136,10 @@ func (s *Server) serveConn(ctx context.Context, nc net.Conn, log *slog.Logger, r
 	return c.runSession(ctx, sess, s.handler)
 }
 
-// send writes one TPKT whose contents body appends.
-func (c *conn) send(body func(w *wire.Writer) error) error {
+// write writes, in one call, the frames that build appends.
+func (c *conn) write(build func(w *wire.Writer) error) error {
 	c.w.Reset()
-	off := tpkt.Begin(&c.w)
-	if err := body(&c.w); err != nil {
-		return err
-	}
-	if err := tpkt.End(&c.w, off); err != nil {
+	if err := build(&c.w); err != nil {
 		return err
 	}
 	if _, err := c.rw.Write(c.w.Bytes()); err != nil {
@@ -152,9 +148,28 @@ func (c *conn) send(body func(w *wire.Writer) error) error {
 	return nil
 }
 
+// send writes one TPKT whose contents body appends.
+func (c *conn) send(body func(w *wire.Writer) error) error {
+	return c.write(func(w *wire.Writer) error { return appendTPKT(w, body) })
+}
+
 // sendData writes one X.224 Data TPDU whose MCS PDU body appends.
 func (c *conn) sendData(body func(w *wire.Writer) error) error {
-	return c.send(func(w *wire.Writer) error {
+	return c.write(func(w *wire.Writer) error { return appendData(w, body) })
+}
+
+// appendTPKT appends one TPKT whose contents body appends.
+func appendTPKT(w *wire.Writer, body func(w *wire.Writer) error) error {
+	off := tpkt.Begin(w)
+	if err := body(w); err != nil {
+		return err
+	}
+	return tpkt.End(w, off)
+}
+
+// appendData appends one X.224 Data TPDU whose MCS PDU body appends.
+func appendData(w *wire.Writer, body func(w *wire.Writer) error) error {
+	return appendTPKT(w, func(w *wire.Writer) error {
 		x224.WriteDataHeader(w)
 		return body(w)
 	})

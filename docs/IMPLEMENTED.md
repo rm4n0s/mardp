@@ -132,3 +132,31 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - A bug found by the route test: `Close` had canceled the session's context before writing, so a handler passing its own context abandoned the write. The context is now canceled after the write.
   - SPEC §5.2 (what Demand Active holds and how finalization is answered), §5.4 (close codes and the 2 s wait) and §6 (names) are updated.
 - **Manual checks:** none.
+
+## 1.8 The writer and fast-path output (2026-11-19)
+- **Built:** `rdp/internal/fastpath`:
+  - `AppendUpdate` frames one update as Fast-Path Update PDUs (MS-RDPBCGR 2.2.9.1.2), each at most 16,383 bytes, with the one-byte length up to 127 bytes and the two-byte length beyond. An update larger than 16,377 bytes goes as FIRST, NEXT… and LAST fragments, one PDU each. `MaxUpdate` gives the largest update a client takes: its MaxRequestSize, or one PDU's worth when it sent none.
+  - For the client side, which `rdptest` uses: `ParsePDU`, `ReadUpdate` (compressionFlags included) and `Reassembler`, which follows the sequence rules of 3.2.5.9.3.1.
+  - 6 tags.
+
+  In `rdp`:
+  - The session's writer goroutine (`writer.go`) is the only thing that writes to the connection once the session is open. It has two queues, control (32 packets) and video (4 packets), and takes from control first. Each packet is whole frames written in one write; the packets are made when the session starts and go back to a free list after each write. A send never waits: with no free packet it fails with `TagQueueFull`, and after the session ended with `TagSessionOver`. A failed write closes the connection, and the session ends with that error.
+  - Unexported `Session.sendUpdate` and `sendShare` are what the video, pointer and input steps will use; `sendUpdate` refuses a client without fast-path output (`TagFastPathUnsupported`).
+  - `Close` now goes through the writer: Set Error Info and the ultimatum in one packet on the control queue, ahead of queued video. A context that ends first closes the connection (`TagCloseAbandoned`). The conn's own writes are built by `appendTPKT`/`appendData`/`appendIO`, shared by the sequence and the writer.
+  - 4 new tags in `rdp`.
+
+  `rdptest`: `ReadUpdate` reads the next fast-path update whole, joined in a buffer of the client's confirmed MaxRequestSize; `Client.Caps` holds what the client confirmed.
+- **Proved:**
+  - **An update larger than the fragment size arrives whole:** `TestUpdates` sends updates of 0, 4, 16,377, 16,378, 300,000 and 0x3f0000 bytes (the client's MaxRequestSize), and 16,377 bytes to a client without a Multifragment Update set. `rdptest` gets each one byte for byte, along with a control update queued after it.
+  - **Control before video:** `TestWriterControlFirst` holds the writer in the write of video packet 1 while video 2 and 3 and then control 9 and 8 are queued. The writes that follow are 9, 8, 2, 3.
+  - **0 allocations:** `TestWriterAllocs` sends a 200 KiB fragmented video update, a small control update and a share PDU through the running writer, 0 allocations each. `fastpath.TestAllocs` covers framing and reassembly. Benchmarks (Apple M6): `AppendUpdate` 1 MiB in 48 µs (21.6 GB/s), 0 allocs; `BenchmarkWriter` 256 KiB in 17 µs per update to the writer goroutine and back, 0 allocs.
+  - **fastpath:** byte-exact PDUs worked out from the field tables (Microsoft gives no annotated example of fast-path output): no data, a pointer position, 122 and 123 bytes (the two length forms), 16,377 bytes, two and three fragments. Also 300 random round trips through framing, parsing and reassembly, every sequence fault, every cut of an update, and 5000 mutations. Coverage is 100%.
+  - **Errors:** queue full on each queue (the other queue unaffected); a build error gives the packet back emptied; a failed write reaches `fail`, the waiting sender and `failure()`, then `TagSessionOver`; `TestSessionWriteFails` ends a real session through a connection whose writes fail; updates too large, without multifragment, and without fast-path output; sends after the client disconnected; `Close` with a canceled context; `rdptest.ReadUpdate`'s failures against the fake server. Every new tag has a route test.
+  - Four repeated `-race` runs pass. Coverage: `rdp` 92.2%, `rdptest` 72.4%.
+- **Differs from the plan:**
+  - The public `Video()`/`Audio()`/pointer methods come with their steps (1.10, 1.11, M3). This step gives them `sendUpdate`/`sendShare`.
+  - TCP_NODELAY needs no code: Go sets it on every TCP connection.
+  - `rdptest.ReadUpdate` refuses a PDU with more than one update, which is legal but which this server never sends.
+  - `conn.disconnect` now writes Set Error Info and the ultimatum in one write. The route of a sequence write failure is now `conn.send->conn.write`.
+  - SPEC §4.2 (queue sizes and behavior), §5.2 (PDU size and fragmentation) and §5.4 (`Close` through the writer) are updated.
+- **Manual checks:** none.

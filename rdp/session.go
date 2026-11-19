@@ -32,6 +32,9 @@ const (
 	// TagCloseDeadlineFailed: after Session.Close, the deadline for the
 	// client to hang up could not be set; the cause is kept.
 	TagCloseDeadlineFailed = "SessionCloseDeadlineFailed"
+	// TagCloseAbandoned: Close's context ended before the client was told
+	// why; the connection was closed without it. The cause is kept.
+	TagCloseAbandoned = "SessionCloseAbandoned"
 )
 
 // MaxDesktopSide is the largest desktop width or height a client accepts
@@ -167,8 +170,9 @@ type Session struct {
 	width  int
 	height int
 	cancel context.CancelFunc
+	// wr writes everything the session sends.
+	wr *writer
 
-	// mu serializes what the session writes.
 	mu sync.Mutex
 	// reason is why the server ended the session; 0 while it is open or
 	// when the client ended it.
@@ -185,32 +189,52 @@ func (s *Session) Client() *Client { return &s.client }
 func (s *Session) DesktopSize() (width, height int) { return s.width, s.height }
 
 // Close ends the session for reason: Set Error Info, when the client said it
-// understands it, and a Disconnect Provider Ultimatum (SPEC §5.4). The
-// session's context is canceled. Close on a session that is over does
-// nothing. When ctx ends first, the write is abandoned and the connection
-// closed.
+// understands it, and a Disconnect Provider Ultimatum (SPEC §5.4), ahead of
+// any video still queued. The session's context is canceled. Close returns
+// when they are written; on a session that is over it does nothing. When
+// ctx ends first, the connection is closed without them.
 func (s *Session) Close(ctx context.Context, reason CloseReason) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.ended || s.reason != 0 {
+		s.mu.Unlock()
 		return nil
 	}
 	s.reason = reason
+	s.mu.Unlock()
 	// The session's context ends after the write: a handler passes its own
 	// context to Close, which would abandon the write at once.
 	defer s.cancel()
-	nc := s.c.nc
-	stop := context.AfterFunc(ctx, func() {
-		if err := nc.SetWriteDeadline(time.Now()); err != nil {
-			s.c.log.Debug("abandoning the close", "err", err)
-		}
+	if err := ctx.Err(); err != nil {
+		s.closeConn()
+		return errors.NewErr(TagCloseAbandoned, err)
+	}
+	done := make(chan error, 1)
+	err := s.wr.send(queueControl, func(p *packet) error {
+		p.done = done
+		return s.c.appendDisconnect(&p.w, &p.tmp, reason.errorInfo())
 	})
-	defer stop()
-	if err := s.c.disconnect(reason.errorInfo()); err != nil {
+	if err != nil {
 		s.closeConn()
 		return err
 	}
-	if err := nc.SetReadDeadline(time.Now().Add(closeWait)); err != nil {
+	select {
+	case err = <-done:
+	case <-s.wr.exited:
+		// The writer stops after it reports the write, so a report may be
+		// waiting.
+		select {
+		case err = <-done:
+		default:
+			return errors.New(TagSessionOver, "the session ended before the client was told", "reason", reason.String())
+		}
+	case <-ctx.Done():
+		s.closeConn()
+		return errors.NewErr(TagCloseAbandoned, ctx.Err())
+	}
+	if err != nil {
+		return err
+	}
+	if err := s.c.nc.SetReadDeadline(time.Now().Add(closeWait)); err != nil {
 		s.closeConn()
 		return errors.NewErr(TagCloseDeadlineFailed, err)
 	}
@@ -475,6 +499,11 @@ func (c *conn) runSession(ctx context.Context, s *Session, h Handler) error {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s.cancel = cancel
+	s.wr = newWriter(c.rw, func(err error) {
+		c.log.Debug("writing to the client", "err", err)
+		s.closeConn()
+	})
+	go s.wr.run()
 	stop := context.AfterFunc(ctx, func() {
 		if err := s.Close(context.Background(), CloseServerStopped); err != nil {
 			c.log.Debug("closing the session as the server stops", "err", err)
@@ -488,6 +517,12 @@ func (c *conn) runSession(ctx context.Context, s *Session, h Handler) error {
 	err := c.readSession(s)
 	s.end()
 	cancel()
+	// What is still queued is dropped; a write the client does not read
+	// fails now.
+	if derr := c.nc.SetWriteDeadline(time.Now()); derr != nil {
+		c.log.Debug("ending the session's writes", "err", derr)
+	}
+	s.wr.halt()
 	wg.Wait()
 	return err
 }
@@ -502,6 +537,11 @@ func (c *conn) readSession(s *Session) error {
 			if r := s.closedBy(); r != 0 {
 				c.log.Info("session closed", "reason", r.String())
 				return nil
+			}
+			// A failed write closes the connection; that is why the read
+			// failed.
+			if werr := s.wr.failure(); werr != nil {
+				return werr
 			}
 			return err
 		}

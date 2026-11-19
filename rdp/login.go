@@ -148,32 +148,44 @@ func (c *conn) login(auth Authenticator) error {
 // sendIO writes one PDU, which body appends, to the client on the I/O
 // channel.
 func (c *conn) sendIO(body func(w *wire.Writer) error) error {
-	c.pdu.Reset()
-	if err := body(&c.pdu); err != nil {
+	return c.write(func(w *wire.Writer) error { return appendIO(w, &c.pdu, body) })
+}
+
+// appendIO appends one PDU, which body appends to tmp first, sent to the
+// client on the I/O channel.
+func appendIO(w, tmp *wire.Writer, body func(w *wire.Writer) error) error {
+	tmp.Reset()
+	if err := body(tmp); err != nil {
 		return err
 	}
-	return c.sendData(func(w *wire.Writer) error {
+	return appendData(w, func(w *wire.Writer) error {
 		return mcs.WriteSendDataIndication(w, &mcs.SendData{
 			Initiator:    serverInitiator,
 			ChannelID:    ioChannelID,
 			Priority:     mcs.PriorityHigh,
 			Segmentation: mcs.SegmentationWhole,
-			Data:         c.pdu.Bytes(),
+			Data:         tmp.Bytes(),
 		})
 	})
 }
 
 // disconnect tells the client why it is disconnected, with Set Error Info
 // when the client said it understands it, and ends the MCS domain with a
-// Disconnect Provider Ultimatum (SPEC §5.4). The caller closes the
-// connection.
+// Disconnect Provider Ultimatum (SPEC §5.4), in one write. The caller closes
+// the connection.
 func (c *conn) disconnect(code uint32) error {
+	return c.write(func(w *wire.Writer) error { return c.appendDisconnect(w, &c.pdu, code) })
+}
+
+// appendDisconnect appends what disconnect writes, using tmp for the Set
+// Error Info PDU.
+func (c *conn) appendDisconnect(w, tmp *wire.Writer, code uint32) error {
 	if c.client.Core.Early(gcc.EarlySupportErrInfoPDU) {
-		if err := c.sendIO(func(w *wire.Writer) error { sec.WriteSetErrorInfo(w, shareID, code); return nil }); err != nil {
+		if err := appendIO(w, tmp, func(w *wire.Writer) error { sec.WriteSetErrorInfo(w, shareID, code); return nil }); err != nil {
 			return err
 		}
 	}
-	return c.sendData(func(w *wire.Writer) error {
+	return appendData(w, func(w *wire.Writer) error {
 		return mcs.WriteDisconnectProviderUltimatum(w, mcs.ReasonProviderInitiated)
 	})
 }

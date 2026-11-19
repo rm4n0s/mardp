@@ -106,7 +106,7 @@ TCP ─► TLS ─► rdp: input events ─► host ─► Core Graphics events
 
 - A captured frame never enters Go memory on the H.264 path. ScreenCaptureKit gives an IOSurface, the C side hands it to the encoder, and only the encoded bytes cross into Go: one callback per frame.
 - Whether a frame is encoded or skipped is one atomic flag that Go writes and the C callback reads, so skipping costs nothing.
-- Each session has one writer goroutine that owns the TLS connection. It takes from two queues: control, input replies and sound first, video second. Sound never waits behind a large video frame.
+- Each session has one writer goroutine that owns the TLS connection. It takes from two queues: control, input replies and sound first, video second. Sound never waits behind a large video frame. Each queue has a fixed number of packets made at the start of the session (control 32, video 4); a packet is whole frames built by the sender, written in one write, and goes back to its queue's free list after it, keeping the room it grew to. A send that finds no free packet fails at once with a tagged error (the queue is full) instead of waiting. A failed write ends the session with its error. When the session ends, what is still queued is dropped.
 
 ## 5. Protocol scope
 
@@ -143,7 +143,7 @@ Limits before login: at most 8 connections that have not logged in (one more is 
 ### 5.2 Capabilities
 
 - Desktop size: the server decides it (§9.2) and states it in Demand Active; the client follows.
-- Colour depth 32. Fast-path output, with fragmentation and the largest request size the client states.
+- Colour depth 32. Fast-path output, with fragmentation and the largest request size the client states. Every fast-path PDU is at most 16,383 bytes (MS-RDPBCGR 2.2.9.1.2) and carries one update or one fragment of it, unencrypted and uncompressed; an update larger than one PDU carries (16,377 bytes) goes as FIRST, NEXT and LAST fragments, one PDU each, all in one write. An update larger than the client's MaxRequestSize, or than one PDU when it sent no Multifragment Update set, is refused with a tagged error; so is a fast-path update to a client that did not confirm fast-path output.
 - Input: scancodes, Unicode, extended mouse buttons, horizontal wheel, fast-path input.
 - Pointer: colour pointers with alpha (32 bpp), pointer cache, large pointers when the client has them.
 - Virtual channels, sound, frame acknowledgement, Surface Commands.
@@ -157,7 +157,7 @@ Input events (fast-path, and the slow-path form too), Suppress Output (the clien
 
 ### 5.4 Ending a session
 
-The server ends a session with Set Error Info (the reason) and an MCS Disconnect Provider Ultimatum: logged out by the app's user (`CloseByHost`, ERRINFO_RPC_INITIATED_DISCONNECT 0x01), replaced by another client (`CloseReplaced`, ERRINFO_DISCONNECTED_BY_OTHERCONNECTION 0x05, D13), server stopped (`CloseServerStopped`, ERRINFO_SERVER_SHUTDOWN 0x19, sent by the library itself when `Serve`'s context ends), login failed. After the ultimatum the server waits up to 2 seconds for the client to hang up before it closes the connection, so that a reset cannot lose the reason. A client ends a session with its own ultimatum, or by closing the connection. Set Error Info is sent only to a client whose core data says it supports it (RNS_UD_CS_SUPPORT_ERRINFO_PDU); the ultimatum's reason is rn-provider-initiated. A failed login sends ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED (0x0A), see §20. A connection that goes silent is closed by TCP keep-alive (15 s idle, 5 s interval, 3 probes).
+The server ends a session with Set Error Info (the reason) and an MCS Disconnect Provider Ultimatum: logged out by the app's user (`CloseByHost`, ERRINFO_RPC_INITIATED_DISCONNECT 0x01), replaced by another client (`CloseReplaced`, ERRINFO_DISCONNECTED_BY_OTHERCONNECTION 0x05, D13), server stopped (`CloseServerStopped`, ERRINFO_SERVER_SHUTDOWN 0x19, sent by the library itself when `Serve`'s context ends), login failed. Session.Close queues Set Error Info and the ultimatum together on the control queue, ahead of any video still queued, and returns once they are written; when its context ends first, the connection is closed without them. After the ultimatum the server waits up to 2 seconds for the client to hang up before it closes the connection, so that a reset cannot lose the reason. A client ends a session with its own ultimatum, or by closing the connection. Set Error Info is sent only to a client whose core data says it supports it (RNS_UD_CS_SUPPORT_ERRINFO_PDU); the ultimatum's reason is rn-provider-initiated. A failed login sends ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED (0x0A), see §20. A connection that goes silent is closed by TCP keep-alive (15 s idle, 5 s interval, 3 probes).
 
 ## 6. The library's API
 
