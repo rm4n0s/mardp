@@ -152,8 +152,8 @@ Remmina shows and controls the Mac's desktop, on the bitmap path. Spec: §4, §7
 
 ### 2.4 Capture
 - **Spec:** §7.2, §9.2, §9.6, D9.
-- **Do:** `internal/mac/capture`: a display captured at the session's size, BGRA with changed rectangles for the bitmap path, without the pointer; start, pause, resume, stop; the skip flag; the order of teardown written in the package's documentation.
-- **Proof:** `mardp_mac` tests: frames arrive, a still screen delivers none, stop leaves no callback running (a test that stops a thousand times).
+- **Do:** `internal/mac/capture`: a display captured at the session's size, BGRA with changed rectangles for the bitmap path, without the pointer; start, pause, resume, stop; the skip flag; the order of teardown written in the package's documentation. From R1 (§7.2): the display is remembered by its UUID, woken with the two power assertions, and followed through display changes: on a reconfiguration or `SCStreamError` -3815 the capture finds the display again and restarts, and tells the host so it can send a key frame. From R6: a stream that stops with a permission error ends with a tagged error the session reports as its reason.
+- **Proof:** `mardp_mac` tests: frames arrive, a still screen delivers none, stop leaves no callback running (a test that stops a thousand times); the restart logic with a fake stream that fails with -3815.
 
 ### 2.5 Keyboard and mouse
 - **Spec:** §10.4, §10.5, D19.
@@ -162,7 +162,7 @@ Remmina shows and controls the Mac's desktop, on the bitmap path. Spec: §4, §7
 
 ### 2.6 The pointer source
 - **Spec:** §10.3, the answer to R4.
-- **Do:** The pointer's image and hotspot when it changes, hidden state, the position when the Mac moves it; or the fallback, if R4 said so.
+- **Do:** The pointer's image and hotspot when it changes, hidden state, the position when the Mac moves it, read by polling as §10.3 says (R4: macOS has no notification for it): `currentSystemCursor` and `CGCursorIsVisible` 30 ms after a client mouse event, after frames, and 4 times a second only while a client is connected; a new image is sent only when its hash changes.
 - **Proof:** a `mardp_mac` test reads the current image; the rest by hand.
 
 ### 2.7 `mardp -headless`
@@ -205,8 +205,8 @@ A 1080p video plays smoothly. Spec: §9, §11.
 
 ### 3.6 The hardware encoder
 - **Spec:** §9.3, §4.2.
-- **Do:** `internal/mac/vtenc`: the session with the settings of §9.3 and the findings of 0.8; Annex B output into pooled buffers; a new bitrate without a restart; a forced key frame; one callback per frame.
-- **Proof:** `mardp_mac` tests: the first frame is a key frame, a forced one is too, the bitrate follows; no B-frames in the stream.
+- **Do:** `internal/mac/vtenc`: the session with the settings of §9.3 and the findings of 0.8 (low-latency rate control, Constrained High, the range the capture is set to); Annex B output into pooled buffers; a new bitrate without a restart; a forced key frame; one callback per frame.
+- **Proof:** `mardp_mac` tests: the first frame is a key frame, a forced one is too, the bitrate follows; no B-frames in the stream, and the SPS says `max_num_reorder_frames = 0`.
 
 ### 3.7 Capture straight into the encoder
 - **Spec:** §4.2, §11 rules 1 and 3.
@@ -220,7 +220,7 @@ A 1080p video plays smoothly. Spec: §9, §11.
 
 ### 3.9 A real client decodes it
 - **Spec:** §9.3, §15.3.
-- **Do:** `mardp_freerdp` tests: FreeRDP in the guest negotiates AVC420, acknowledges frames, and its screenshot of colour bars is within tolerance (which fixes the matrix and range); the profile test (High, else Main, else Constrained Baseline) records its result in §9.3. The window shows the video path.
+- **Do:** `mardp_freerdp` tests: FreeRDP in the guest negotiates AVC420, acknowledges frames, and its screenshot of colour bars is within tolerance (which fixes the matrix and range); the profile test (Constrained High, else Main, else Constrained Baseline; OpenH264 decoded all of them in 0.8) records its result in §9.3. The window shows the video path.
 - **Proof:** the tests pass. Manual checks: a 1080p video in Remmina, in the guest and on the owner's Linux machine. **Milestone M3 is published.**
 
 ## M4. Sound
@@ -243,12 +243,12 @@ The video's sound plays in Remmina, in sync. Spec: §10.1, §10.2.
 
 ### 4.4 AAC
 - **Spec:** §10.1, the findings of 0.8.
-- **Do:** `internal/mac/aacenc`; the AAC format block; the choice between AAC and PCM from the client's list.
+- **Do:** `internal/mac/aacenc`: AudioToolbox's AAC-LC, whose raw access units (1024 frames, no ADTS) go out one per Wave2 PDU as 0.8 found; the AAC format block; the choice between AAC and PCM from the client's list.
 - **Proof:** `mardp_mac` test of the encoder; `rdptest` negotiates AAC when it offers it and PCM when it does not.
 
 ### 4.5 Where the sound plays
 - **Spec:** §10.1, D17, the answer to R2.
-- **Do:** "On the client only": the Mac's output is muted while a client is connected and restored afterwards, also after a crash (a marker in the settings folder is cleared on the next start). "On both" and "off".
+- **Do:** "On the client only": the default output device's mute property (Core Audio; the volume is never touched) is set while a client is connected and restored afterwards, also after a crash (a marker in the settings folder is cleared on the next start). R2 showed capture is not affected by the mute. "On both" and "off".
 - **Proof:** the marker's logic with fakes; the muting itself by hand.
 
 ### 4.6 A real client plays it
@@ -287,7 +287,7 @@ Everything of §12 on a fresh install.
 
 ### 5.6 The bundle and the README
 - **Spec:** §16, §8.3.
-- **Do:** The icon, the bundle's information and version (`-version`); the final `scripts/build-app.sh`; the README: install, the permissions, the Remmina profile (TLS, the colour depth for H.264), the signing identity, what mardp does not protect against.
+- **Do:** The icon, the bundle's information and version (`-version`); the final `scripts/build-app.sh`; the README: install, the permissions and macOS's recurring Screen Recording question (R6), the Linux side (Cisco's `openh264`, not `noopenh264`; R5), the Remmina profile (TLS, the colour depth for H.264), turning the screen lock off while away (R3, unless the owner's check says otherwise), the signing identity, what mardp does not protect against.
 - **Proof:** a bundle built from a clean checkout starts and passes `codesign --verify`.
 
 ### 5.7 A fresh install

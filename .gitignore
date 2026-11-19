@@ -37,4 +37,3 @@ go.work.sum
 /mardp
 /build/
 *.app
-spikes/out/

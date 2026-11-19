@@ -92,7 +92,7 @@ Rules:
 - `rdp` never imports `internal/...` of mardp, Glutter or cgo. `GOOS=linux go build ./rdp/...` and `go test ./rdp/...` always pass.
 - Every package under `internal/mac` has a `_darwin.go` file with the real code and a stub for other systems whose constructors fail with a tagged error (`CaptureUnsupported` and the like), so `go build ./...` and the tests that use fakes pass on Linux.
 - `rdp/rdptest` is imported only by test files. A package under `internal/mac` may import another one there.
-- `spikes/` (M0 only) may import anything, cgo and Glutter included; nothing else imports it. A package directory that is not in the table fails `internal/archtest`, so a new package means a new row here.
+- `spikes/` held M0's throwaway programs, which could import anything; step 0.9 deleted it, and these rules no longer make room for it. A package directory that is not in the table fails `internal/archtest`, so a new package means a new row here.
 - `internal/host` knows nothing about macOS: it works on interfaces. Every test of the pipeline runs with fakes (a test-pattern screen, a tone generator, a recording input sink) and needs no permission and no display.
 
 ### 4.2 One session, from capture to socket
@@ -334,7 +334,7 @@ D7 makes speed a requirement, so the rules are part of the specification:
 
 - **Status**: stopped, listening, or connected. When listening: the addresses to type into Remmina (each IP of the Mac with the port) and the certificate's fingerprint. When connected: the client's name and address, since when, the desktop size, the video path (§9.1), frames a second, bitrate, the sound format, the delay; and a "Disconnect" button.
 - **Start / Stop** of the server.
-- **Checklist**, shown until everything is done: Screen Recording, Accessibility, a password. Each line has its state and a button (open System Settings, or set the password). The lines update by themselves when the user grants a permission.
+- **Checklist**, shown until everything is done: Screen Recording, Accessibility, a password. Each line has its state and a button (open System Settings, or set the password). The lines update by themselves when the user grants a permission. The checklist comes back when a permission is withdrawn. The Screen Recording line explains that macOS asks again from time to time ("... requesting to bypass the system private window picker ...") and that the question is answered at the Mac. A running capture goes on while the question waits (§19 R6).
 - **Settings**: user name and password; port and address; start the server when the app opens; open the app at login; display; height cap; frame rate cap (30 or 60); bitrate cap; sound (off, client only, both); swap Ctrl and Command; new certificate.
 - **Recent events**: connections, disconnections with their reason, failed logins.
 
@@ -442,7 +442,7 @@ mardp is BSD-3-Clause. The protocols are implemented from Microsoft's Open Speci
 
 ## 19. Risks to check first (M0)
 
-Each is answered by a small program before the real work starts, because the answer changes the design.
+Each was answered by a small program before the real work started (M0, steps 0.4 to 0.8), because the answer changes the design. The programs were deleted in step 0.9; what they found is in the Answer column and in the sections it names. R3 still waits for the owner's own check, and 1.0 assumes its bad answer until then.
 
 | # | Question | If the answer is bad | Answer |
 |---|---|---|---|

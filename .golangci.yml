@@ -27,9 +27,6 @@ linters:
           msg: use errors.NewErrf of github.com/rm4n0s/errors (CLAUDE.md, "Error handling")
     misspell:
       locale: US
-  exclusions:
-    paths:
-      - spikes/
 
 formatters:
   enable:

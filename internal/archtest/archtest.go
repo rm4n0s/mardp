@@ -1,7 +1,7 @@
 // Package archtest checks the import rules of the package table in
 // docs/SPEC.md §4.1: which package may import what, that `import "C"`
-// appears only under internal/mac, and that nothing of the product imports
-// the throwaway code under spikes/.
+// appears only under internal/mac. The throwaway spikes/ of M0 were deleted in
+// step 0.9, so a spikes/ directory is now an unknown package like any other.
 //
 // The rules are written as data in this package. A package directory that
 // the table does not know is itself a violation, so a new package cannot be
@@ -173,24 +173,21 @@ func forbidden(module, dir, imp string, test bool) string {
 	}
 
 	// Rules that hold everywhere.
-	if k == kindOwn && under(own, "spikes") && !under(dir, "spikes") {
-		return "the product never imports spikes/ (IMPLEMENTATION.md rule 12)"
-	}
-	if k == kindCgo && !under(dir, "internal/mac") && !under(dir, "spikes") {
+	if k == kindCgo && !under(dir, "internal/mac") {
 		return `import "C" only under internal/mac (SPEC D14, §4.1)`
 	}
-	if k == kindGlutter && !under(dir, "internal/ui") && !under(dir, "spikes") {
+	if k == kindGlutter && !under(dir, "internal/ui") {
 		return "only internal/ui imports Glutter (SPEC §4.1)"
 	}
-	if k == kindOther && !under(dir, "spikes") {
+	if k == kindOther {
 		return "a dependency CLAUDE.md does not allow"
 	}
 
 	switch {
 	case dir == ".":
 		return "no Go code at the module root"
-	case under(dir, "spikes"), under(dir, "cmd/mardp"):
-		// spikes/ is throwaway (rule 12); cmd/mardp wires everything.
+	case under(dir, "cmd/mardp"):
+		// cmd/mardp wires everything.
 		return ""
 	case under(dir, "rdp"):
 		if k == kindOwn && !under(own, "rdp") {
