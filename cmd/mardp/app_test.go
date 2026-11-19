@@ -660,7 +660,7 @@ func TestAppSessionAndEvents(t *testing.T) {
 	byOwner, stopped := conn, conn
 	byOwner.Kind, byOwner.Ended = ui.EventDisconnected, host.EndedByOwner
 	stopped.Kind, stopped.Ended = ui.EventDisconnected, host.EndedServerStopped
-	want := []ui.Event{{At: at, Kind: ui.EventLoginFailed, User: testUser}, conn, byOwner, conn, stopped}
+	want := []ui.Event{{At: at, Kind: ui.EventLoginFailed, User: testUser, Failures: 1}, conn, byOwner, conn, stopped}
 	if !slices.Equal(got, want) {
 		t.Errorf("events\n%+v\nwant\n%+v", got, want)
 	}
@@ -672,9 +672,15 @@ func TestAppEventsLimit(t *testing.T) {
 	m := newFakeMac(host.ScreenRecording, host.Accessibility)
 	a := newTestApp(t, h, m, false, slog.New(slog.DiscardHandler))
 	for i := range maxEvents + 10 {
-		a.refused("user"+strconv.Itoa(i), "10.0.0.1:1")
+		a.refused("user"+strconv.Itoa(i), "10.0.0.1:1", config.LoginResult{Checked: true, Failures: i + 1})
 	}
-	ev := a.Status().Events
+	// A login refused because the address waits is no event.
+	a.refused("waiting", "10.0.0.1:1", config.LoginResult{Failures: maxEvents + 10, Wait: time.Hour})
+	st := a.Status()
+	ev := st.Events
+	if st.EventTotal != maxEvents+10 {
+		t.Errorf("%d events in all, want %d", st.EventTotal, maxEvents+10)
+	}
 	if len(ev) != maxEvents || ev[0].User != "user10" || ev[len(ev)-1].User != "user"+strconv.Itoa(maxEvents+9) {
 		t.Errorf("%d events, from %q to %q", len(ev), ev[0].User, ev[len(ev)-1].User)
 	}

@@ -419,6 +419,11 @@ As built in 5.3:
 
 A client connected; a client disconnected; failed logins from an address (once per waiting period, not once per attempt).
 
+As built in 5.4:
+- The window posts them through Glutter (macOS's notification center, which asks the user once whether mardp may notify), with the app's name and a click that brings the window back. "laptop connected" says from where and as whom; "laptop disconnected" says why, as the recent events do.
+- A failed login has a notification only when it makes its address wait ("Failed logins from 192.168.1.31: 5 failed logins, the last as \"root\": the address waits 1 minute."), so an address gets one a waiting period. The window notifies only of the events it had not seen: none for those before it opened.
+- The recent events show every failed login that was checked, with the count and the wait when it starts one; a login refused because its address waits is only logged (§8.2: it does not count). With failed logins in the events, the card shows the waiting rule under them. A notification that cannot be shown (notifications turned off for mardp) is said in the events card.
+
 ## 13. Configuration and files
 
 - Everything is under `~/Library/Application Support/mardp/`: `config.json` (the settings and the password hash), `cert.pem` and `key.pem` (mode 0600). The folder is created with mode 0700.

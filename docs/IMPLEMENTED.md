@@ -747,3 +747,17 @@ One entry per finished step of `docs/IMPLEMENTATION.md`, newest last: what was b
   - Not in the plan: quitting at a logout or shutdown, which the hidden window would otherwise block (`WatchPowerOff`).
   - The window's tests now run on Glutter's fake Linux desktop, the only one with a tray (docs/GLUTTER-ISSUES.md); they need `-tags debug_mode`, as before.
 - **Manual checks:** the icon and its menu with real clicks, closing and Quit, a logout: pending, see docs/MANUAL-CHECKS.md (5.3).
+
+## 5.4 Notifications and failed logins (2026-11-19)
+- **Built:**
+  - `internal/ui`: the window posts the notifications of the events it has not seen (`Status.EventTotal`), through Glutter's `desktop.ShowNotification`: a client connected, a client disconnected, and failed logins from an address when one makes it wait (`NotificationOf`). A click brings the window back; a failure to notify is shown in the events card. A failed login's event line has the count and the wait it starts, and the waiting rule (`WaitRuleText`, from `config`'s constants) shows under events with failed logins.
+  - `internal/config`: `LoginResult.Checked` says whether the password was checked (false while the address waits); the doc of `Wait` was wrong about a failure that starts a wait.
+  - `cmd/mardp`: the authenticator hands the guard's result to the app, which records only the failures that were checked, with their count and wait, and counts every event.
+  - SPEC §12.4: the notifications as built.
+- **Proved:**
+  - Unit tests of each notification and of the events without one, of the wait in words and of the waiting rule.
+  - `gluttertest` with the fake desktop as the notifier: no notification for the events before the window opened; a connection; five failed logins with one notification, at the one that starts the wait; the waiting rule shown; a click on a notification bringing the hidden window back; Disconnect's notification.
+  - `cmd/mardp`: the authenticator tells the app the fifth failure's wait and the unchecked login while waiting; the app records no event for the latter and counts the events; a failed login's event has its count.
+  - `internal/config`: `Checked` at each step of the guard's table.
+- **Differs from the plan:** the plan's fake notifier is Glutter's fake desktop, which serves the notifications the window posts.
+- **Manual checks:** the notifications in macOS's notification center and the failed logins with Remmina: pending, see docs/MANUAL-CHECKS.md (5.4).

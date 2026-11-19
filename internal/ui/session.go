@@ -51,6 +51,11 @@ type Event struct {
 	Client, Remote, User string
 	// Ended is why a session ended.
 	Ended host.Ended
+	// Failures is the address's count of failed logins with this one, and
+	// Wait the wait this failure made the address start; 0 when none
+	// (SPEC §8.2).
+	Failures int
+	Wait     time.Duration
 }
 
 // EventText is the line of the recent events that says e.
@@ -62,7 +67,11 @@ func EventText(e Event) string {
 	case EventDisconnected:
 		return at + e.Client + " disconnected: " + endedText(e.Ended)
 	case EventLoginFailed:
-		return at + fmt.Sprintf("Failed login as %q from %s", e.User, e.Remote)
+		line := at + fmt.Sprintf("Failed login as %q from %s", e.User, e.Remote)
+		if e.Wait > 0 {
+			line += fmt.Sprintf(": %d failures, the address waits %s", e.Failures, WaitText(e.Wait))
+		}
+		return line
 	}
 	return at + "?"
 }

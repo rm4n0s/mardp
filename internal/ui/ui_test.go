@@ -120,6 +120,7 @@ func (f *fakeBackend) Disconnect(ctx context.Context) error {
 		f.st.Server, f.st.Session, f.st.Video = ServerListening, host.SessionInfo{}, ""
 		f.st.Events = append(f.st.Events, Event{At: info.Since.Add(time.Minute), Kind: EventDisconnected,
 			Client: info.Client, Remote: info.Remote, Ended: host.EndedByOwner})
+		f.st.EventTotal++
 	}
 	return nil
 }

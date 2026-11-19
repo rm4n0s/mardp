@@ -58,6 +58,10 @@ func TestGuard(t *testing.T) {
 		clock = clock.Add(s.advance)
 		before := checked
 		got := login(s.addr, s.ok)
+		if got.Checked != s.checking {
+			t.Fatalf("step %d: Checked %v, want %v", i, got.Checked, s.checking)
+		}
+		got.Checked = false
 		if got != s.want {
 			t.Fatalf("step %d: %+v, want %+v", i, got, s.want)
 		}

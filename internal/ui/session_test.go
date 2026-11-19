@@ -62,6 +62,8 @@ func TestEventText(t *testing.T) {
 		{ev(EventDisconnected, host.EndedReplaced), "14:03:21  laptop disconnected: " + TextEndedReplaced},
 		{ev(EventDisconnected, host.EndedServerStopped), "14:03:21  laptop disconnected: " + TextEndedServerStopped},
 		{ev(EventLoginFailed, 0), `14:03:21  Failed login as "alice" from 192.168.1.30:51234`},
+		{Event{At: testSince, Kind: EventLoginFailed, Remote: "192.168.1.31:40000", User: "root", Failures: 6, Wait: 2 * time.Minute},
+			`14:03:21  Failed login as "root" from 192.168.1.31:40000: 6 failures, the address waits 2 minutes`},
 		{ev(0, 0), "14:03:21  ?"},
 	}
 	for _, tt := range tests {

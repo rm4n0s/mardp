@@ -139,8 +139,8 @@ func serve(ctx context.Context, getenv func(string) string, m machine, viewOnly 
 type observer struct {
 	// session is told when a session opens and when it ends.
 	session func(host.Event)
-	// refused is told of a refused login.
-	refused func(user, remote string)
+	// refused is told of a refused login and of what the guard decided.
+	refused func(user, remote string, res config.LoginResult)
 }
 
 // server is a server that listens, ready to serve.
@@ -225,7 +225,7 @@ func prepare(ctx context.Context, folder *config.Folder, settings func() config.
 // authenticator checks a login against the settings that settings returns,
 // with guard making an address wait after failed logins (SPEC §8.2). It logs
 // a refusal, never the password, and tells refused of it; refused may be nil.
-func authenticator(settings func() config.Settings, guard *config.Guard, refused func(user, remote string), log *slog.Logger) rdp.Authenticator {
+func authenticator(settings func() config.Settings, guard *config.Guard, refused func(user, remote string, res config.LoginResult), log *slog.Logger) rdp.Authenticator {
 	return func(r rdp.LoginRequest) bool {
 		remote := ""
 		if r.Remote != nil {
@@ -235,7 +235,7 @@ func authenticator(settings func() config.Settings, guard *config.Guard, refused
 		if !res.OK {
 			log.Warn("login refused", "user", r.User, "remote", remote, "failures", res.Failures, "wait", res.Wait)
 			if refused != nil {
-				refused(r.User, remote)
+				refused(r.User, remote, res)
 			}
 		}
 		return res.OK

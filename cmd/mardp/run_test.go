@@ -506,7 +506,10 @@ func TestAuthenticator(t *testing.T) {
 	now := time.Unix(1000, 0)
 	guard := config.NewGuard(func() time.Time { return now })
 	var log syncBuffer
-	auth := authenticator(func() config.Settings { return s }, guard, nil, slog.New(slog.NewTextHandler(&log, nil)))
+	var refused []config.LoginResult
+	auth := authenticator(func() config.Settings { return s }, guard, func(user, remote string, res config.LoginResult) {
+		refused = append(refused, res)
+	}, slog.New(slog.NewTextHandler(&log, nil)))
 	remote := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 50000}
 	steps := []struct {
 		name string
@@ -540,6 +543,21 @@ func TestAuthenticator(t *testing.T) {
 	}
 	if !strings.Contains(out, "wait=") || !strings.Contains(out, "remote=192.0.2.1:50000") {
 		t.Errorf("the log:\n%s", out)
+	}
+	// refused is told of each refusal: the fifth failure starts the wait,
+	// and the login while the address waits is not checked.
+	if len(refused) != config.FreeFailures+1 {
+		t.Fatalf("%d refusals: %+v", len(refused), refused)
+	}
+	fifth, waiting := refused[config.FreeFailures-1], refused[config.FreeFailures]
+	if !fifth.Checked || fifth.Failures != config.FreeFailures || fifth.Wait != config.FirstWait {
+		t.Errorf("the fifth failure %+v", fifth)
+	}
+	if waiting.Checked || waiting.Wait != config.FirstWait {
+		t.Errorf("the login while waiting %+v", waiting)
+	}
+	if auth(rdp.LoginRequest{User: "bob"}); len(refused) != config.FreeFailures+2 {
+		t.Error("no refusal told for a login without an address")
 	}
 }
 

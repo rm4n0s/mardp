@@ -59,8 +59,11 @@ func host(addr string) string {
 type LoginResult struct {
 	// OK says the login succeeded.
 	OK bool
-	// Wait is how long the address must still wait: when it is not 0, the
-	// login was refused without the password being checked.
+	// Checked says that the password was checked: false when the login
+	// was refused because the address waits.
+	Checked bool
+	// Wait is how long the address must still wait; after a failure that
+	// was checked, the wait it starts, if any.
 	Wait time.Duration
 	// Failures is the address's count of failed logins after this one.
 	Failures int
@@ -91,7 +94,7 @@ func (g *Guard) Login(addr string, check func() bool) LoginResult {
 	now = g.now()
 	if ok {
 		delete(g.addrs, h)
-		return LoginResult{OK: true}
+		return LoginResult{OK: true, Checked: true}
 	}
 	f := g.addrs[h]
 	if f == nil {
@@ -108,7 +111,7 @@ func (g *Guard) Login(addr string, check func() bool) LoginResult {
 		}
 		f.until = now.Add(wait)
 	}
-	return LoginResult{Failures: f.count, Wait: max(f.until.Sub(now), 0)}
+	return LoginResult{Checked: true, Failures: f.count, Wait: max(f.until.Sub(now), 0)}
 }
 
 // makeRoom drops forgotten addresses, and the oldest one when the map is

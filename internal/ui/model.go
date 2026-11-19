@@ -85,6 +85,9 @@ type ViewModel struct {
 	Session []string
 	// Events are the lines of the recent events, the newest first.
 	Events []string
+	// FailedLogins says that the events have a failed login, which shows
+	// the waiting rule.
+	FailedLogins bool
 	// CanStart and CanStop say which of Start and Stop is shown enabled.
 	CanStart, CanStop bool
 	// Checklist is shown until everything is done; nil then.
@@ -113,6 +116,7 @@ func NewViewModel(st Status) ViewModel {
 	}
 	for i := len(st.Events) - 1; i >= 0; i-- {
 		vm.Events = append(vm.Events, EventText(st.Events[i]))
+		vm.FailedLogins = vm.FailedLogins || st.Events[i].Kind == EventLoginFailed
 	}
 	vm.CanStart = !running && st.ScreenRecording && st.LoginSet
 	checks := []Check{

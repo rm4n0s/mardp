@@ -107,12 +107,17 @@ type windowState struct {
 	// the user chose Quit, which lets the app end.
 	lifecycle *m.AppLifecycleListener
 	quitting  bool
+	// seen is the backend's count of events the window has notified of,
+	// and notifyErr why the last notification failed.
+	seen      int
+	notifyErr string
 }
 
 func (s *windowState) InitState() {
 	s.user = m.NewTextEditingController()
 	s.password = m.NewTextEditingController()
 	s.status = s.Widget().b.Status()
+	s.seen = s.status.EventTotal
 	s.settings.init(s.status.Settings)
 	for i, st := range []ServerState{ServerStopped, ServerListening, ServerConnected} {
 		icon, err := TrayIcon(st)
@@ -197,6 +202,7 @@ func (s *windowState) refresh() {
 		s.SetState(func() {
 			s.status = st
 			s.settings.follow(st.Settings)
+			s.notifyNew(st)
 		})
 	}
 }
@@ -214,6 +220,7 @@ func (s *windowState) do(fn func(ctx context.Context) error, then func(err error
 				s.actionErr = err.Error()
 			}
 			s.status = s.Widget().b.Status()
+			s.notifyNew(s.status)
 		})
 	})
 }
@@ -340,6 +347,12 @@ func (s *windowState) eventsCard(bc m.BuildContext, vm ViewModel) m.Widget {
 	}
 	for _, e := range vm.Events {
 		rows = append(rows, m.NewText(e))
+	}
+	if vm.FailedLogins {
+		rows = append(rows, m.NewText(WaitRuleText(), m.TextOpts{Style: m.ThemeOf(bc).TextTheme.BodySmall}))
+	}
+	if s.notifyErr != "" {
+		rows = append(rows, errorText(bc, TextNotifyFailed+s.notifyErr))
 	}
 	return card(rows)
 }

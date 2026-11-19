@@ -296,3 +296,21 @@ The tests drive the icon's menu on Glutter's fake Linux desktop. This check clic
 9. Only when it suits you, since it ends your session: open the app, press Start, and log out of the Mac. Expected: the logout goes on without a message that mardp interrupted it; afterwards `/tmp/mardp.log` ends with "the Mac logs out or shuts down: quitting".
 
 Tell me what did not look or behave as expected, with a screenshot of the menu bar if the icon looks wrong.
+
+## 5.4 Notifications and failed logins (SPEC §12.4, §8.2)
+
+The tests check the notifications on Glutter's fake desktop. This check sees them in macOS's notification center.
+
+1. Open the app and press Start:
+
+   ```bash
+   open -n build/mardp.app --args -log-file /tmp/mardp.log
+   ```
+
+2. Connect with Remmina. Expected: macOS asks once whether "mardp" may send notifications; allow it. Then a notification "… connected" says from which address and as which user. (If the question came after the connection, connect again.)
+3. Click the notification with the window closed. Expected: the window comes back.
+4. Disconnect in Remmina. Expected: "… disconnected" with "The client disconnected."
+5. In Remmina, try a wrong password five times. Expected: each try is a line in "Recent events"; the fifth says "5 failures, the address waits 1 minute"; the waiting rule shows under the events; one notification only, "Failed logins from <address>", at the fifth. Trying again within the minute is refused at once, with no new line or notification.
+6. After the minute, log in with the right password. Expected: it connects.
+
+Tell me what did not look or behave as expected.

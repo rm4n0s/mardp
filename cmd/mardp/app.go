@@ -86,8 +86,10 @@ type app struct {
 	// restarting that a goroutine waits for it; closed that the app quits
 	// and starts no server anymore.
 	pending, restarting, closed bool
-	// events are the recent events, the oldest first.
+	// events are the recent events, the oldest first; total counts every
+	// event recorded.
 	events []ui.Event
+	total  int
 }
 
 // liveServer is a server that serves until cancel; done is closed when it
@@ -125,7 +127,7 @@ func (a *app) Status() ui.Status {
 	s, r := a.settings, a.run
 	st.User, st.LoginSet, st.Problem = s.User, s.Ready(), a.problem
 	st.Settings, st.Pending = s, a.pending && r != nil
-	st.Events = slices.Clone(a.events)
+	st.Events, st.EventTotal = slices.Clone(a.events), a.total
 	a.mu.Unlock()
 	if r == nil {
 		return st
@@ -236,9 +238,14 @@ func (a *app) sessionEvent(e host.Event) {
 	a.record(ev)
 }
 
-// refused records a refused login.
-func (a *app) refused(user, remote string) {
-	a.record(ui.Event{Kind: ui.EventLoginFailed, User: user, Remote: remote})
+// refused records a failed login, with the address's failures and the wait
+// it starts. A login refused because the address waits is not one (SPEC
+// §8.2): it is only logged.
+func (a *app) refused(user, remote string, res config.LoginResult) {
+	if !res.Checked {
+		return
+	}
+	a.record(ui.Event{Kind: ui.EventLoginFailed, User: user, Remote: remote, Failures: res.Failures, Wait: res.Wait})
 }
 
 // record adds e to the recent events, now, dropping the oldest beyond
@@ -248,6 +255,7 @@ func (a *app) record(e ui.Event) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.events = append(a.events, e)
+	a.total++
 	if n := len(a.events) - maxEvents; n > 0 {
 		a.events = slices.Delete(a.events, 0, n)
 	}

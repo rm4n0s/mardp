@@ -61,6 +61,10 @@ type Status struct {
 	Session host.SessionInfo
 	// Events are the recent events, the oldest first.
 	Events []Event
+	// EventTotal is how many events were recorded since the app started,
+	// of which Events are the last: the window notifies of those it has
+	// not seen.
+	EventTotal int
 }
 
 // Equal says whether s and o are the same status.
@@ -69,7 +73,7 @@ func (s Status) Equal(o Status) bool {
 		s.ViewOnly == o.ViewOnly && s.ScreenRecording == o.ScreenRecording && s.Accessibility == o.Accessibility &&
 		s.User == o.User && s.LoginSet == o.LoginSet && s.Problem == o.Problem && s.Video == o.Video &&
 		s.Settings == o.Settings && slices.Equal(s.Displays, o.Displays) && s.Pending == o.Pending &&
-		s.Session == o.Session && slices.Equal(s.Events, o.Events)
+		s.Session == o.Session && slices.Equal(s.Events, o.Events) && s.EventTotal == o.EventTotal
 }
 
 // Backend is what the window shows and does. Status is called on the UI
