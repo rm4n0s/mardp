@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/rm4n0s/mardp/internal/config"
@@ -8,6 +9,7 @@ import (
 	"github.com/rm4n0s/mardp/internal/mac/capture"
 	"github.com/rm4n0s/mardp/internal/mac/input"
 	"github.com/rm4n0s/mardp/internal/mac/system"
+	"github.com/rm4n0s/mardp/internal/ui"
 )
 
 // machine is the Mac as run uses it; the tests give a fake one.
@@ -18,6 +20,8 @@ type machine interface {
 	// the client's input is posted (Accessibility is granted); without it
 	// the session is view-only (SPEC §7.1).
 	parts(sys host.System, s config.Settings, post bool, log *slog.Logger) (host.Parts, error)
+	// window shows the app's window on b until it is closed or ctx ends.
+	window(ctx context.Context, b ui.Backend, log *slog.Logger) error
 }
 
 // mac is the real Mac.
@@ -43,4 +47,8 @@ func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger
 		parts.Input = in
 	}
 	return parts, nil
+}
+
+func (mac) window(ctx context.Context, b ui.Backend, log *slog.Logger) error {
+	return ui.Run(ctx, b, log)
 }

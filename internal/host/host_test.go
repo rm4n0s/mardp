@@ -169,6 +169,7 @@ func TestDesktopSize(t *testing.T) {
 
 // session is a host serving one rdptest client.
 type session struct {
+	h   *Host
 	c   *rdptest.Client
 	rec *recorder
 	sc  *rdptest.Screen
@@ -237,7 +238,7 @@ func serve(t *testing.T, parts Parts, opts Options, w, h int) *session {
 	if err := c.Activate(cctx); err != nil {
 		t.Fatal(err)
 	}
-	return &session{c: c, rec: rec, cur: c.NewCursor()}
+	return &session{h: hst, c: c, rec: rec, cur: c.NewCursor()}
 }
 
 // sameColors says the screen shows img, alpha aside.
@@ -309,6 +310,9 @@ func TestSession(t *testing.T) {
 		}
 		if sys.Awake() != 1 {
 			t.Errorf("Awake = %d, want 1", sys.Awake())
+		}
+		if n := s.h.Sessions(); n != 1 {
+			t.Errorf("Sessions = %d, want 1", n)
 		}
 	})
 
@@ -394,6 +398,12 @@ func TestSession(t *testing.T) {
 		}
 		if sys.Awake() != 0 {
 			t.Errorf("Awake = %d after the session, want 0", sys.Awake())
+		}
+		for s.h.Sessions() != 0 && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if n := s.h.Sessions(); n != 0 {
+			t.Errorf("Sessions = %d after the session, want 0", n)
 		}
 	})
 }

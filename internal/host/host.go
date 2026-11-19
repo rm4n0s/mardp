@@ -8,6 +8,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rm4n0s/errors"
@@ -64,6 +65,8 @@ type Host struct {
 	parts Parts
 	opts  Options
 	log   *slog.Logger
+	// open counts the sessions running now.
+	open atomic.Int64
 }
 
 // New makes a Host of the parts.
@@ -111,6 +114,10 @@ func (h *Host) DesktopSize(c *rdp.Client) (width, height int) {
 	return fitSize(d.Width, d.Height, c.DesktopWidth, c.DesktopHeight, h.opts.MaxHeight)
 }
 
+// Sessions is the number of sessions running now, for the window's status
+// (SPEC §12.2).
+func (h *Host) Sessions() int { return int(h.open.Load()) }
+
 // fitSize fits a display of dw×dh inside a client's cw×ch.
 func fitSize(dw, dh, cw, ch, maxHeight int) (width, height int) {
 	if cw <= 0 || ch <= 0 {
@@ -129,6 +136,8 @@ func fitSize(dw, dh, cw, ch, maxHeight int) (width, height int) {
 
 // SessionOpened implements rdp.Handler: it runs the session until ctx ends.
 func (h *Host) SessionOpened(ctx context.Context, s *rdp.Session) {
+	h.open.Add(1)
+	defer h.open.Add(-1)
 	c := s.Client()
 	log := h.log.With("client", c.Name, "remote", c.Remote)
 	d, err := h.parts.Screen.Display(ctx)

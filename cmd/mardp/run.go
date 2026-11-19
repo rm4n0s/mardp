@@ -58,11 +58,6 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		}
 		return exitOK
 	}
-	if !*headless {
-		// The window is step 2.8 of docs/IMPLEMENTATION.md.
-		complain(stderr, "mardp: the app's window is not built yet; run mardp -headless\n")
-		return exitUsage
-	}
 	out := stderr
 	if *logFile != "" {
 		f, err := os.OpenFile(*logFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, config.FileMode)
@@ -78,8 +73,12 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		out = f
 	}
 	log := slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	log.Info("mardp starting", "version", version())
-	if err := serve(ctx, getenv, m, *viewOnly, log); err != nil {
+	log.Info("mardp starting", "version", version(), "headless", *headless)
+	runner := window
+	if *headless {
+		runner = serve
+	}
+	if err := runner(ctx, getenv, m, *viewOnly, log); err != nil {
 		log.Error("mardp stopped", "err", err)
 		return exitFailed
 	}
@@ -100,32 +99,65 @@ func version() string {
 	return "unknown"
 }
 
-// serve runs the server with the settings of mardp's folder until ctx ends:
-// it checks that a password is set and Screen Recording granted, makes the
-// session's parts of m, view-only without Accessibility or with viewOnly,
-// and listens where the settings say (SPEC §7.1, §7.3, §8, §13).
-func serve(ctx context.Context, getenv func(string) string, m machine, viewOnly bool, log *slog.Logger) error {
+// openFolder opens mardp's folder and loads its settings.
+func openFolder(ctx context.Context, getenv func(string) string, log *slog.Logger) (*config.Folder, config.Settings, error) {
 	dir, err := config.Dir(getenv)
 	if err != nil {
-		return err
+		return nil, config.Settings{}, err
 	}
 	folder, err := config.Open(ctx, dir, log)
 	if err != nil {
-		return err
+		return nil, config.Settings{}, err
 	}
 	s, err := folder.Load(ctx)
 	if err != nil {
-		return err
+		return nil, config.Settings{}, err
 	}
-	if !s.Ready() {
-		return errors.New(TagNoPassword, "no user name and password are set: set them in mardp's window", "folder", dir)
+	return folder, s, nil
+}
+
+// serve runs the server with the settings of mardp's folder until ctx ends
+// (SPEC §13).
+func serve(ctx context.Context, getenv func(string) string, m machine, viewOnly bool, log *slog.Logger) error {
+	folder, s, err := openFolder(ctx, getenv, log)
+	if err != nil {
+		return err
 	}
 	sys, err := m.system()
 	if err != nil {
 		return err
 	}
+	srv, err := prepare(ctx, folder, func() config.Settings { return s }, sys, m, viewOnly, log)
+	if err != nil {
+		return err
+	}
+	return srv.srv.Serve(ctx, srv.l)
+}
+
+// server is a server that listens, ready to serve.
+type server struct {
+	srv *rdp.Server
+	l   net.Listener
+	hst *host.Host
+	// fingerprint is the certificate's.
+	fingerprint string
+	// post says that the client's input is posted; false is view only.
+	post bool
+}
+
+// prepare makes a server of the settings and listens where they say: it
+// checks that a user name and a password are set and that Screen Recording
+// is granted, and makes the session's parts of m, view-only without
+// Accessibility or with viewOnly (SPEC §7.1, §7.3, §8, §13). Logins are
+// checked against what settings returns at the time.
+func prepare(ctx context.Context, folder *config.Folder, settings func() config.Settings, sys host.System,
+	m machine, viewOnly bool, log *slog.Logger) (*server, error) {
+	s := settings()
+	if !s.Ready() {
+		return nil, errors.New(TagNoPassword, "no user name and password are set: set them in mardp's window")
+	}
 	if !sys.Granted(host.ScreenRecording) {
-		return errors.New(TagScreenRecordingMissing,
+		return nil, errors.New(TagScreenRecordingMissing,
 			"mardp may not record the screen: grant it Screen Recording in System Settings, Privacy & Security")
 	}
 	post := !viewOnly && sys.Granted(host.Accessibility)
@@ -133,49 +165,50 @@ func serve(ctx context.Context, getenv func(string) string, m machine, viewOnly 
 	case viewOnly:
 		log.Info("sessions are view-only (-view-only)")
 	case !post:
-		log.Warn("Accessibility is not granted: sessions are view-only until mardp starts again with it")
+		log.Warn("Accessibility is not granted: sessions are view-only until the server starts again with it")
 	}
 	cert, created, err := folder.Certificate(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	log.Info("certificate", "fingerprint", cert.Fingerprint, "created", created)
 	parts, err := m.parts(sys, s, post, log)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	hst, err := host.New(parts, host.Options{MaxFPS: s.MaxFPS, MaxHeight: s.MaxHeight, Logger: log})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	srv, err := rdp.NewServer(rdp.Config{
 		Certificate:   cert.TLS,
-		Authenticator: authenticator(s, config.NewGuard(nil), log),
+		Authenticator: authenticator(settings, config.NewGuard(nil), log),
 		Handler:       hst,
 		DesktopSize:   hst.DesktopSize,
 		Logger:        log,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	addr := net.JoinHostPort(s.Address, strconv.Itoa(s.Port))
 	var lc net.ListenConfig
 	l, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
-		return errors.NewErr(TagListenFailed, err).SetMetadata("addr", addr)
+		return nil, errors.NewErr(TagListenFailed, err).SetMetadata("addr", addr)
 	}
-	return srv.Serve(ctx, l)
+	return &server{srv: srv, l: l, hst: hst, fingerprint: cert.Fingerprint, post: post}, nil
 }
 
-// authenticator checks a login against s, with guard making an address wait
-// after failed logins (SPEC §8.2). It logs a refusal, never the password.
-func authenticator(s config.Settings, guard *config.Guard, log *slog.Logger) rdp.Authenticator {
+// authenticator checks a login against the settings that settings returns,
+// with guard making an address wait after failed logins (SPEC §8.2). It logs
+// a refusal, never the password.
+func authenticator(settings func() config.Settings, guard *config.Guard, log *slog.Logger) rdp.Authenticator {
 	return func(r rdp.LoginRequest) bool {
 		remote := ""
 		if r.Remote != nil {
 			remote = r.Remote.String()
 		}
-		res := guard.Login(remote, func() bool { return s.CheckLogin(r.User, r.Password) })
+		res := guard.Login(remote, func() bool { return settings().CheckLogin(r.User, r.Password) })
 		if !res.OK {
 			log.Warn("login refused", "user", r.User, "remote", remote, "failures", res.Failures, "wait", res.Wait)
 		}

@@ -1,5 +1,6 @@
-// Command mardp is an RDP host for macOS (docs/SPEC.md). With -headless it
-// runs the server without a window; -version prints its version.
+// Command mardp is an RDP host for macOS (docs/SPEC.md). It opens the app's
+// window; with -headless it runs the server without one, and -version prints
+// its version.
 package main
 
 import (

@@ -364,6 +364,7 @@ D7 makes speed a requirement, so the rules are part of the specification:
 - **Checklist**, shown until everything is done: Screen Recording, Accessibility, a password. Each line has its state and a button (open System Settings, or set the password). The lines update by themselves when the user grants a permission. The checklist comes back when a permission is withdrawn. The Screen Recording line explains that macOS asks again from time to time ("... requesting to bypass the system private window picker ...") and that the question is answered at the Mac. A running capture goes on while the question waits (§19 R6).
 - **Settings**: user name and password; port and address; start the server when the app opens; open the app at login; display; height cap; frame rate cap (30 or 60); bitrate cap; sound (off, client only, both); swap Ctrl and Command; new certificate.
 - **Recent events**: connections, disconnections with their reason, failed logins.
+- Until the settings and the menu-bar icon exist (M5): the checklist's password line opens a form for the user name and the password (a set login shows "Change"), and closing the window quits the app, which stops the server (§7.3 applies from step 5.3). A checklist button asks macOS for its permission (macOS shows its question only the first time) and opens its pane of System Settings. The window asks the backend for the status once a second, by the binding's clock. A failed Start shows its message; a server that stops by itself shows why.
 
 ### 12.3 The menu-bar icon
 
@@ -381,7 +382,7 @@ A client connected; a client disconnected; failed logins from an address (once p
 - At each start the folder's mode is set to 0700 and its files' to 0600 when they are wider, and each correction is logged. A file of the folder that is a symbolic link is refused.
 - `mardp -headless` runs the server without a window, with the same settings file, for tests and measurements. `mardp -version` prints the version.
   - Before it listens it checks, in this order, that a user name and a password are set and that Screen Recording is granted, and stops with a message saying what is missing; it never asks macOS for a permission. Without Accessibility it serves view-only and logs it; Accessibility granted later needs a restart. `-view-only` drops the client's input even with Accessibility (the `mardp_freerdp` test runs with it, so that FreeRDP's own lock states and pointer moves reach no one's desktop). It logs the certificate's fingerprint, and each refused login with its user name, address, count of failures and wait. SIGINT and SIGTERM stop it: the sessions end and it exits with 0. Exit codes: 0, 1 (it could not start or stopped on an error), 2 (wrong arguments).
-  - Until the window exists (step 2.8), `mardp` without `-headless` says so and exits with 2.
+  - `mardp` without `-headless` opens the window (§12) with the same settings and flags (`-log-file`, `-view-only`); quitting it or SIGINT/SIGTERM stops the server.
 - Logs go through `slog` to the standard error; `-log-file` writes them to a file. Passwords, key material and the contents of the screen never appear in a log.
 
 ## 14. Performance targets

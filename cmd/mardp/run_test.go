@@ -19,6 +19,7 @@ import (
 	"github.com/rm4n0s/errors"
 	"github.com/rm4n0s/mardp/internal/config"
 	"github.com/rm4n0s/mardp/internal/host"
+	"github.com/rm4n0s/mardp/internal/ui"
 	"github.com/rm4n0s/mardp/rdp"
 	"github.com/rm4n0s/mardp/rdp/rdptest"
 )
@@ -65,6 +66,8 @@ type fakeMac struct {
 	partsErr error
 	noScreen bool
 	in       *host.RecordingInjector
+	// win is the window; nil waits until ctx ends.
+	win func(ctx context.Context, b ui.Backend) error
 
 	mu    sync.Mutex
 	posts []bool
@@ -96,6 +99,14 @@ func (f *fakeMac) parts(sys host.System, _ config.Settings, post bool, _ *slog.L
 		p.Input = f.in
 	}
 	return p, nil
+}
+
+func (f *fakeMac) window(ctx context.Context, b ui.Backend, _ *slog.Logger) error {
+	if f.win == nil {
+		<-ctx.Done()
+		return nil
+	}
+	return f.win(ctx, b)
 }
 
 func (f *fakeMac) postsSeen() []bool {
@@ -162,6 +173,14 @@ func newHome(t *testing.T, edit func(s *config.Settings)) *home {
 		t.Fatal(err)
 	}
 	return &home{dir: dir, s: s, der: c.TLS.Certificate[0]}
+}
+
+// corrupt breaks h's config.json.
+func corrupt(t *testing.T, h *home) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(h.dir, config.FileName), []byte("{"), config.FileMode); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // running is mardp running in a goroutine.
@@ -273,7 +292,6 @@ func TestRunFlags(t *testing.T) {
 		{"version", []string{"-version"}, exitOK, "mardp ", ""},
 		{"unknown flag", []string{"-nope"}, exitUsage, "", "flag provided but not defined"},
 		{"arguments", []string{"-headless", "more"}, exitUsage, "", "unexpected arguments"},
-		{"no window yet", nil, exitUsage, "", "run mardp -headless"},
 		{"log file", []string{"-headless", "-log-file", missing}, exitFailed, "", "the log file"},
 	}
 	for _, tt := range tests {
@@ -312,11 +330,6 @@ func TestServeRefuses(t *testing.T) {
 			}
 		})
 	}
-	corrupt := func(t *testing.T, h *home) {
-		if err := os.WriteFile(filepath.Join(h.dir, config.FileName), []byte("{"), config.FileMode); err != nil {
-			t.Fatal(err)
-		}
-	}
 	both := []host.Permission{host.ScreenRecording, host.Accessibility}
 	tests := []struct {
 		name    string
@@ -329,21 +342,21 @@ func TestServeRefuses(t *testing.T) {
 		route   string
 	}{
 		{name: "no password", edit: func(s *config.Settings) { s.Password = nil }, granted: both,
-			route: "serve." + TagNoPassword},
+			route: "serve->prepare." + TagNoPassword},
 		{name: "no user", edit: func(s *config.Settings) { s.User = "" }, granted: both,
-			route: "serve." + TagNoPassword},
+			route: "serve->prepare." + TagNoPassword},
 		{name: "no Screen Recording", granted: []host.Permission{host.Accessibility},
-			route: "serve." + TagScreenRecordingMissing},
+			route: "serve->prepare." + TagScreenRecordingMissing},
 		{name: "config.json corrupt", prepare: corrupt, granted: both,
-			route: "serve->Folder.Load." + config.TagCorrupt},
+			route: "serve->openFolder->Folder.Load." + config.TagCorrupt},
 		{name: "the system", granted: both, sysErr: errors.New("TestSystemFailed", "no system"),
 			route: "TestServeRefuses.TestSystemFailed"},
 		{name: "the parts", granted: both, parts: errors.New("TestPartsFailed", "no parts"),
 			route: "TestServeRefuses.TestPartsFailed"},
 		{name: "no screen", granted: both, noScr: true,
-			route: "serve->New." + host.TagScreenMissing},
+			route: "serve->prepare->New." + host.TagScreenMissing},
 		{name: "port taken", prepare: busy, granted: both,
-			route: "serve." + TagListenFailed},
+			route: "serve->prepare." + TagListenFailed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -480,7 +493,7 @@ func TestAuthenticator(t *testing.T) {
 	now := time.Unix(1000, 0)
 	guard := config.NewGuard(func() time.Time { return now })
 	var log syncBuffer
-	auth := authenticator(s, guard, slog.New(slog.NewTextHandler(&log, nil)))
+	auth := authenticator(func() config.Settings { return s }, guard, slog.New(slog.NewTextHandler(&log, nil)))
 	remote := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 50000}
 	steps := []struct {
 		name string

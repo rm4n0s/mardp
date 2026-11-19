@@ -137,3 +137,27 @@ Runnable once step 2.8 has built `build/mardp.app`, because the user name and th
    ```
 
 Tell me whether Remmina showed and controlled the desktop, and what the log said if it did not.
+
+## 2.8 The window: the checklist, Start, a connection from Remmina (SPEC §12.2)
+
+With real clicks, at the Mac (not through scripted taps or screenshots of my own). `build/mardp.app` has an identity of its own (`com.github.rm4n0s.mardp`), so macOS treats it as a new app: the permissions you gave the probe do not carry over.
+
+1. Build the app and open it with a log:
+
+   ```bash
+   scripts/build-app.sh
+   ```
+
+   ```bash
+   open -n build/mardp.app --args -log-file /tmp/mardp.log
+   ```
+
+2. Expected on the first start: the status says Stopped; Start is greyed; the checklist "Before the server can start" shows Screen Recording, Accessibility and "User name and password", none done.
+3. Press "Open System Settings" on the Screen Recording line: macOS asks its question (the first time) and the Screen Recording pane opens. Turn mardp on there. Expected: within a second or two the line shows a tick and "Granted.", without touching the window. macOS may want mardp to quit and reopen for Screen Recording; if it does, reopen it with the command of step 1. Do the same for Accessibility.
+4. Press "Set" on the last line, type a user name and a password of at least 8 characters, and press Save. Expected: the form closes, and once all three lines are done the checklist goes away. (A password of fewer than 8 characters shows why under the field.)
+5. Press Start. Expected: the status says Listening, with the addresses to type into Remmina and the certificate's fingerprint. macOS may ask whether mardp may accept incoming connections: allow it.
+6. In Remmina on your Linux machine, connect to one of the addresses with that user name and password. Expected: Remmina shows the fingerprint the window shows, then the Mac's desktop; the window says Connected.
+7. Press Stop (Remmina disconnects; the status says Stopped), then close the window: the app quits. `pgrep -fl mardp.app` shows nothing.
+
+Tell me what differed at any step, and anything in the window that looked wrong (layout, light or dark mode).
+
