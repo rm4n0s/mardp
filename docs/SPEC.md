@@ -216,13 +216,14 @@ macOS ties these permissions to the app's code signature. A build that is signed
 - TLS 1.2 or newer, from Go's `crypto/tls`.
 - The certificate is self-signed, RSA 2048 (the type every RDP client accepts), created on the first start and kept in mardp's folder with mode 0600 (§13). The window shows its SHA-256 fingerprint, so the user can compare it with what Remmina shows on the first connection.
 - A new certificate is made only when the user asks ("New certificate" in the settings), since clients remember the old one.
+- The certificate is valid for 20 years, for the same reason. Its fingerprint is shown as lowercase hex pairs joined by colons, as FreeRDP prints it. A `cert.pem` or `key.pem` that cannot be read, or one without the other, is an error the window shows; it is never replaced without the user asking.
 
 ### 8.2 Login
 
 - One user name and one password, set in the app. There is no default password, and the server does not start until one is set (at least 8 characters).
-- The password is stored as a PBKDF2-HMAC-SHA256 hash with a random salt (`crypto/pbkdf2` of the standard library), never in clear text, never in a log.
+- The password is stored as a PBKDF2-HMAC-SHA256 hash with a random 16-byte salt (`crypto/pbkdf2` of the standard library), never in clear text, never in a log. A new hash uses 600,000 iterations (OWASP's figure); the count is stored with the hash, and a stored count above 10 million is refused as damaged. "8 characters" counts characters, not bytes.
 - The client sends the user name and password in Client Info, inside TLS. The comparison takes constant time. A client that sends none, or wrong ones, gets the logon-failure error (ERRINFO_SERVER_FRESH_CREDENTIALS_REQUIRED, §5.4 and §20) and is disconnected, so Remmina asks again. The library's `Authenticator` gets the user name, the domain, the password and the client's address, so the app can make an address wait (below).
-- After 5 failed logins from one address, that address waits: 1 minute, doubling to at most 1 hour. Failed logins are shown in the window and as a notification.
+- After 5 failed logins from one address, that address waits: 1 minute, doubling to at most 1 hour. Failed logins are shown in the window and as a notification. The address is the IP without the port. A login while the address waits is refused without its password being checked, and does not count. A successful login, or a day without a failure, forgets the address's failures. At most 4096 addresses are kept; the oldest goes first.
 - When NLA is added (after 1.0), the stored form of the password changes, because NTLM needs the NT hash; that is decided then (D12).
 
 ### 8.3 What mardp does not protect against
@@ -370,7 +371,8 @@ A client connected; a client disconnected; failed logins from an address (once p
 
 - Everything is under `~/Library/Application Support/mardp/`: `config.json` (the settings and the password hash), `cert.pem` and `key.pem` (mode 0600). The folder is created with mode 0700.
 - The environment variable `MARDP_HOME` replaces that folder. Every test and every script uses it with a temporary folder: no test reads or writes the user's real settings.
-- `config.json` has a version number; a newer program upgrades an older file, and refuses a file from a newer program with a clear message.
+- `config.json` has a version number; a newer program upgrades an older file, and refuses a file from a newer program with a clear message. Upgrades run one version at a time on the file's fields; a setting missing from the file takes its default, and one the program does not know is ignored. Each write replaces the file in one step (a temporary file, synced, then renamed).
+- At each start the folder's mode is set to 0700 and its files' to 0600 when they are wider, and each correction is logged. A file of the folder that is a symbolic link is refused.
 - `mardp -headless` runs the server without a window, with the same settings file, for tests and measurements. `mardp -version` prints the version.
 - Logs go through `slog` to the standard error; `-log-file` writes them to a file. Passwords, key material and the contents of the screen never appear in a log.
 
