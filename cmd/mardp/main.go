@@ -1,0 +1,17 @@
+// Command mardp is an RDP host for macOS (docs/SPEC.md). With -headless it
+// runs the server without a window; -version prints its version.
+package main
+
+import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr, mac{})
+	stop()
+	os.Exit(code)
+}

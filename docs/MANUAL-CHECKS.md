@@ -92,7 +92,7 @@ Tell me what Remmina said in step 4, whether step 5 looked as expected, and send
 
 ## 2.5 Keyboard and mouse on the Mac (SPEC §10.4, §10.5)
 
-The tests never post events into your desktop (rule 11), so posting is checked by you, from Remmina, once `mardp -headless` exists (step 2.7 adds the command here). Then, connected to the Mac:
+The tests never post events into your desktop (rule 11), so posting is checked by you, from Remmina, connected to mardp as in 2.7 below (without `-view-only`):
 
 1. Type in TextEdit: letters, digits, punctuation, Shift and Caps Lock, an accented letter through a dead key, and the keypad with Num Lock on and off.
 2. Ctrl+arrows (Mission Control's spaces), Alt+letters (Option characters), Super+Tab (the app switcher), Super+C and Super+V (copy and paste).
@@ -104,10 +104,36 @@ Tell me what did not work, and how the scrolling speed felt.
 
 ## 2.6 The pointer in Remmina (SPEC §10.3)
 
-Also once `mardp -headless` exists (step 2.7 adds the command). Connected from Remmina:
+Connected from Remmina to mardp as in 2.7 below:
 
 1. Move over text (the I-beam), a link in Safari (the hand), a window's edge (the resize arrows), and start an app (the busy pointer if it shows): the pointer in Remmina changes with each, at the same size as on the Mac, with clean edges.
 2. Play a video full screen in Safari and keep the mouse still: the pointer hides.
 3. On the Mac itself (or with an app that moves the pointer), move the pointer while Remmina is connected and its mouse is still: Remmina's pointer follows.
 
 Tell me which shapes looked wrong (size, edges, hotspot), and whether 2 and 3 worked.
+
+## 2.7 Remmina shows the Mac's desktop and controls it (SPEC §13)
+
+Runnable once step 2.8 has built `build/mardp.app`, because the user name and the password are set in its window (`mardp -headless` refuses to start without them).
+
+1. Build the app, open it, set a user name and a password, and quit it:
+
+   ```bash
+   scripts/build-app.sh
+   ```
+
+2. Start the server without a window (macOS ties the permissions to the app, so it is started with `open`):
+
+   ```bash
+   open -n build/mardp.app --args -headless -log-file /tmp/mardp.log
+   ```
+
+   `/tmp/mardp.log` says `listening` and the certificate's fingerprint; it says `view-only` when Accessibility is not granted.
+3. On your Linux machine, in Remmina, connect over RDP to the Mac's address, port 3389, with that user name and password. Expected: the Mac's desktop, which you can control (2.5) with its pointer (2.6).
+4. Stop the server:
+
+   ```bash
+   pkill -TERM -f mardp.app/Contents/MacOS/mardp
+   ```
+
+Tell me whether Remmina showed and controlled the desktop, and what the log said if it did not.
