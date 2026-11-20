@@ -26,7 +26,8 @@ import (
 
 // remminaScript runs Remmina in the guest under a virtual X display with
 // a profile for addr: sound "local", the clipboard on, and colordepth as
-// Remmina's menu of the color depth stores it. Twelve seconds after it
+// Remmina's menu of the color depth stores it (65 is "GFX AVC420", 66 is
+// "GFX AVC444", which offers AVC420 as well). Twelve seconds after it
 // starts, the guest's clipboard gets clipFromLinux for six seconds; then
 // the script prints what the clipboard holds between "pasted<" and
 // ">pasted".
@@ -91,7 +92,8 @@ true
 func TestRemmina(t *testing.T) {
 	addr := requireVM(t)
 	for _, tt := range []struct{ name, colordepth string }{
-		{"GFX AVC420", "66"},
+		{"GFX AVC420", "65"},
+		{"GFX AVC444", "66"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := logDir(t)

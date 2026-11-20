@@ -4,6 +4,8 @@ mardp lets you use a Mac from another computer over your home network. A remote 
 
 It speaks RDP, the protocol Remmina already knows, so the other computer needs nothing special. mardp contains its own RDP server library (`rdp/`), written in Go from scratch, and its window is built with [Glutter](https://github.com/rm4n0s/glutter).
 
+**New here?** [The tutorial](docs/TUTORIAL.md) goes through the whole setup step by step, with pictures.
+
 - [Installing on a new Mac](#installing-on-a-new-mac)
 - [The first start](#the-first-start)
 - [Connecting from Linux](#connecting-from-linux)

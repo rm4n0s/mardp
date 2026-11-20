@@ -463,7 +463,7 @@ After `sh scripts/install.sh` from a checkout at v1.0.5 or newer, connected with
 
 ## 1.0.6 The sound in Remmina (SPEC §10.1)
 
-You said the sound does not work, and that with "On the client only" the Mac's own speaker plays. Here, with Remmina itself in the test machine (profile: Audio output mode Local, Colour depth GFX AVC420) and the built app on "On the client only": the Mac's speaker is muted for the session and unmuted after it, and 76 seconds of a YouTube video played in Safari arrive in the machine's sound server without a gap (you have the recording). The Mac is muted only while a client takes the sound. So on your machine, while connected:
+You said the sound does not work, and that with "On the client only" the Mac's own speaker plays. Here, with Remmina itself in the test machine (profile: Audio output mode Local; Colour depth GFX AVC444, which is what the profile's `colordepth=66` means, and since then GFX AVC420 too, in `TestRemmina`) and the built app on "On the client only": the Mac's speaker is muted for the session and unmuted after it, and 76 seconds of a YouTube video played in Safari arrive in the machine's sound server without a gap (you have the recording). The Mac is muted only while a client takes the sound. So on your machine, while connected:
 
 1. What mardp's window says in its line **Sound:**. With 1.0.6, "Sound: none. In Remmina: Audio output mode › Local" means Remmina did not ask for the sound.
 2. In Remmina, edit the profile: **Advanced** › **Audio output mode** › **Local**. Save, connect again. Expected: "Sound: AAC", the Mac's speaker silent, the sound on Linux.

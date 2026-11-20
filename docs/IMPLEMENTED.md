@@ -1030,3 +1030,18 @@ The owner, with 1.0.5: "the copy paste doesn't work, I copy text, but then paste
   - By hand, the owner's case: the built app (mardp's identity, "On the client only") served this Mac's real screen and sound to Remmina in the test machine; Safari played a YouTube video (Big Buck Bunny); the guest's sound server recorded 108 s: 32 s of silence before the video, then 76 s of its sound with no silent second, as AAC. mardp's log: "the Mac's output is muted while the client plays the sound" at the start, "unmuted" at the end, no sound dropped; the Mac's volume and mute were as before afterwards. The click that paused the video and the Command+W that closed its tab went through Remmina too. The owner has the recording and a picture of Remmina showing the video.
   - mardp's own identity reads the clipboard freely on this Mac ("access=allowed").
 - **Not proved:** the owner's own Remmina and Linux sound setup; a copy on the Mac from a session of the installed app pasted on the owner's Linux. Pending, see docs/MANUAL-CHECKS.md.
+
+## 1.0.7 The tutorial with pictures (2026-11-20)
+
+The owner: "write a tutorial with images on how to setup it on fresh macos".
+
+- **Built:**
+  - `docs/TUTORIAL.md`: sixteen steps in three parts (install on the Mac, the first start, connect from Linux), linked from the README's top. It follows the README's guide and adds nothing the README does not say.
+  - `docs/pictures/tutorial/`: six pictures of mardp's window (first start, the login form, ready to start, listening, connected, connected without sound) and two of Remmina's profile (Basic with "GFX AVC420 (32 bpp)", Advanced with "Audio output mode: Local").
+  - `internal/ui` `TestTutorialPictures`: draws the six pictures of the window from the app's own widgets with example data (`MARDP_TUTORIAL=$PWD/docs/pictures/tutorial go test -tags debug_mode -run TestTutorialPictures ./internal/ui`), and without the variable checks that each step's window shows what the tutorial says it shows. After a change of the window, the same command makes the pictures anew.
+  - `cmd/mardp` `TestRemmina` runs both of Remmina's H.264 choices. Its one case was named "GFX AVC420" but used `colordepth=66`, which Remmina's list calls "GFX AVC444 (32 bpp)" (seen in the picture of the profile); 65 is "GFX AVC420 (32 bpp)", the one the README names.
+- **Proved:**
+  - The pictures were looked at, each one. Remmina's two are of Remmina 1.4.43 itself, opened on a profile in the test machine (`remmina -e`), which holds nothing of the owner's.
+  - `TestRemmina` with both choices: 19.6 s of the tone each, no window of 10 ms that is anything else, the clipboard both ways.
+- **Not in it:** pictures of macOS's own questions and of System Settings (Screen Recording, Accessibility, incoming connections). This session cannot picture the Mac's screen, and those windows would show the owner's own list of apps; the steps say in words what they show. The Linux computer's side shows Remmina on Fedora with the English (US) labels ("Color depth").
+- **Not proved:** the installer's steps were not run again on a Mac without the tools; steps 1 to 4 repeat the README's, written and checked in "1.0.1 A guide for a new Mac".
