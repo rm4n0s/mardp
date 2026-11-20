@@ -14,7 +14,10 @@
 #   vm.sh host-address     the Mac's address as the guest reaches it
 #
 # A run leaves the machine as it found it: a machine the run started is
-# stopped at the end, one that was already running stays running.
+# stopped at the end, one that was already running stays running. The same
+# for the UTM app, which utmctl opens when it is not running: a UTM that
+# "vm.sh start" opened is quit by "vm.sh stop", and "vm.sh status" answers
+# "stopped" without opening it.
 set -eu
 
 VM="${MARDP_VM:-mardp-test}"
@@ -27,7 +30,30 @@ if [ ! -x "$UTMCTL" ]; then
 fi
 
 
-status() { "$UTMCTL" status "$VM" 2>/dev/null | tail -n 1; }
+# utm_runs says whether the UTM app runs: without it no machine does.
+utm_runs() { pgrep -xq UTM; }
+
+status() {
+	if utm_runs; then
+		"$UTMCTL" status "$VM" 2>/dev/null | tail -n 1
+	else
+		echo stopped
+	fi
+}
+
+# quit_utm quits the UTM app when "vm.sh start" opened it, once the machine
+# has stopped: left open, its window goes on saying "stopping".
+quit_utm() {
+	grep -q utm "$STATE" 2>/dev/null || return 0
+	i=0
+	while [ $i -lt 30 ] && [ "$(status)" != stopped ]; do
+		i=$((i + 1))
+		sleep 1
+	done
+	if utm_runs && [ "$(status)" = stopped ]; then
+		osascript -e 'tell application "UTM" to quit' >/dev/null 2>&1 || true
+	fi
+}
 
 wait_agent() {
 	i=0
@@ -50,17 +76,23 @@ start)
 	if [ "$s" = started ]; then
 		echo "already running"
 	else
-		"$UTMCTL" start --hide "$VM" 2>/dev/null
 		mkdir -p "$(dirname "$STATE")"
-		: >"$STATE"
+		if utm_runs; then
+			: >"$STATE"
+		else
+			echo utm >"$STATE"
+		fi
+		"$UTMCTL" start --hide "$VM" 2>/dev/null
 	fi
 	wait_agent
 	;;
 stop)
 	if [ "$(status)" = stopped ]; then
+		quit_utm
 		rm -f "$STATE"
 	elif [ -f "$STATE" ] || [ "${1:-}" = --force ]; then
 		"$UTMCTL" stop "$VM" 2>/dev/null
+		quit_utm
 		rm -f "$STATE"
 	else
 		echo "left running: vm.sh did not start it (use --force)"

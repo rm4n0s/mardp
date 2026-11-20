@@ -14,11 +14,14 @@ package main
 //	scripts/vm.sh stop
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -26,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rm4n0s/mardp/internal/config"
 	"github.com/rm4n0s/mardp/internal/host"
 	"github.com/rm4n0s/mardp/internal/mac/aacenc"
 	"github.com/rm4n0s/mardp/rdp"
@@ -38,7 +42,10 @@ const toneHz = 1000
 // addr for a few seconds, playing the sound through ALSA into sound.wav:
 // the file plugin writes what FreeRDP plays, the null device under it
 // plays it nowhere.
-func soundScript(addr string, port int) string {
+func soundScript(addr string, port int) string { return soundScriptWith(addr, port, "") }
+
+// soundScriptWith is soundScript with more arguments for xfreerdp.
+func soundScriptWith(addr string, port int, args string) string {
 	return fmt.Sprintf(`set -u
 D=%[1]s; rm -rf "$D"; mkdir -p "$D"; cd "$D"; export HOME="$D"
 cat >.asoundrc <<'EOF'
@@ -52,7 +59,7 @@ EOF
 Xvfb :98 -screen 0 1280x1024x24 -nolisten tcp >xvfb.log 2>&1 & X=$!
 export DISPLAY=:98
 i=0; while ! xdotool getdisplaygeometry >/dev/null 2>&1; do i=$((i+1)); [ $i -gt 100 ] && break; sleep 0.1; done
-timeout 60 xfreerdp /v:%[2]s:%[3]d '/u:%[4]s' '/p:%[5]s' /cert:ignore /size:1024x768 /bpp:32 /sound:sys:alsa,dev:mardpfile /log-level:DEBUG >freerdp.log 2>&1 & F=$!
+timeout 60 xfreerdp /v:%[2]s:%[3]d '/u:%[4]s' '/p:%[5]s' /cert:ignore /size:1024x768 /bpp:32 /sound:sys:alsa,dev:mardpfile %[6]s /log-level:DEBUG >freerdp.log 2>&1 & F=$!
 W=$(timeout 30 xdotool search --sync --onlyvisible --class freerdp | head -n 1)
 echo "window $W"
 [ -n "$W" ] && sleep 8
@@ -61,7 +68,7 @@ wait $F; echo "exit $?"
 kill $X 2>/dev/null; wait 2>/dev/null
 ls -l sound.wav
 true
-`, guestDir, addr, port, testUser, testPassword)
+`, guestDir, addr, port, testUser, testPassword, args)
 }
 
 // wav is the sound of a WAV file, as samples in [-1, 1], interleaved.
@@ -317,5 +324,141 @@ func TestCompareTone(t *testing.T) {
 	}
 	if r := compareTone(toneWAV(1, func(s []float64) []float64 { clear(s); return s })); r.length != 0 || r.windows != 0 {
 		t.Errorf("silence: %+v", r)
+	}
+}
+
+// The tone TestFreeRDPRealSound plays on the Mac: quiet, since it comes
+// out of the Mac's own output too unless the owner has muted it. The
+// output's volume and mute are never touched.
+const (
+	realToneLevel = 0.05
+	realToneSecs  = 4
+)
+
+// writeTone writes the tone as a WAV file for afplay.
+func writeTone(t *testing.T, path string) {
+	t.Helper()
+	n := realToneSecs * host.SoundRate
+	b := make([]byte, 44+4*n)
+	copy(b, "RIFF")
+	binary.LittleEndian.PutUint32(b[4:], uint32(36+4*n))
+	copy(b[8:], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(b[16:], 16)
+	binary.LittleEndian.PutUint16(b[20:], 1)
+	binary.LittleEndian.PutUint16(b[22:], 2)
+	binary.LittleEndian.PutUint32(b[24:], host.SoundRate)
+	binary.LittleEndian.PutUint32(b[28:], 4*host.SoundRate)
+	binary.LittleEndian.PutUint16(b[32:], 4)
+	binary.LittleEndian.PutUint16(b[34:], 16)
+	copy(b[36:], "data")
+	binary.LittleEndian.PutUint32(b[40:], uint32(4*n))
+	for i := range n {
+		v := uint16(int16(math.Round(realToneLevel * math.MaxInt16 * math.Sin(2*math.Pi*toneHz*float64(i)/host.SoundRate))))
+		binary.LittleEndian.PutUint16(b[44+4*i:], v)
+		binary.LittleEndian.PutUint16(b[46+4*i:], v)
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestFreeRDPRealSound is the whole way of the sound with a real client
+// (SPEC §10.1, §15.3): mardp -headless captures the Mac's real sound, with
+// the sound on both so that it mutes nothing, another program on the Mac
+// (afplay) plays a quiet tone, and FreeRDP in the test machine plays what
+// it gets into a file. The test finds the tone in that file.
+func TestFreeRDPRealSound(t *testing.T) {
+	addr := requireVM(t)
+	for _, tt := range []struct{ name, args, path string }{
+		{"bitmaps", "", "graphicsPipeline=false"},
+		{"h264", "/gfx:AVC420", "path=avc420"},
+	} {
+		t.Run(tt.name, func(t *testing.T) { freeRDPRealSound(t, addr, tt.args, tt.path) })
+	}
+}
+
+// freeRDPRealSound is one run of TestFreeRDPRealSound: xfreerdp with args,
+// and mardp's log must have path, the session's video path.
+func freeRDPRealSound(t *testing.T, addr, args, path string) {
+	dir := logDir(t)
+	l, err := net.Listen("tcp", net.JoinHostPort(addr, "0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	h := newHome(t, func(s *config.Settings) { s.Address, s.Port, s.Sound = addr, port, config.SoundBoth })
+	logPath := startApp(t, h.dir, dir)
+	tone := filepath.Join(t.TempDir(), "tone.wav")
+	writeTone(t, tone)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	// The tone starts two seconds into the session.
+	played := make(chan error, 1)
+	go func() {
+		for {
+			b, _ := os.ReadFile(logPath) // read again until the line is there
+			if bytes.Contains(b, []byte("session opened")) {
+				break
+			}
+			if ctx.Err() != nil {
+				played <- ctx.Err()
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		time.Sleep(2 * time.Second)
+		played <- exec.CommandContext(ctx, "afplay", tone).Run()
+	}()
+	out, err := vm(ctx, "sh", soundScriptWith(addr, port, args))
+	for _, f := range []string{"freerdp.log", "sound.wav"} {
+		if _, perr := vm(ctx, "pull", guestDir+"/"+f, filepath.Join(dir, f)); perr != nil {
+			t.Logf("pulling %s: %v", f, perr)
+		}
+	}
+	if err != nil {
+		t.Fatalf("the guest's script: %v\n%s", err, out)
+	}
+	if perr := <-played; perr != nil {
+		t.Errorf("playing the tone: %v", perr)
+	}
+	mlog, _ := os.ReadFile(logPath) // written by mardp of this test
+	for line := range bytes.Lines(mlog) {
+		if bytes.Contains(line, []byte("sound")) || bytes.Contains(line, []byte("session")) || bytes.Contains(line, []byte("video path")) {
+			t.Logf("mardp: %s", bytes.TrimSpace(line))
+		}
+	}
+	if !bytes.Contains(mlog, []byte(path)) {
+		t.Errorf("mardp's log has no %q: not the video path this run is about", path)
+	}
+	w := readWAV(t, filepath.Join(dir, "sound.wav"))
+	if w.channels == 0 || w.rate == 0 {
+		t.Fatalf("FreeRDP played nothing it could write: %d Hz, %d channels", w.rate, w.channels)
+	}
+	// The tone's level in each 10 ms of the left channel.
+	const window = 480
+	var with, peak = 0, 0.0
+	frames := len(w.samples) / w.channels
+	for s := 0; s+window <= frames; s += window {
+		var re, im float64
+		for i := range window {
+			v := w.samples[(s+i)*w.channels]
+			a := 2 * math.Pi * toneHz * float64(i) / float64(w.rate)
+			re += v * math.Cos(a)
+			im -= v * math.Sin(a)
+			peak = math.Max(peak, math.Abs(v))
+		}
+		if level := 2 * math.Hypot(re, im) / window; math.Abs(level-realToneLevel) < realToneLevel/4 {
+			with++
+		}
+	}
+	got := time.Duration(with) * 10 * time.Millisecond
+	t.Logf("FreeRDP played %v of sound (%d Hz, %d channels, peak %.3f), %v of it the tone at its level",
+		time.Duration(frames)*time.Second/time.Duration(w.rate), w.rate, w.channels, peak, got)
+	if got < (realToneSecs-1)*time.Second {
+		t.Errorf("%v of the tone reached the client, want about %d s", got, realToneSecs)
 	}
 }
