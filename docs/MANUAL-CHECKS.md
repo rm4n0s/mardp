@@ -461,10 +461,10 @@ After `sh scripts/install.sh` from a checkout at v1.0.5 or newer, connected with
 2. On Linux, copy some text. On the Mac (through Remmina), paste it (Command+V). Expected: the same text.
 3. Tell me what does not arrive, and in which direction. FreeRDP in the test machine does both; Remmina on your machine is yours to check.
 
-## 1.0.5 The sound in Remmina (SPEC §10.1)
+## 1.0.6 The sound in Remmina (SPEC §10.1)
 
-You said the sound does not seem to work. Here the whole way works: a tone that another program plays on this Mac reaches FreeRDP in the test machine, on the bitmap path and with H.264. To find what differs on your side, tell me, while Remmina is connected and something plays on the Mac:
+You said the sound does not work, and that with "On the client only" the Mac's own speaker plays. Here, with Remmina itself in the test machine (profile: Audio output mode Local, Colour depth GFX AVC420) and the built app on "On the client only": the Mac's speaker is muted for the session and unmuted after it, and 76 seconds of a YouTube video played in Safari arrive in the machine's sound server without a gap (you have the recording). The Mac is muted only while a client takes the sound. So on your machine, while connected:
 
-1. What mardp's window says in its line **Sound:** ("AAC", "PCM", or "none").
-2. What **Audio output mode** says in Remmina's profile (Advanced). It must be **Local**; Remmina's default is off, and then the line above says "none".
-3. What **Sound** says in mardp's settings.
+1. What mardp's window says in its line **Sound:**. With 1.0.6, "Sound: none. In Remmina: Audio output mode › Local" means Remmina did not ask for the sound.
+2. In Remmina, edit the profile: **Advanced** › **Audio output mode** › **Local**. Save, connect again. Expected: "Sound: AAC", the Mac's speaker silent, the sound on Linux.
+3. If the line says "Sound: AAC" and Linux still plays nothing, tell me: then it is your Linux sound setup or something Remmina here does not show, and a look at your machine would help.

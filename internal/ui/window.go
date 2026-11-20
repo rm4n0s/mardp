@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"github.com/rm4n0s/glutter/desktop"
 	m "github.com/rm4n0s/glutter/material"
@@ -312,7 +313,7 @@ func (s *windowState) Build(bc m.BuildContext) m.Widget {
 }
 
 // pageGap is the space around the cards and between them.
-const pageGap = 10
+const pageGap = 8
 
 // cards lays the cards out (SPEC §12.2). A wide window shows everything
 // at once: the status, the checklist and the events in one column, the
@@ -408,7 +409,7 @@ func (s *windowState) statusCard(bc m.BuildContext, vm ViewModel, wide bool) m.W
 func sessionRows(session []string, wide bool) []m.Widget {
 	var rows []m.Widget
 	for i := 0; i < len(session); i++ {
-		if wide && i+1 < len(session) && !sessionLong[i] && !sessionLong[i+1] {
+		if wide && i+1 < len(session) && utf8.RuneCountInString(session[i]) <= sessionShort && utf8.RuneCountInString(session[i+1]) <= sessionShort {
 			rows = append(rows, m.NewRow([]m.Widget{m.NewExpanded(m.NewText(session[i])), m.NewExpanded(m.NewText(session[i+1]))},
 				m.RowOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 16}))
 			i++

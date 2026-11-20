@@ -1,6 +1,9 @@
 package ui
 
-import "github.com/rm4n0s/mardp/internal/host"
+import (
+	"github.com/rm4n0s/mardp/internal/config"
+	"github.com/rm4n0s/mardp/internal/host"
+)
 
 // The texts of the window, which the tests find it by.
 const (
@@ -120,7 +123,7 @@ func NewViewModel(st Status) ViewModel {
 	vm.CanStop = running
 	if st.Server == ServerConnected {
 		vm.Video = st.Video
-		vm.Session = SessionLines(st.Session, st.Video)
+		vm.Session = SessionLines(st.Session, st.Video, st.Settings.Sound != config.SoundOff)
 	}
 	for i := len(st.Events) - 1; i >= 0 && len(vm.Events) < EventsShown; i-- {
 		vm.Events = append(vm.Events, EventText(st.Events[i]))

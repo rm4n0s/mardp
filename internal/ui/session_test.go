@@ -40,7 +40,7 @@ func TestSessionLines(t *testing.T) {
 			if tt.edit != nil {
 				tt.edit(&info)
 			}
-			if got := SessionLines(info, TextVideoAVC420); !slices.Equal(got, tt.want) {
+			if got := SessionLines(info, TextVideoAVC420, false); !slices.Equal(got, tt.want) {
 				t.Errorf("lines\n%q\nwant\n%q", got, tt.want)
 			}
 		})
@@ -85,7 +85,7 @@ func TestSessionInWindow(t *testing.T) {
 	st.Events = []Event{failed, connected}
 	b := &fakeBackend{st: st}
 	ts := newTester(t, b)
-	for _, l := range append(SessionLines(testSession(), TextVideoAVC420), EventText(failed), EventText(connected)) {
+	for _, l := range append(SessionLines(testSession(), TextVideoAVC420, true), EventText(failed), EventText(connected)) {
 		if !shows(ts, l) {
 			t.Errorf("the window does not show %q", l)
 		}

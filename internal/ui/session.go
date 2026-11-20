@@ -10,10 +10,14 @@ import (
 
 // The texts of the connected session and of the recent events (SPEC §12.2).
 const (
-	TextDisconnect   = "Disconnect"
-	TextEvents       = "Recent events"
-	TextNoEvents     = "Nothing yet."
-	TextSoundNone    = "none"
+	TextDisconnect = "Disconnect"
+	TextEvents     = "Recent events"
+	TextNoEvents   = "Nothing yet."
+	TextSoundNone  = "none"
+	// TextSoundHint follows "Sound: none" when the server offers sound and
+	// the client did not ask for it: Remmina's sound is off until its
+	// profile says otherwise.
+	TextSoundHint    = ". In Remmina: Audio output mode › Local"
 	TextDelayBitmaps = "not measured on bitmap updates"
 
 	// Why a session ended.
@@ -91,16 +95,20 @@ func endedText(e host.Ended) string {
 	return TextEndedByClient
 }
 
-// sessionLong says which of SessionLines' lines need a row of their own in
-// a wide window, which shows the others two in a row.
-var sessionLong = [...]bool{0: true, 3: true, 7: false}
+// sessionShort is the longest line of SessionLines, in characters, that a
+// wide window shows beside another; a longer one has a row of its own.
+const sessionShort = 34
 
 // SessionLines are the lines of the connected session's details and
-// numbers; video names its video path.
-func SessionLines(info host.SessionInfo, video string) []string {
+// numbers; video names its video path, and offered says the server offers
+// sound, so that a client without it is one that did not ask for it.
+func SessionLines(info host.SessionInfo, video string, offered bool) []string {
 	sound := info.Sound
 	if sound == "" {
 		sound = TextSoundNone
+		if offered {
+			sound += TextSoundHint
+		}
 	}
 	delay := TextDelayBitmaps
 	if info.Delay > 0 {

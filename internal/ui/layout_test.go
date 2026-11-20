@@ -73,6 +73,15 @@ func TestWindowFits(t *testing.T) {
 			return st
 		}(), nil},
 		{"connected", busiest(), nil},
+		{"connected, the client takes no sound", func() Status {
+			st := busiest()
+			st.Session.Sound = ""
+			return st
+		}(), func(t *testing.T, ts *gluttertest.Tester) {
+			if !shows(ts, "Sound: "+TextSoundNone+TextSoundHint) {
+				t.Error("no hint about Remmina's sound")
+			}
+		}},
 		{"connected, the login's form", busiest(), func(t *testing.T, ts *gluttertest.Tester) {
 			ts.Tap(gluttertest.ByKey(KeyChangeLogin))
 			ts.Pump()
