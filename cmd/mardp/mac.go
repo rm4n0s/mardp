@@ -71,6 +71,16 @@ func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger
 				return host.Parts{}, err
 			}
 			parts.Clipboard = cb
+			// macOS 15.4 and newer may ask the user, or refuse, when an
+			// app reads the clipboard by itself; then the client's paste
+			// of the Mac's text comes out empty.
+			switch access := cb.Access(); access {
+			case clipboard.AccessAsks, clipboard.AccessRefused:
+				log.Warn("macOS does not let mardp read the clipboard freely: text copied on the Mac may not reach the client. "+
+					"Allow it in System Settings › Privacy & Security › Paste from Other Apps", "access", string(access))
+			default:
+				log.Info("the Mac's clipboard is shared with clients that have input", "access", string(access))
+			}
 		}
 	}
 	return parts, nil

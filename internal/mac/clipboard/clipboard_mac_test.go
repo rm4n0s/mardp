@@ -55,12 +55,47 @@ func TestClipboard(t *testing.T) {
 	}
 }
 
+// TestTextFormats: an app that writes its text in one format alone, other
+// than UTF-8, is read too. Screen Sharing writes "traditional Mac plain
+// text" only, and asking for UTF-8 then gives nothing.
+func TestTextFormats(t *testing.T) {
+	c, free := named(fmt.Sprintf("com.github.rm4n0s.mardp.test.formats.%d", os.Getpid()))
+	defer free()
+	tests := []struct {
+		name, typ string
+		data      []byte
+		want      string
+		ok        bool
+	}{
+		{"UTF-8", "public.utf8-plain-text", []byte("héllo ✓"), "héllo ✓", true},
+		{"traditional Mac text", "com.apple.traditional-mac-plain-text", []byte("caf\x8e, 75 bytes of it"), "café, 75 bytes of it", true},
+		{"UTF-16 with a mark", "public.utf16-external-plain-text", []byte{0xff, 0xfe, 'h', 0, 0xbc, 0x03}, "hμ", true},
+		{"UTF-16", "public.utf16-plain-text", []byte{'h', 0, 0xbc, 0x03}, "hμ", true},
+		{"RTF", "public.rtf", []byte(`{\rtf1\ansi rich \b text\b0}`), "rich text", true},
+		{"a picture", "public.png", []byte{0x89, 'P', 'N', 'G'}, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !c.setData(tt.typ, tt.data) {
+				t.Fatal("the pasteboard did not take the data")
+			}
+			if got, ok := c.Text(); ok != tt.ok || got != tt.want {
+				t.Errorf("text %q, %v; want %q, %v", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
 // TestGeneral only looks at the general pasteboard's count: it reads no
 // contents and changes nothing.
 func TestGeneral(t *testing.T) {
 	c, err := New()
 	if err != nil {
 		t.Fatal(err)
+	}
+	t.Logf("macOS's answer to this program reading the clipboard: %s", c.Access())
+	if a := c.Access(); a != AccessDefault && a != AccessAllowed && a != AccessAsks && a != AccessRefused {
+		t.Errorf("Access = %q", a)
 	}
 	if a, b := c.Changes(), c.Changes(); a != b && b != a+1 {
 		t.Errorf("the count went from %d to %d between two looks", a, b)

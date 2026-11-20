@@ -15,7 +15,7 @@ func TestUnsupported(t *testing.T) {
 		t.Errorf("route of %v", err)
 	}
 	c := &Clipboard{}
-	if _, ok := c.Text(); ok || c.Changes() != 0 {
+	if _, ok := c.Text(); ok || c.Changes() != 0 || c.Access() != AccessRefused {
 		t.Error("the stand-in has a clipboard")
 	}
 	err = c.SetText("x")

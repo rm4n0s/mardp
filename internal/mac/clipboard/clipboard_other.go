@@ -12,6 +12,9 @@ func New() (*Clipboard, error) {
 	return nil, errors.New(TagClipboardUnsupported, "mardp's host runs only on macOS")
 }
 
+// Access is refused.
+func (c *Clipboard) Access() Access { return AccessRefused }
+
 // Changes is always 0.
 func (c *Clipboard) Changes() int64 { return 0 }
 

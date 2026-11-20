@@ -13,5 +13,17 @@ const (
 	TagClipboardWriteFailed = "ClipboardWriteFailed"
 )
 
+// Access is what macOS does when the app reads the clipboard without the
+// user pasting.
+type Access string
+
+// The values of Access.
+const (
+	AccessDefault Access = "default"
+	AccessAllowed Access = "allowed"
+	AccessAsks    Access = "asks"
+	AccessRefused Access = "refused"
+)
+
 // Clipboard implements host.Clipboard.
 var _ host.Clipboard = (*Clipboard)(nil)

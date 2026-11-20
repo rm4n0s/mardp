@@ -26,12 +26,31 @@ type Clipboard struct {
 // New is the Mac's clipboard: the general pasteboard.
 func New() (*Clipboard, error) { return &Clipboard{}, nil }
 
+// Access says what macOS does when mardp reads the clipboard, which it
+// does without the user pasting on the Mac (macOS 15.4 and newer;
+// System Settings › Privacy & Security › Paste from Other Apps): AccessAllowed,
+// AccessAsks, AccessRefused, or AccessDefault, which is macOS's choice.
+func (c *Clipboard) Access() Access {
+	switch C.mardpClipAccess() {
+	case 1:
+		return AccessAsks
+	case 2:
+		return AccessAllowed
+	case 3:
+		return AccessRefused
+	case 0:
+		return AccessDefault
+	}
+	return AccessAllowed // a macOS without the setting
+}
+
 // Changes is the pasteboard's change count: it goes up whenever any app
 // changes what the pasteboard holds.
 func (c *Clipboard) Changes() int64 { return int64(C.mardpClipChanges(c.name)) }
 
-// Text is the pasteboard's text now; ok is false when it holds none (a
-// picture, files, nothing).
+// Text is the pasteboard's text now, in whichever text format the app
+// that copied it wrote; ok is false when it holds none (a picture, files,
+// nothing).
 func (c *Clipboard) Text() (string, bool) {
 	var n C.long
 	p := C.mardpClipText(c.name, &n)
@@ -50,6 +69,16 @@ func (c *Clipboard) SetText(text string) error {
 		return errors.New(TagClipboardWriteFailed, "the pasteboard did not take the text", "bytes", len(text))
 	}
 	return nil
+}
+
+// setData puts data on the pasteboard as the type named and nothing else,
+// as an app that writes one format only; the tests use it.
+func (c *Clipboard) setData(typ string, data []byte) bool {
+	t := C.CString(typ)
+	defer C.free(unsafe.Pointer(t))
+	p := C.CBytes(data)
+	defer C.free(p)
+	return C.mardpClipSetData(c.name, t, p, C.long(len(data))) != 0
 }
 
 // named is a pasteboard of its own, called name, and the function that
