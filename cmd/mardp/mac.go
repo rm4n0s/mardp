@@ -89,25 +89,18 @@ func (mac) pattern(s config.Settings, kind patternKind, log *slog.Logger) (host.
 func (mac) window(ctx context.Context, b ui.Backend, log *slog.Logger) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	// Glutter: macOS's question at a logout (applicationShouldTerminate)
-	// reaches the app as a close request, which the window answers by
-	// hiding. Glutter should let the app tell it from the close button
-	// (docs/GLUTTER-ISSUES.md).
+	// Glutter tells the window why it is asked to exit, and the window
+	// lets the app end at a logout (internal/ui, exitRequested). This
+	// watch of macOS's own notice is a second way to the same end: a Mac
+	// that waits for mardp does not shut down.
 	stop := system.WatchPowerOff(func() {
 		log.Info("the Mac logs out or shuts down: quitting")
 		cancel()
 	})
 	defer stop()
-	// Glutter: a quit (the app menu's Quit, Command+Q, the Dock's Quit, a
-	// quit Apple Event) reaches the app as a close request too, and the
-	// window hid; mardp answers macOS's question itself. Glutter should say what asked the app to exit
-	// (docs/GLUTTER-ISSUES.md).
-	stopQuit := system.WatchQuit(func() {
-		log.Info("Quit chosen: quitting")
-		cancel()
-	})
-	defer stopQuit()
-	return ui.Run(ctx, b, log)
+	err := ui.Run(ctx, b, log)
+	log.Info("the window's app ended: Quit was chosen, the session ends, or mardp was told to stop")
+	return err
 }
 
 // aacParts is the host's AAC encoder (SPEC §10.1), nil, with a warning,

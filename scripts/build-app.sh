@@ -1,8 +1,7 @@
 #!/bin/sh
 # Builds build/mardp.app with Glutter's glutter-macos (SPEC §12.1, §16), with
-# the icon scripts/icon draws, and signs it with mardp's development identity
-# (scripts/sign.sh, D22), so that the permissions the owner grants it stay
-# from build to build.
+# the icon scripts/icon draws, signed with mardp's development identity (D22),
+# so that the permissions the owner grants it stay from build to build.
 #
 # The bundle's version is the last version tag (vX.Y.Z) before HEAD;
 # `mardp -version` prints the version Go records from git, which is the same
@@ -43,43 +42,23 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 go build -o "$tmp/glutter-macos" github.com/rm4n0s/glutter/cmd/glutter-macos
 go run ./scripts/icon "$tmp/icon.png"
 
-# Glutter: glutter-macos builds with CGO_ENABLED=0 and has no flag for the
-# environment of its go build (its BuildOptions.Env has no flag), while
-# mardp's internal/mac packages need cgo. A go of our own first in PATH
-# turns cgo back on for glutter-macos's go build. Glutter should honor
-# CGO_ENABLED of the environment, or take -env for build (docs/GLUTTER-ISSUES.md).
-real_go=$(command -v go)
-mkdir "$tmp/bin"
-# Glutter: glutter-macos leaves the deployment target to clang, whose
-# default is the macOS of the machine that builds, so the executable would
-# not open on an older macOS; the shim sets MACOSX_DEPLOYMENT_TARGET. Glutter
-# should build for the LSMinimumSystemVersion it writes, and take a flag for
-# it (docs/GLUTTER-ISSUES.md).
-cat >"$tmp/bin/go" <<SHIM
-#!/bin/sh
-CGO_ENABLED=1 MACOSX_DEPLOYMENT_TARGET=$minimum exec "$real_go" "\$@"
-SHIM
-chmod +x "$tmp/bin/go"
-
-rm -rf "$app"
-mkdir -p build
-PATH="$tmp/bin:$PATH" "$tmp/glutter-macos" build -o "$app" -name mardp -id com.github.rm4n0s.mardp \
-	-version "$version" -icon "$tmp/icon.png" $debug \
-	-usage "NSScreenCaptureUsageDescription=mardp shows this Mac's screen to the RDP client that you connect." \
-	./cmd/mardp
-
-# Glutter: glutter-macos writes LSMinimumSystemVersion 12.0 and has no flag
-# for it (docs/GLUTTER-ISSUES.md); the bundle says mardp's minimum instead,
-# before it is signed.
-plutil -replace LSMinimumSystemVersion -string "$minimum" "$app/Contents/Info.plist"
-built=$(otool -l "$app/Contents/MacOS/mardp" | awk '$1 == "minos" { print $2; exit }')
-if [ "$built" != "$minimum" ]; then
-	echo "build-app.sh: the executable needs macOS $built, not $minimum" >&2
+# The signing identity, as scripts/sign.sh takes it (D22).
+identity="${MARDP_SIGN_IDENTITY:-mardp development}"
+if ! security find-identity -v -p codesigning | grep -q "\"$identity\""; then
+	cat >&2 <<MSG
+build-app.sh: the signing identity "$identity" is not in your keychain.
+Create it once with scripts/make-identity.sh (README, "The signing identity").
+MSG
 	exit 1
 fi
 
-# Glutter: glutter-macos signs ad hoc and has no flag for the signing
-# identity (its SignOptions.Identity has no flag); the app is signed again
-# with mardp's own (docs/GLUTTER-ISSUES.md).
-sh scripts/sign.sh "$app"
+rm -rf "$app"
+mkdir -p build
+# mardp's internal/mac packages need cgo (D14), which glutter-macos leaves
+# to the environment; -min-macos is the minimum of the plist and of the
+# build, and -sign the identity the bundle is signed with.
+CGO_ENABLED=1 "$tmp/glutter-macos" build -o "$app" -name mardp -id com.github.rm4n0s.mardp \
+	-version "$version" -icon "$tmp/icon.png" $debug -min-macos "$minimum" -sign "$identity" \
+	-usage "NSScreenCaptureUsageDescription=mardp shows this Mac's screen to the RDP client that you connect." \
+	./cmd/mardp
 echo "built $app $version"

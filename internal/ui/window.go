@@ -31,6 +31,28 @@ var (
 	KeyDisconnect = m.NewValueKey("disconnect")
 )
 
+// The window's size when it opens (SPEC §12.2): everything it shows fits
+// without scrolling.
+const (
+	WindowWidth  = 1240
+	WindowHeight = 800
+)
+
+// wideFrom is the width from which the window lays its cards out side by
+// side; a narrower one stacks them and scrolls.
+const wideFrom = 1000
+
+// EventsShown is how many recent events the window lists, the newest
+// first: what fits without scrolling.
+const EventsShown = 8
+
+// The keys of the page's scrolling area and of what it holds: the tests
+// compare their heights.
+var (
+	KeyScroll  = m.NewValueKey("page scroll")
+	KeyContent = m.NewValueKey("page content")
+)
+
 // KeyCheck is the key of the button of the checklist's line titled title.
 func KeyCheck(title string) m.ValueKey[string] { return m.NewValueKey("check " + title) }
 
@@ -40,9 +62,16 @@ func KeyCheck(title string) m.ValueKey[string] { return m.NewValueKey("check " +
 func Run(ctx context.Context, b Backend, log *slog.Logger) error {
 	return m.RunAppContext(ctx, NewApp(b), m.RunAppOpts{
 		AppID:  AppID,
-		Window: m.WindowConfig{Title: "mardp", Size: m.Size{Width: 560, Height: 640}},
+		Window: WindowConfig(b),
 		Logger: log,
 	})
+}
+
+// WindowConfig is the window as it opens: its title bar says the app's
+// name and version, and its size shows everything without scrolling
+// (SPEC §12.2).
+func WindowConfig(b Backend) m.WindowConfig {
+	return m.WindowConfig{Title: NewViewModel(b.Status()).Title, Size: m.Size{Width: WindowWidth, Height: WindowHeight}}
 }
 
 // App is the Material app around the window, light or dark as the system is.
@@ -57,7 +86,7 @@ func NewApp(b Backend) *App { return &App{b: b} }
 // Build builds the app.
 func (a *App) Build(m.BuildContext) m.Widget {
 	return m.NewMaterialApp(m.MaterialAppOpts{
-		Title:                      "mardp",
+		Title:                      NewViewModel(a.b.Status()).Title,
 		Theme:                      m.NewThemeData(),
 		DarkTheme:                  m.NewThemeDataDark(),
 		DebugShowCheckedModeBanner: m.Some(false),
@@ -140,16 +169,16 @@ func (s *windowState) Dispose() {
 	s.settings.dispose()
 }
 
-// exitRequested is the window's close button: the window is hidden and
-// the app goes on with the menu-bar icon (SPEC §7.3), unless the user
-// chose Quit.
-//
-// Glutter: on macOS a quit (Cmd+Q, the app menu's Quit, the Dock's)
-// arrives here too and cannot be told from the close button; mardp takes
-// the quit before Glutter does (cmd/mardp/mac.go, system.WatchQuit), so
-// only the close button comes here. Glutter should say which one asked
-// (docs/GLUTTER-ISSUES.md).
+// exitRequested answers a request to exit by what asks (SPEC §7.3): the
+// window's close button hides the window, and the app goes on with the
+// menu-bar icon; a quit (Cmd+Q, the app menu's Quit, the Dock's, the
+// menu-bar icon's) and the end of the user's session (a logout, a restart,
+// a shutdown) let the app end, which stops the server.
 func (s *windowState) exitRequested() gui.AppExitResponse {
+	switch m.WidgetsBindingOf(s.Context()).PlatformDispatcher().ExitRequestReason() {
+	case gui.AppExitReasonQuit, gui.AppExitReasonSessionEnd:
+		return gui.AppExitResponseExit
+	}
 	if s.quitting {
 		return gui.AppExitResponseExit
 	}
@@ -265,15 +294,14 @@ func (s *windowState) saveLogin() {
 
 func (s *windowState) Build(bc m.BuildContext) m.Widget {
 	vm := NewViewModel(s.status)
-	children := []m.Widget{s.statusCard(bc, vm)}
-	if vm.Checklist != nil || s.editing {
-		children = append(children, s.checklistCard(bc, vm))
-	}
-	children = append(children, s.eventsCard(bc, vm), s.settingsCard(bc))
+	// No bar at the top: the window's title bar has the name and the
+	// version, and the height is the cards'.
 	page := m.NewScaffold(m.ScaffoldOpts{
-		AppBar: m.NewAppBar(m.AppBarOpts{Title: m.NewText(vm.Title)}),
-		Body: m.NewSingleChildScrollView(m.NewPadding(m.NewEdgeInsetsAll(16),
-			m.NewColumn(children, m.ColumnOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 16}))),
+		Body: m.NewLayoutBuilder(func(bc m.BuildContext, c m.BoxConstraints) m.Widget {
+			return m.NewSingleChildScrollView(m.NewPadding(m.NewEdgeInsetsAll(pageGap),
+				s.cards(bc, vm, c.MaxWidth >= wideFrom), m.PaddingOpts{Key: KeyContent}),
+				m.SingleChildScrollViewOpts{Key: KeyScroll})
+		}),
 	})
 	return desktop.NewSystemTray(s.icons[s.status.Server], page, desktop.SystemTrayOpts{
 		Title:       TextTrayTitle,
@@ -281,6 +309,36 @@ func (s *windowState) Build(bc m.BuildContext) m.Widget {
 		TooltipBody: vm.State,
 		Menu:        trayEntries(NewTrayMenu(vm, s.busy), s.trayAction),
 	})
+}
+
+// pageGap is the space around the cards and between them.
+const pageGap = 10
+
+// cards lays the cards out (SPEC §12.2). A wide window shows everything
+// at once: the status, the checklist and the events in one column, the
+// settings beside them. A narrow one stacks the cards and scrolls.
+func (s *windowState) cards(bc m.BuildContext, vm ViewModel, wide bool) m.Widget {
+	// The form of the login: a wide window has it in the settings, in the
+	// place of the login's line; a narrow one in the checklist, whose
+	// login line comes back for it when the checklist is done.
+	left := []m.Widget{s.statusCard(bc, vm, wide)}
+	if vm.Checklist != nil || s.editing && !wide {
+		left = append(left, s.checklistCard(bc, vm, wide))
+	}
+	left = append(left, s.eventsCard(bc, vm))
+	column := m.ColumnOpts{CrossAxisAlignment: m.CrossAxisAlignmentStretch, Spacing: pageGap}
+	if !wide {
+		return m.NewColumn(append(left, s.settingsCard(bc, vm, false)), column)
+	}
+	return m.NewRow([]m.Widget{
+		m.NewExpanded(m.NewColumn(left, column), m.ExpandedOpts{Flex: m.Some(6)}),
+		m.NewExpanded(s.settingsCard(bc, vm, true), m.ExpandedOpts{Flex: m.Some(8)}),
+	}, m.RowOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: pageGap})
+}
+
+// lines are lines of text that belong together, close to each other.
+func lines(rows ...m.Widget) m.Widget {
+	return m.NewColumn(rows, m.ColumnOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 2})
 }
 
 // errorText is text in the theme's color of errors.
@@ -293,20 +351,21 @@ func errorText(bc m.BuildContext, text string, opts ...m.WidgetOpts) m.Widget {
 	return m.NewText(text, o)
 }
 
-func (s *windowState) statusCard(bc m.BuildContext, vm ViewModel) m.Widget {
+func (s *windowState) statusCard(bc m.BuildContext, vm ViewModel, wide bool) m.Widget {
 	theme := m.ThemeOf(bc)
 	rows := []m.Widget{m.NewText(vm.State, m.TextOpts{Style: theme.TextTheme.TitleLarge})}
 	if len(vm.Addresses) > 0 {
-		rows = append(rows, m.NewText(TextAddresses))
+		group := []m.Widget{m.NewText(TextAddresses)}
 		for _, a := range vm.Addresses {
-			rows = append(rows, m.NewText(a, m.TextOpts{Style: theme.TextTheme.TitleMedium}))
+			group = append(group, m.NewText(a, m.TextOpts{Style: theme.TextTheme.TitleMedium}))
 		}
+		rows = append(rows, lines(group...))
 	}
 	if vm.Fingerprint != "" {
-		rows = append(rows, m.NewText(TextFingerprint), m.NewText(vm.Fingerprint))
+		rows = append(rows, lines(m.NewText(TextFingerprint), m.NewText(vm.Fingerprint, m.TextOpts{Style: theme.TextTheme.BodySmall})))
 	}
-	for _, l := range vm.Session {
-		rows = append(rows, m.NewText(l))
+	if len(vm.Session) > 0 {
+		rows = append(rows, lines(sessionRows(vm.Session, wide)...))
 	}
 	if vm.ViewOnly {
 		rows = append(rows, m.NewText(TextViewOnly))
@@ -344,14 +403,37 @@ func (s *windowState) statusCard(bc m.BuildContext, vm ViewModel) m.Widget {
 	return card(rows)
 }
 
+// sessionRows are the session's lines as the status card shows them: one
+// under the other, or, in a wide window, the short ones two in a row.
+func sessionRows(session []string, wide bool) []m.Widget {
+	var rows []m.Widget
+	for i := 0; i < len(session); i++ {
+		if wide && i+1 < len(session) && !sessionLong[i] && !sessionLong[i+1] {
+			rows = append(rows, m.NewRow([]m.Widget{m.NewExpanded(m.NewText(session[i])), m.NewExpanded(m.NewText(session[i+1]))},
+				m.RowOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 16}))
+			i++
+			continue
+		}
+		rows = append(rows, m.NewText(session[i]))
+	}
+	return rows
+}
+
 // eventsCard is the recent events, the newest first.
 func (s *windowState) eventsCard(bc m.BuildContext, vm ViewModel) m.Widget {
 	rows := []m.Widget{m.NewText(TextEvents, m.TextOpts{Style: m.ThemeOf(bc).TextTheme.TitleLarge})}
 	if len(vm.Events) == 0 {
 		rows = append(rows, m.NewText(TextNoEvents))
 	}
-	for _, e := range vm.Events {
-		rows = append(rows, m.NewText(e))
+	if len(vm.Events) > 0 {
+		group := make([]m.Widget, len(vm.Events))
+		for i, e := range vm.Events {
+			// One line each, so that the card's height does not depend on
+			// the texts; the pointer over a line shows all of it.
+			group[i] = m.NewTooltip(m.NewText(e, m.TextOpts{MaxLines: m.Some(1), Overflow: m.TextOverflowEllipsis}),
+				m.TooltipOpts{Message: e})
+		}
+		rows = append(rows, lines(group...))
 	}
 	if vm.FailedLogins {
 		rows = append(rows, m.NewText(WaitRuleText(), m.TextOpts{Style: m.ThemeOf(bc).TextTheme.BodySmall}))
@@ -364,11 +446,12 @@ func (s *windowState) eventsCard(bc m.BuildContext, vm ViewModel) m.Widget {
 
 // card is a card of rows.
 func card(rows []m.Widget) m.Widget {
-	return m.NewCard(m.NewPadding(m.NewEdgeInsetsAll(16),
-		m.NewColumn(rows, m.ColumnOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 8})))
+	return m.NewCard(m.NewPadding(m.NewEdgeInsetsSymmetric(12, 16),
+		m.NewColumn(rows, m.ColumnOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 8})),
+		m.CardOpts{Margin: m.NewEdgeInsetsAll(0)})
 }
 
-func (s *windowState) checklistCard(bc m.BuildContext, vm ViewModel) m.Widget {
+func (s *windowState) checklistCard(bc m.BuildContext, vm ViewModel, wide bool) m.Widget {
 	theme := m.ThemeOf(bc)
 	rows := []m.Widget{m.NewText(TextChecklist, m.TextOpts{Style: theme.TextTheme.TitleLarge})}
 	checks := vm.Checklist
@@ -396,20 +479,28 @@ func (s *windowState) checklistCard(bc m.BuildContext, vm ViewModel) m.Widget {
 			}
 			button = m.NewTextButton(on, m.NewText(c.Button), m.TextButtonOpts{Key: KeyCheck(c.Title)})
 		}
-		rows = append(rows, m.NewListTile(m.ListTileOpts{
-			Leading:  icon,
-			Title:    m.NewText(c.Title),
-			Subtitle: m.NewText(c.Detail),
-			Trailing: button,
-		}))
+		// The button under the text, which so has the card's width.
+		text := []m.Widget{
+			m.NewText(c.Title, m.TextOpts{Style: theme.TextTheme.TitleMedium}),
+			m.NewText(c.Detail, m.TextOpts{Style: theme.TextTheme.BodyMedium.CopyWith(m.TextStyleOpts{Color: m.Some(theme.ColorScheme.OnSurfaceVariant())})}),
+		}
+		if button != nil {
+			text = append(text, button)
+		}
+		rows = append(rows, m.NewRow([]m.Widget{
+			m.NewPadding(m.NewEdgeInsetsFromLTRB(0, 0, 12, 0), icon),
+			m.NewExpanded(m.NewColumn(text, m.ColumnOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 2})),
+		}, m.RowOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart}))
 	}
-	if s.editing {
-		rows = append(rows, s.loginForm(bc))
+	if s.editing && !wide {
+		rows = append(rows, s.loginForm(bc, false))
 	}
 	return card(rows)
 }
 
-func (s *windowState) loginForm(bc m.BuildContext) m.Widget {
+// loginForm is the form of the login; a wide one has its two fields side
+// by side.
+func (s *windowState) loginForm(bc m.BuildContext, wide bool) m.Widget {
 	var onSave, onCancel func()
 	if !s.busy {
 		onSave, onCancel = s.saveLogin, s.cancelLogin
@@ -419,12 +510,18 @@ func (s *windowState) loginForm(bc m.BuildContext) m.Widget {
 		password = m.NewInputDecoration(m.InputDecorationOpts{LabelText: m.Some(TextPassword), ErrorText: m.Some(s.loginErr)})
 	}
 	user := m.NewInputDecoration(m.InputDecorationOpts{LabelText: m.Some(TextUser)})
-	return m.NewColumn([]m.Widget{
+	fields := []m.Widget{
 		m.NewTextField(m.TextFieldOpts{Key: KeyUser, Controller: s.user, Decoration: &user}),
 		m.NewTextField(m.TextFieldOpts{Key: KeyPassword, Controller: s.password, Decoration: &password, ObscureText: true}),
+	}
+	if wide {
+		fields = []m.Widget{m.NewRow([]m.Widget{m.NewExpanded(fields[0]), m.NewExpanded(fields[1])},
+			m.RowOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 12})}
+	}
+	return m.NewColumn(append(fields,
 		m.NewRow([]m.Widget{
 			m.NewFilledButton(onSave, m.NewText(TextSave), m.FilledButtonOpts{Key: KeySave}),
 			m.NewTextButton(onCancel, m.NewText(TextCancel), m.TextButtonOpts{Key: KeyCancel}),
 		}, m.RowOpts{Spacing: 8}),
-	}, m.ColumnOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 8})
+	), m.ColumnOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 8})
 }

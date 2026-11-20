@@ -122,7 +122,7 @@ func NewViewModel(st Status) ViewModel {
 		vm.Video = st.Video
 		vm.Session = SessionLines(st.Session, st.Video)
 	}
-	for i := len(st.Events) - 1; i >= 0; i-- {
+	for i := len(st.Events) - 1; i >= 0 && len(vm.Events) < EventsShown; i-- {
 		vm.Events = append(vm.Events, EventText(st.Events[i]))
 		vm.FailedLogins = vm.FailedLogins || st.Events[i].Kind == EventLoginFailed
 	}

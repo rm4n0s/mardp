@@ -964,3 +964,25 @@ The owner, with 1.0.3: "it works, but I lose the mouse pointer, it disappears so
   - The host's rule, step by step (`TestPointerPollHidden`), and a whole session with the library's test client (`TestSession`, "the client's mouse moves a hidden pointer"): hidden, the client's mouse moves, the pointer shows again from the client's cache.
   - The real client shows a pointer again after "hidden", from its cache and new: FreeRDP in the test machine, `docs/pictures/1.0.4/freerdp-pointer-after-hidden.png` (110 pictures, 5 a second, row by row: the client's own pointer, magenta, hidden, magenta, hidden, green). So the fault was not the client's.
 - **Not proved:** that macOS gives the image of a pointer it hides (it could not be hidden here without typing on the owner's desktop, which no test does; a helper in the background that asks macOS to hide the pointer is ignored): if it does not, the last shape shows. The owner's own typing in Remmina: pending, see docs/MANUAL-CHECKS.md.
+
+## 1.0.4 One window with nothing to scroll, and Glutter 1.17.8 (2026-11-20)
+
+The owner: "make the mardp's UI better to show everything in one large window without scrolling", and "also there is new version of glutter, update that too". Earlier: "the scrollbar doesn't work"; it was the scrolling of mardp's own window, which the new window does not need.
+
+- **Built, the window (`internal/ui`):**
+  - The window opens 1240 by 800 and lays its cards out side by side from 1000 points of width: the status, the checklist and the events on the left, the settings on the right with their groups in two columns. Narrower, it stacks the cards and scrolls, as before.
+  - No bar at the top: the title bar has the name and the version (`WindowConfig`).
+  - The status card pairs the session's short lines; the checklist's lines have their button under the text, which so has the card's width; the settings' menus fill their line and cut a long text; the login's form opens in the settings, its two fields side by side; "New certificate" is at the end of the row of Save and Undo.
+  - The events card lists the newest 8 of the 50 kept, one line each, the whole text under the pointer.
+- **Built, Glutter 1.17.8 (it fixed the five issues mardp had reported):**
+  - `exitRequested` answers by `ExitRequestReason`: the close button hides the window, a quit and the end of the session end the app. `internal/mac/system` `WatchQuit` (1.0.3) is gone: with 1.17.8 Glutter takes the quit Apple Event itself, so the hook would no longer have been asked.
+  - `scripts/build-app.sh` uses `CGO_ENABLED=1`, `-min-macos 14.0` and `-sign`; no `go` shim, no `plutil`, no second signing.
+  - The window's tests run as macOS, and in a release build too (47 were skipped there).
+  - docs/GLUTTER-ISSUES.md has no entry left.
+  - SPEC §7.3, §12.2, D23; README.
+- **Proved:**
+  - `TestWindowFits`: at 1240 by 800 the window holds at most 784 points of height in the seven states that show the most. `TestWindowNarrow`, `TestExitRequests`, `TestTitle`.
+  - Looked at: the pictures of those states (`docs/pictures/1.0.4/window-connected.png`, `window-first-run.png`, from Glutter's software renderer), and the real app's first frame, taken by `glutter-macos shot` on Metal with this Mac's fonts (`window-real-app.png`).
+  - The built app: `minos` 14.0, the plist's 14.0, signed with mardp's identity (the same designated requirement as before, so the permissions stay). Its window is 1240 by 832 with the title bar.
+  - Quit: a quit Apple Event sent to a test copy of the built app by its process id ended it within two seconds.
+- **Not proved:** the window on the owner's screen with real clicks (the close button, each Quit, a logout); this session cannot take a picture of a window on the screen (no Screen Recording for it), so the real window's title bar was not seen. Pending, see docs/MANUAL-CHECKS.md.

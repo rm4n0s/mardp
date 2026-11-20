@@ -444,14 +444,12 @@ A photo or a screenshot of Remmina's window when it looks wrong settles more tha
 
 Until 1.0.4 the pointer could stay away after you typed. With 1.0.4, in Remmina: click in a text field on the Mac, type a few words, then move the mouse. Expected: the pointer is there as soon as the mouse moves, and stays. Tell me if it is ever missing while you move the mouse, and what you did just before.
 
-## 1.0.3 Quit (SPEC §7.3)
+## 1.0.4 The window, Quit and the close button (SPEC §12.2, §7.3)
 
-Each of these should quit the app, so that its icon leaves the Dock and the menu bar: Quit in the Dock icon's menu (right-click), Command+Q with mardp's window in front, Quit mardp in the mardp menu at the top of the screen, Quit in the menu-bar icon's menu. Tell me which, if any, does not.
+After `sh scripts/install.sh` from a checkout at v1.0.4 or newer:
 
-## 1.0.2 The scrollbar
+1. Open mardp. Expected: one large window (1240 by 800) that shows the status and the recent events on the left and all the settings on the right, with nothing to scroll; its title bar says "mardp v1.0.4" (or the newer version). Connect from Remmina and look again: still nothing to scroll. Tell me if anything is cut off or needs scrolling, and how large your Mac's screen is.
+2. Press the window's red close button. Expected: the window goes away, mardp stays in the Dock and in the menu bar, and a connected client stays connected. Click mardp in the Dock: the window is back.
+3. Each of these should quit the app, so that its icon leaves the Dock and the menu bar: Quit in the Dock icon's menu (right-click), Command+Q with mardp's window in front, Quit mardp in the mardp menu at the top of the screen, Quit in the menu-bar icon's menu. Tell me which, if any, does not. (Quit is Glutter's since 1.0.4; here a quit event sent to a test copy ended it.)
+4. With mardp open, shut the Mac down or log out. Expected: mardp does not hold it up.
 
-You said the scrollbar does not work. I could not tell which one, so nothing is changed yet. Tell me: is it the scrollbar of mardp's own window (the list of settings), or scrolling inside the remote desktop in Remmina? And what you do (drag the bar, the mouse wheel, two fingers on a trackpad) and what happens.
-
-## 1.0.2 The version in the window
-
-After `sh scripts/install.sh` from a checkout at v1.0.2 or newer: mardp's window has the title "mardp v1.0.2" (or the newer version). Tell me what the title says.

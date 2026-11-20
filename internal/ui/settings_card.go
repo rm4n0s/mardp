@@ -123,8 +123,10 @@ func (s *windowState) newCertificate() {
 	})
 }
 
-// settingsCard is the settings, grouped by when they apply (SPEC §12.2).
-func (s *windowState) settingsCard(bc m.BuildContext) m.Widget {
+// settingsCard is the settings, grouped by when they apply (SPEC §12.2). A
+// wide card has its groups in two columns, and the login's form in the
+// place of the login's line.
+func (s *windowState) settingsCard(bc m.BuildContext, vm ViewModel, wide bool) m.Widget {
 	theme := m.ThemeOf(bc)
 	f := &s.settings
 	idle := !s.busy
@@ -150,12 +152,13 @@ func (s *windowState) settingsCard(bc m.BuildContext) m.Widget {
 		if idle {
 			on = func(v bool) { s.edit(func(f *Form) { set(f, v) }) }
 		}
-		o := m.SwitchListTileOpts{Key: key, Title: m.NewText(title)}
+		o := m.SwitchListTileOpts{Key: key, Title: m.NewText(title), ContentPadding: flush}
 		if subtitle != "" {
 			o.Subtitle = m.NewText(subtitle)
 		}
 		return m.NewSwitchListTile(value, on, o)
 	}
+	label := theme.TextTheme.BodyLarge
 	var onChange func()
 	if idle && !s.editing {
 		onChange = s.editLogin
@@ -164,42 +167,70 @@ func (s *windowState) settingsCard(bc m.BuildContext) m.Widget {
 	if user == "" {
 		user = TextNoLogin
 	}
-	rows := []m.Widget{
-		m.NewText(TextSettings, m.TextOpts{Style: theme.TextTheme.TitleLarge}),
-		header(TextAtOnce),
-		m.NewListTile(m.ListTileOpts{
-			Title:    m.NewText(TextLogin),
-			Subtitle: m.NewText(user),
-			Trailing: m.NewTextButton(onChange, m.NewText(TextChangeLogin), m.TextButtonOpts{Key: KeyChangeLogin}),
-		}),
-		toggle(KeyOpenAtLogin, TextOpenAtLogin, "", f.form.OpenAtLogin, func(f *Form, v bool) { f.OpenAtLogin = v }),
+
+	// At once.
+	atOnce := []m.Widget{header(TextAtOnce)}
+	if wide && s.editing {
+		atOnce = append(atOnce, s.loginForm(bc, true))
+	} else {
+		atOnce = append(atOnce, m.NewListTile(m.ListTileOpts{
+			ContentPadding: flush,
+			Title:          m.NewText(TextLogin),
+			Subtitle:       m.NewText(user),
+			Trailing:       m.NewTextButton(onChange, m.NewText(TextChangeLogin), m.TextButtonOpts{Key: KeyChangeLogin}),
+		}))
 	}
+	atOnce = append(atOnce, toggle(KeyOpenAtLogin, TextOpenAtLogin, "", f.form.OpenAtLogin, func(f *Form, v bool) { f.OpenAtLogin = v }))
 	if s.status.LoginApproval {
-		rows = append(rows, m.NewText(TextLoginApproval, m.TextOpts{Style: theme.TextTheme.BodySmall}))
+		atOnce = append(atOnce, m.NewText(TextLoginApproval, m.TextOpts{Style: theme.TextTheme.BodySmall}))
 	}
 	if s.status.LoginProblem != "" {
-		rows = append(rows, errorText(bc, TextLoginFailed+s.status.LoginProblem))
+		atOnce = append(atOnce, errorText(bc, TextLoginFailed+s.status.LoginProblem))
 	}
-	rows = append(rows,
-		header(TextNextSession),
+
+	// At the next session: where the server listens, then what it sends.
+	listens := []m.Widget{
 		field(KeyPort, TextPort, f.port, FieldPort, "", func(f *Form, v string) { f.Port = v }),
 		field(KeyAddress, TextAddress, f.address, FieldAddress, TextAddressHelp, func(f *Form, v string) { f.Address = v }),
-		choice(KeyDisplay, TextDisplay, DisplayChoices(s.status.Displays, f.form.Display), f.form.Display, idle,
+		choice(KeyDisplay, label, TextDisplay, DisplayChoices(s.status.Displays, f.form.Display), f.form.Display, idle,
 			func(v string) { s.edit(func(f *Form) { f.Display = v }) }),
-		choice(KeyMaxHeight, TextMaxHeight, HeightChoices(f.form.MaxHeight), f.form.MaxHeight, idle,
+		choice(KeyMaxHeight, label, TextMaxHeight, HeightChoices(f.form.MaxHeight), f.form.MaxHeight, idle,
 			func(v int) { s.edit(func(f *Form) { f.MaxHeight = v }) }),
-		choice(KeyMaxFPS, TextMaxFPS, FPSChoices(f.form.MaxFPS), f.form.MaxFPS, idle,
+	}
+	if e, ok := f.errs[FieldMaxHeight]; ok {
+		listens = append(listens, errorText(bc, e))
+	}
+	sends := []m.Widget{
+		choice(KeyMaxFPS, label, TextMaxFPS, FPSChoices(f.form.MaxFPS), f.form.MaxFPS, idle,
 			func(v int) { s.edit(func(f *Form) { f.MaxFPS = v }) }),
 		field(KeyBitrate, TextBitrate, f.bitrate, FieldMaxBitrate, "", func(f *Form, v string) { f.Bitrate = v }),
-		choice(KeySound, TextSound, SoundChoices(f.form.Sound), f.form.Sound, idle,
+		choice(KeySound, label, TextSound, SoundChoices(f.form.Sound), f.form.Sound, idle,
 			func(v config.Sound) { s.edit(func(f *Form) { f.Sound = v }) }),
 		toggle(KeySwap, TextSwap, TextSwapHelp, f.form.SwapCtrlCommand, func(f *Form, v bool) { f.SwapCtrlCommand = v }),
-		m.NewOutlinedButton(ifThen(idle, s.newCertificate), m.NewText(TextNewCertificate), m.OutlinedButtonOpts{Key: KeyNewCertificate}),
+	}
+	certificate := m.NewOutlinedButton(ifThen(idle, s.newCertificate), m.NewText(TextNewCertificate), m.OutlinedButtonOpts{Key: KeyNewCertificate})
+
+	// The next time the app opens.
+	nextOpen := []m.Widget{
 		header(TextNextOpen),
 		toggle(KeyStartServer, TextStartServer, "", f.form.StartServer, func(f *Form, v bool) { f.StartServer = v }),
-	)
-	if e, ok := f.errs[FieldMaxHeight]; ok {
-		rows = append(rows, errorText(bc, e))
+	}
+
+	rows := []m.Widget{m.NewText(TextSettings, m.TextOpts{Style: theme.TextTheme.TitleLarge})}
+	if wide {
+		group := m.ColumnOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 8}
+		pair := func(left, right []m.Widget) m.Widget {
+			return m.NewRow([]m.Widget{m.NewExpanded(m.NewColumn(left, group)), m.NewExpanded(m.NewColumn(right, group))},
+				m.RowOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 24})
+		}
+		rows = append(rows, pair(atOnce, nextOpen), header(TextNextSession), pair(listens, sends))
+	} else {
+		rows = append(rows, atOnce...)
+		rows = append(rows, header(TextNextSession))
+		rows = append(rows, listens...)
+		rows = append(rows, sends...)
+		rows = append(rows, certificate)
+		rows = append(rows, nextOpen...)
 	}
 	if f.err != "" {
 		rows = append(rows, errorText(bc, f.err, m.WidgetOpts{Key: KeySettingsErr}))
@@ -211,12 +242,21 @@ func (s *windowState) settingsCard(bc m.BuildContext) m.Widget {
 		rows = append(rows, m.NewText(f.note, m.TextOpts{Key: KeySettingsNote}))
 	}
 	dirty := f.dirty() && idle
-	rows = append(rows, m.NewRow([]m.Widget{
+	buttons := []m.Widget{
 		m.NewFilledButton(ifThen(dirty, s.saveSettings), m.NewText(TextSaveSettings), m.FilledButtonOpts{Key: KeySaveSettings}),
 		m.NewTextButton(ifThen(dirty, s.revertSettings), m.NewText(TextRevert), m.TextButtonOpts{Key: KeyRevert}),
-	}, m.RowOpts{Spacing: 8}))
+	}
+	if wide {
+		// The certificate's button at the end of the buttons' row.
+		buttons = append(buttons, m.NewSpacer(), certificate)
+	}
+	rows = append(rows, m.NewRow(buttons, m.RowOpts{Spacing: 8}))
 	return card(rows)
 }
+
+// flush is the padding of the card's lines: none at the sides, so that
+// they start where the card's fields and headings start.
+var flush = m.NewEdgeInsetsAll(0)
 
 // ifThen is fn when ok, else nil: a button's callback, nil when it is
 // disabled.
@@ -227,12 +267,14 @@ func ifThen(ok bool, fn func()) func() {
 	return nil
 }
 
-// choice is a setting chosen from a menu: a line with its label and the
-// menu, which shows value.
-func choice[T comparable](key m.ValueKey[string], label string, choices []Choice[T], value T, enabled bool, set func(T)) m.Widget {
+// choice is a setting chosen from a menu: a line with its label, in
+// style, and the menu, which shows value. The label keeps its width; the
+// menu has the rest of the line, and cuts a text too long for it.
+func choice[T comparable](key m.ValueKey[string], style *m.TextStyle, label string, choices []Choice[T], value T, enabled bool, set func(T)) m.Widget {
 	items := make([]*m.DropdownMenuItem[T], len(choices))
 	for i, c := range choices {
-		items[i] = m.NewDropdownMenuItem(m.NewText(c.Text), m.DropdownMenuItemOpts[T]{Value: m.Some(c.Value)})
+		items[i] = m.NewDropdownMenuItem(m.NewText(c.Text, m.TextOpts{MaxLines: m.Some(1), Overflow: m.TextOverflowEllipsis}),
+			m.DropdownMenuItemOpts[T]{Value: m.Some(c.Value)})
 	}
 	var on func(m.Opt[T])
 	if enabled {
@@ -242,8 +284,9 @@ func choice[T comparable](key m.ValueKey[string], label string, choices []Choice
 			}
 		}
 	}
-	return m.NewListTile(m.ListTileOpts{
-		Title:    m.NewText(label),
-		Trailing: m.NewDropdownButton(items, on, m.DropdownButtonOpts[T]{Key: key, Value: m.Some(value)}),
-	})
+	return m.NewPadding(m.NewEdgeInsetsSymmetric(4, 0),
+		m.NewRow([]m.Widget{
+			m.NewText(label, m.TextOpts{Style: style}),
+			m.NewExpanded(m.NewDropdownButton(items, on, m.DropdownButtonOpts[T]{Key: key, Value: m.Some(value), IsExpanded: true})),
+		}, m.RowOpts{Spacing: 16}))
 }

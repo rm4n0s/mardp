@@ -111,9 +111,9 @@ If Remmina ever says that the certificate **changed** and you did not press "New
 
 ## Using it
 
-**The window**'s title says which version runs, such as "mardp v1.0.2". Under it the window shows the state: **Stopped**, **Listening** (waiting for a connection) or **Connected**. While someone is connected it shows who, since when, the size of the desktop, how the picture is sent (**Video:**), the frames a second, the bitrate, the sound format and the delay, and a **Disconnect** button.
+**The window** shows everything at once, with nothing to scroll: the state and the recent events on the left, the settings on the right. Its title bar says which version runs, such as "mardp v1.0.4". The state is **Stopped**, **Listening** (waiting for a connection) or **Connected**. While someone is connected it shows who, since when, the size of the desktop, how the picture is sent (**Video:**), the frames a second, the bitrate, the sound format and the delay, and a **Disconnect** button.
 
-**Closing the window does not stop mardp.** It keeps running, with an icon in the menu bar (a screen on a stand: empty when stopped, with a dot when listening, filled when someone is connected). The icon's menu has Start or Stop, Disconnect, **Show window** and **Quit**. Clicking mardp in the Dock also brings the window back. To really stop it, choose **Quit**: from the menu-bar icon, from the mardp menu at the top of the screen, or with Command+Q.
+**Closing the window does not stop mardp.** It keeps running, with an icon in the menu bar (a screen on a stand: empty when stopped, with a dot when listening, filled when someone is connected). The icon's menu has Start or Stop, Disconnect, **Show window** and **Quit**. Clicking mardp in the Dock also brings the window back. To really stop it, choose **Quit**: from the menu-bar icon, from the mardp menu at the top of the screen, from mardp's icon in the Dock, or with Command+Q.
 
 **One client at a time.** A second connection takes over from the first.
 
@@ -229,4 +229,4 @@ scripts/make-identity.sh
 
 The script makes a certificate and key with the system's LibreSSL, imports them into the login keychain (so that `codesign` may use the key without asking each time), and trusts the certificate for code signing only; macOS asks for your password for that last part. It changes nothing when the identity already exists.
 
-`scripts/sign.sh <bundle>` signs with it, and stops with a message when it is missing; `scripts/build-app.sh` calls it. To use a different identity, set `MARDP_SIGN_IDENTITY` to its name.
+`scripts/build-app.sh` signs the app with it, and stops with a message when it is missing; `scripts/sign.sh <bundle>` signs any other bundle with it. To use a different identity, set `MARDP_SIGN_IDENTITY` to its name.

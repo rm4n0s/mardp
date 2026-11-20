@@ -91,6 +91,10 @@ func endedText(e host.Ended) string {
 	return TextEndedByClient
 }
 
+// sessionLong says which of SessionLines' lines need a row of their own in
+// a wide window, which shows the others two in a row.
+var sessionLong = [...]bool{0: true, 3: true, 7: false}
+
 // SessionLines are the lines of the connected session's details and
 // numbers; video names its video path.
 func SessionLines(info host.SessionInfo, video string) []string {

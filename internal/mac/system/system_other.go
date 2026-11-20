@@ -62,9 +62,6 @@ func (s *System) SetOutputMuted(uid string, muted bool) error {
 // WatchPowerOff does nothing on systems that are not macOS.
 func WatchPowerOff(fn func()) (stop func()) { return func() {} }
 
-// WatchQuit does nothing on systems that are not macOS.
-func WatchQuit(fn func()) (stop func()) { return func() {} }
-
 // Status says that macOS does not find the app: there is none.
 func (LoginItem) Status() LoginItemStatus { return LoginItemNotFound }
 

@@ -9,7 +9,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/rm4n0s/errors"
-	"github.com/rm4n0s/glutter/foundation"
 	"github.com/rm4n0s/glutter/gluttertest"
 	m "github.com/rm4n0s/glutter/material"
 	"github.com/rm4n0s/mardp/internal/config"
@@ -154,14 +153,13 @@ func newTester(t *testing.T, b *fakeBackend) *gluttertest.Tester {
 // fake desktop that shows the menu-bar icon, once the icon is there.
 func newDesktopTester(t *testing.T, b *fakeBackend, height float64) (*gluttertest.Tester, *gluttertest.FakeDesktop) {
 	t.Helper()
-	if !foundation.DebugMode {
-		t.Skip("the fake desktop needs a debug build of Glutter (-tags debug_mode)")
-	}
-	// Glutter: the fake desktop serves the tray of the Linux desktop, so
-	// the tests run as on Linux; the tray on macOS is checked by hand.
-	foundation.SetDebugDefaultTargetPlatformOverride(foundation.Some(foundation.TargetPlatformLinux))
-	t.Cleanup(func() { foundation.SetDebugDefaultTargetPlatformOverride(foundation.None[foundation.TargetPlatform]()) })
-	ts := gluttertest.New(t, gluttertest.Opts{Size: m.Size{Width: 560, Height: height}})
+	return newSizedTester(t, b, m.Size{Width: 560, Height: height})
+}
+
+// newSizedTester is newDesktopTester in a window of size.
+func newSizedTester(t *testing.T, b *fakeBackend, size m.Size) (*gluttertest.Tester, *gluttertest.FakeDesktop) {
+	t.Helper()
+	ts := gluttertest.New(t, gluttertest.Opts{Size: size})
 	fd := ts.FakeDesktop()
 	ts.PumpWidget(NewApp(b))
 	fd.WaitFor("the menu-bar icon", fd.TrayRegistered)
@@ -281,8 +279,8 @@ func TestStatusEqual(t *testing.T) {
 	}
 }
 
-// TestTitle: the window's title is the app's name with the version the
-// backend states, and the name alone without one.
+// TestTitle: the window's title bar says the app's name with the version
+// the backend states, and the name alone without one.
 func TestTitle(t *testing.T) {
 	for _, tt := range []struct {
 		name, version, want string
@@ -294,9 +292,9 @@ func TestTitle(t *testing.T) {
 			if got := NewViewModel(Status{Version: tt.version}).Title; got != tt.want {
 				t.Errorf("Title = %q, want %q", got, tt.want)
 			}
-			ts := newTester(t, &fakeBackend{st: Status{Version: tt.version}})
-			if !shows(ts, tt.want) {
-				t.Errorf("the window does not show %q", tt.want)
+			cfg := WindowConfig(&fakeBackend{st: Status{Version: tt.version}})
+			if cfg.Title != tt.want || cfg.Size != (m.Size{Width: WindowWidth, Height: WindowHeight}) {
+				t.Errorf("the window opens as %q, %v", cfg.Title, cfg.Size)
 			}
 		})
 	}
