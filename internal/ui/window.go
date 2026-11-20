@@ -269,7 +269,7 @@ func (s *windowState) Build(bc m.BuildContext) m.Widget {
 	}
 	children = append(children, s.eventsCard(bc, vm), s.settingsCard(bc))
 	page := m.NewScaffold(m.ScaffoldOpts{
-		AppBar: m.NewAppBar(m.AppBarOpts{Title: m.NewText("mardp")}),
+		AppBar: m.NewAppBar(m.AppBarOpts{Title: m.NewText(vm.Title)}),
 		Body: m.NewSingleChildScrollView(m.NewPadding(m.NewEdgeInsetsAll(16),
 			m.NewColumn(children, m.ColumnOpts{CrossAxisAlignment: m.CrossAxisAlignmentStart, Spacing: 16}))),
 	})

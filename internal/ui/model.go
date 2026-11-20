@@ -70,6 +70,8 @@ type Check struct {
 
 // ViewModel is what the window shows of a Status.
 type ViewModel struct {
+	// Title is the window's title: the app's name and its version.
+	Title string
 	// State names the server's state.
 	State string
 	// Addresses and Fingerprint are shown while the server runs.
@@ -99,7 +101,10 @@ type ViewModel struct {
 
 // NewViewModel makes the view model of st.
 func NewViewModel(st Status) ViewModel {
-	vm := ViewModel{Problem: st.Problem, StartProblem: st.StartProblem}
+	vm := ViewModel{Title: TextTrayTitle, Problem: st.Problem, StartProblem: st.StartProblem}
+	if st.Version != "" {
+		vm.Title += " " + st.Version
+	}
 	switch st.Server {
 	case ServerListening:
 		vm.State = TextListening

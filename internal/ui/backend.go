@@ -26,6 +26,9 @@ const (
 
 // Status is the state that the window shows.
 type Status struct {
+	// Version is mardp's version, which the window's title shows; ""
+	// when the backend has none.
+	Version string
 	// Server is what the server is doing.
 	Server ServerState
 	// Addresses are what to type into Remmina, "ip:port", while the server
@@ -77,7 +80,7 @@ type Status struct {
 
 // Equal says whether s and o are the same status.
 func (s Status) Equal(o Status) bool {
-	return s.Server == o.Server && slices.Equal(s.Addresses, o.Addresses) && s.Fingerprint == o.Fingerprint &&
+	return s.Version == o.Version && s.Server == o.Server && slices.Equal(s.Addresses, o.Addresses) && s.Fingerprint == o.Fingerprint &&
 		s.ViewOnly == o.ViewOnly && s.ScreenRecording == o.ScreenRecording && s.Accessibility == o.Accessibility &&
 		s.User == o.User && s.LoginSet == o.LoginSet && s.Problem == o.Problem && s.Video == o.Video &&
 		s.Settings == o.Settings && slices.Equal(s.Displays, o.Displays) && s.Pending == o.Pending &&

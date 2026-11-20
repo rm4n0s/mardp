@@ -441,3 +441,7 @@ Tell me: whether the picture is still distorted while things move, the three val
 ```bash
 grep -E 'sets the pace|video path|bitrate' /tmp/mardp.log | tail -20
 ```
+
+## 1.0.2 The version in the window
+
+After `sh scripts/install.sh` from a checkout at v1.0.2 or newer: mardp's window has the title "mardp v1.0.2" (or the newer version). Tell me what the title says.

@@ -893,3 +893,14 @@ The owner: "put a guide on readme on how to install it on new mac but if possibl
   - SPEC §16.
 - **Proved:** `scripts/install.sh -check` on this Mac passes; with Go out of the PATH it finds Go's installer location, and with Go nowhere it stops with the steps to install it; a wrong flag prints the usage. The version from the folder's name: `mardp-1.2.3` gives 1.2.3, another folder 0.0.0, a git checkout its tag.
 - **Not proved:** the whole installation on a new Mac. Here the steps after the checks (identity, build, copy, open) were not run through the script, because the owner's mardp was running from `build/mardp.app` and the script would have replaced it; each of those steps is a command the owner has run before. The first run on a Mac without the command line tools and without Go is the owner's to try.
+
+## 1.0.2 The version in the window (2026-11-20)
+
+The owner, after `scripts/install.sh`: "didn't this update mardp ? put the version of mardp, showing on the app". It had updated (v1.0.1 ran from /Applications); nothing in the window said so.
+
+- **Built:**
+  - `internal/ui`: the window's title is "mardp" and the version the backend states (`Status.Version`).
+  - `cmd/mardp`: the version is the one git gave the build; for a build without git (the source as a ZIP), the version in the Info.plist of the bundle the executable is in; "unknown" without either. `-version` prints the same.
+  - SPEC §12.2; README.
+- **Proved:** the title with a version and without one, in the view model and in the window (`gluttertest`); the version from each source (table); the status carries the app's version. The owner's run of `scripts/install.sh` on this Mac made the identity check, built, copied to /Applications and opened v1.0.1, which proves the installer's steps after its checks on a Mac that already has the tools.
+- **Manual checks:** the title in the real window: pending, see docs/MANUAL-CHECKS.md (1.0.2).

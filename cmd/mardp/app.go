@@ -60,6 +60,7 @@ func window(ctx context.Context, getenv func(string) string, m machine, viewOnly
 		return err
 	}
 	a := newApp(folder, s, sys, m, viewOnly, log)
+	a.version = version()
 	a.syncLogin(s.OpenAtLogin)
 	if s.StartServer {
 		a.startOnOpen(ctx)
@@ -97,6 +98,8 @@ type app struct {
 	poll time.Duration
 	// now is the clock of the events.
 	now func() time.Time
+	// version is mardp's version, for the window.
+	version string
 
 	mu       sync.Mutex
 	settings config.Settings
@@ -141,6 +144,7 @@ func (a *app) current() config.Settings {
 // Status implements ui.Backend.
 func (a *app) Status() ui.Status {
 	st := ui.Status{
+		Version:         a.version,
 		ScreenRecording: a.sys.Granted(host.ScreenRecording),
 		Accessibility:   a.sys.Granted(host.Accessibility),
 	}

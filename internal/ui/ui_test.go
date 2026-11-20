@@ -261,6 +261,7 @@ func TestStatusEqual(t *testing.T) {
 		equal  bool
 	}{
 		{"same", func(*Status) {}, true},
+		{"version", func(s *Status) { s.Version = "v9" }, false},
 		{"addresses", func(s *Status) { s.Addresses = []string{"y"} }, false},
 		{"server", func(s *Status) { s.Server = ServerConnected }, false},
 		{"permission", func(s *Status) { s.Accessibility = false }, false},
@@ -275,6 +276,27 @@ func TestStatusEqual(t *testing.T) {
 			tt.change(&b)
 			if a.Equal(b) != tt.equal {
 				t.Errorf("Equal = %v", !tt.equal)
+			}
+		})
+	}
+}
+
+// TestTitle: the window's title is the app's name with the version the
+// backend states, and the name alone without one.
+func TestTitle(t *testing.T) {
+	for _, tt := range []struct {
+		name, version, want string
+	}{
+		{"a version", "v1.0.2", "mardp v1.0.2"},
+		{"none", "", "mardp"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NewViewModel(Status{Version: tt.version}).Title; got != tt.want {
+				t.Errorf("Title = %q, want %q", got, tt.want)
+			}
+			ts := newTester(t, &fakeBackend{st: Status{Version: tt.version}})
+			if !shows(ts, tt.want) {
+				t.Errorf("the window does not show %q", tt.want)
 			}
 		})
 	}

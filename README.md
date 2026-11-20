@@ -111,7 +111,7 @@ If Remmina ever says that the certificate **changed** and you did not press "New
 
 ## Using it
 
-**The window** shows the state: **Stopped**, **Listening** (waiting for a connection) or **Connected**. While someone is connected it shows who, since when, the size of the desktop, how the picture is sent (**Video:**), the frames a second, the bitrate, the sound format and the delay, and a **Disconnect** button.
+**The window**'s title says which version runs, such as "mardp v1.0.2". Under it the window shows the state: **Stopped**, **Listening** (waiting for a connection) or **Connected**. While someone is connected it shows who, since when, the size of the desktop, how the picture is sent (**Video:**), the frames a second, the bitrate, the sound format and the delay, and a **Disconnect** button.
 
 **Closing the window does not stop mardp.** It keeps running, with an icon in the menu bar (a screen on a stand: empty when stopped, with a dot when listening, filled when someone is connected). The icon's menu has Start or Stop, Disconnect, **Show window** and **Quit**. Clicking mardp in the Dock also brings the window back. To really stop it, choose **Quit** from the menu-bar icon. (Command+Q only hides the window.)
 
@@ -189,7 +189,7 @@ sh scripts/install.sh
 
 (With more than one `mardp-…` folder in Downloads, type the new one's full name in the first line.) The settings, the password, the certificate and the permissions stay. macOS may ask about Screen Recording once more.
 
-`/Applications/mardp.app/Contents/MacOS/mardp -version` prints the version that is installed.
+The window's title shows the version that runs; `/Applications/mardp.app/Contents/MacOS/mardp -version` prints the one that is installed.
 
 **Removing.**
 

@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strconv"
 
@@ -107,12 +109,51 @@ func complain(stderr io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(stderr, format, args...)
 }
 
-// version is the module's version that the build recorded.
+// version is mardp's version: the one the build recorded from git, or,
+// for a build without git (the source as a ZIP), the version of the app
+// bundle the executable is in; "unknown" without either.
 func version() string {
-	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
-		return bi.Main.Version
+	recorded := ""
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		recorded = bi.Main.Version
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		exe = ""
+	}
+	return versionFrom(recorded, exe)
+}
+
+// versionFrom is the version of a build that recorded recorded as its
+// module's version and whose executable is exe ("" when unknown).
+func versionFrom(recorded, exe string) string {
+	if recorded != "" && recorded != "(devel)" {
+		return recorded
+	}
+	if exe != "" {
+		if v := bundleVersion(filepath.Join(filepath.Dir(exe), "..", "Info.plist")); v != "" && v != "0.0.0" {
+			return "v" + v
+		}
 	}
 	return "unknown"
+}
+
+// shortVersion finds the version in a bundle's Info.plist.
+var shortVersion = regexp.MustCompile(`<key>CFBundleShortVersionString</key>\s*<string>([^<]*)</string>`)
+
+// bundleVersion is the version the Info.plist at path states
+// (scripts/build-app.sh writes it); "" when there is none.
+func bundleVersion(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		// Not in a bundle: mardp was built with go build.
+		return ""
+	}
+	m := shortVersion.FindSubmatch(b)
+	if m == nil {
+		return ""
+	}
+	return string(m[1])
 }
 
 // openFolder opens mardp's folder and loads its settings.

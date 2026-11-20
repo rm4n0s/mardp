@@ -407,6 +407,47 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+// TestVersionFrom: the version git gave the build, else the version of
+// the bundle the executable is in (a build from a ZIP of the source), else
+// "unknown".
+func TestVersionFrom(t *testing.T) {
+	plist := func(body string) string {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "Contents", "MacOS"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if body != "" {
+			if err := os.WriteFile(filepath.Join(dir, "Contents", "Info.plist"), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return filepath.Join(dir, "Contents", "MacOS", "mardp")
+	}
+	bundle := func(v string) string {
+		return "<plist><dict>\n\t<key>CFBundleName</key>\n\t<string>mardp</string>\n\t<key>CFBundleShortVersionString</key>\n\t<string>" +
+			v + "</string>\n\t<key>CFBundleVersion</key>\n\t<string>7</string>\n</dict></plist>"
+	}
+	for _, tt := range []struct {
+		name, recorded, exe, want string
+	}{
+		{"recorded by git", "v1.0.2", plist(bundle("9.9.9")), "v1.0.2"},
+		{"a build after the tag", "v1.0.3-0.20261120070000-abcdef123456+dirty", "", "v1.0.3-0.20261120070000-abcdef123456+dirty"},
+		{"without git: the bundle's", "(devel)", plist(bundle("1.0.2")), "v1.0.2"},
+		{"nothing recorded: the bundle's", "", plist(bundle("1.0.2")), "v1.0.2"},
+		{"the bundle has no version either", "(devel)", plist(bundle("0.0.0")), "unknown"},
+		{"an Info.plist without the key", "(devel)", plist("<plist><dict></dict></plist>"), "unknown"},
+		{"not in a bundle", "(devel)", plist(""), "unknown"},
+		{"no executable known", "(devel)", "", "unknown"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := versionFrom(tt.recorded, tt.exe); got != tt.want {
+				t.Errorf("versionFrom = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestServeRefuses(t *testing.T) {
 	busy := func(t *testing.T, h *home) {
 		l, err := net.Listen("tcp", h.addr())

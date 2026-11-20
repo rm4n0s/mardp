@@ -403,6 +403,7 @@ D7 makes speed a requirement, so the rules are part of the specification:
 
 ### 12.2 The window
 
+- **Title**: "mardp" and its version, such as "mardp v1.0.2" (as built in 1.0.2): the version git gave the build, the one `mardp -version` prints; for a build without git (the source as GitHub's ZIP), the version of the app bundle the executable is in, which `scripts/build-app.sh` takes from the folder's name; the name alone when neither is known.
 - **Status**: stopped, listening, or connected. When listening: the addresses to type into Remmina (each IP of the Mac with the port) and the certificate's fingerprint. When connected: the client's name and address, since when, the desktop size, the video path (§9.1), frames a second, bitrate, the sound format, the delay; and a "Disconnect" button.
 - **Start / Stop** of the server.
 - **Checklist**, shown until everything is done: Screen Recording, Accessibility, a password. Each line has its state and a button (open System Settings, or set the password). The lines update by themselves when the user grants a permission. The checklist comes back when a permission is withdrawn. The Screen Recording line explains that macOS asks again from time to time ("... requesting to bypass the system private window picker ...") and that the question is answered at the Mac. A running capture goes on while the question waits (§19 R6).

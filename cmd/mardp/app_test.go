@@ -155,6 +155,16 @@ func TestAppStartRefused(t *testing.T) {
 	}
 }
 
+// TestAppVersion: the status states the app's version, for the window's
+// title.
+func TestAppVersion(t *testing.T) {
+	a := newTestApp(t, newHome(t, nil), newFakeMac(), false, slog.New(slog.DiscardHandler))
+	a.version = "v1.0.2"
+	if st := a.Status(); st.Version != "v1.0.2" {
+		t.Errorf("version %q", st.Version)
+	}
+}
+
 func TestAppViewOnlyFlag(t *testing.T) {
 	h := newHome(t, nil)
 	m := newFakeMac(host.ScreenRecording, host.Accessibility)
