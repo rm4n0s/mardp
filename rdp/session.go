@@ -185,6 +185,10 @@ type Session struct {
 	video   Video
 	pointer Pointer
 	audio   Audio
+	// clipboard is the text clipboard; clipboardOn says the server has it.
+	// It is set before the session runs.
+	clipboard   Clipboard
+	clipboardOn bool
 	// audioFormats are the sound formats the server offers.
 	audioFormats []AudioFormat
 	// channels are the static channels the server reads.
@@ -434,6 +438,7 @@ func (c *conn) activate(desktopSize func(*Client) (int, int)) (*Session, error) 
 	s := &Session{c: c, client: c.newClient()}
 	s.video.s = s
 	s.audio.s = s
+	s.clipboard.s = s
 	s.openChannels()
 	s.width, s.height = s.client.DesktopWidth, s.client.DesktopHeight
 	if desktopSize != nil {
@@ -615,6 +620,7 @@ func (c *conn) runSession(ctx context.Context, s *Session, h Handler, o *openSes
 	if ctx.Err() == nil && sctx.Err() == nil {
 		s.startDVC(s.dvcWait)
 		s.startAudio(s.audioFormats)
+		s.startClipboard()
 		s.startGFX()
 		wg.Go(func() { h.SessionOpened(sctx, s) })
 	}

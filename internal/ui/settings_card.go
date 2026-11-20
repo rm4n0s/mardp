@@ -20,6 +20,7 @@ var (
 	KeyBitrate        = m.NewValueKey("settings bitrate")
 	KeySound          = m.NewValueKey("settings sound")
 	KeySwap           = m.NewValueKey("settings swap")
+	KeyClipboard      = m.NewValueKey("settings clipboard")
 	KeyNewCertificate = m.NewValueKey("settings new certificate")
 	KeyStartServer    = m.NewValueKey("settings start server")
 	KeySaveSettings   = m.NewValueKey("settings save")
@@ -200,6 +201,8 @@ func (s *windowState) settingsCard(bc m.BuildContext, vm ViewModel, wide bool) m
 	if e, ok := f.errs[FieldMaxHeight]; ok {
 		listens = append(listens, errorText(bc, e))
 	}
+	listens = append(listens,
+		toggle(KeyClipboard, TextClipboard, "", f.form.Clipboard, func(f *Form, v bool) { f.Clipboard = v }))
 	sends := []m.Widget{
 		choice(KeyMaxFPS, label, TextMaxFPS, FPSChoices(f.form.MaxFPS), f.form.MaxFPS, idle,
 			func(v int) { s.edit(func(f *Form) { f.MaxFPS = v }) }),

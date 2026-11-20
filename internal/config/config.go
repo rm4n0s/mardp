@@ -96,6 +96,10 @@ type Settings struct {
 	Sound Sound `json:"sound"`
 	// SwapCtrlCommand swaps Ctrl and Command (D19).
 	SwapCtrlCommand bool `json:"swapCtrlCommand"`
+	// ClipboardOff keeps the Mac's clipboard to the Mac (SPEC §10.6). The
+	// clipboard's text is shared by default, and with settings saved
+	// before the setting was there: so the setting is the "off".
+	ClipboardOff bool `json:"clipboardOff"`
 }
 
 // Defaults returns the settings of a first start.

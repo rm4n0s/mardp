@@ -44,6 +44,7 @@ const (
 	TextSoundBoth   = "On both the client and the Mac"
 	TextSwap        = "Swap Ctrl and Command"
 	TextSwapHelp    = "The client's Ctrl acts as Command on the Mac, and its Command (the Windows key) as Ctrl."
+	TextClipboard   = "Share the clipboard's text"
 
 	TextNoLogin        = "None set"
 	TextSaveSettings   = "Save settings"
@@ -81,6 +82,8 @@ type Form struct {
 	MaxHeight, MaxFPS        int
 	Sound                    config.Sound
 	SwapCtrlCommand          bool
+	// Clipboard says the clipboard's text is shared: not Settings.ClipboardOff.
+	Clipboard bool
 }
 
 // NewForm is the form of s.
@@ -89,7 +92,7 @@ func NewForm(s config.Settings) Form {
 		Port: strconv.Itoa(s.Port), Address: s.Address,
 		Bitrate:     strconv.FormatFloat(float64(s.MaxBitrate)/1e6, 'f', -1, 64),
 		StartServer: s.StartServer, OpenAtLogin: s.OpenAtLogin, Display: s.Display,
-		MaxHeight: s.MaxHeight, MaxFPS: s.MaxFPS, Sound: s.Sound, SwapCtrlCommand: s.SwapCtrlCommand,
+		MaxHeight: s.MaxHeight, MaxFPS: s.MaxFPS, Sound: s.Sound, SwapCtrlCommand: s.SwapCtrlCommand, Clipboard: !s.ClipboardOff,
 	}
 }
 
@@ -100,6 +103,7 @@ func (f Form) Settings(base config.Settings) (config.Settings, map[string]string
 	errs := map[string]string{}
 	s.StartServer, s.OpenAtLogin, s.Display = f.StartServer, f.OpenAtLogin, f.Display
 	s.MaxHeight, s.MaxFPS, s.Sound, s.SwapCtrlCommand = f.MaxHeight, f.MaxFPS, f.Sound, f.SwapCtrlCommand
+	s.ClipboardOff = !f.Clipboard
 	s.Address = strings.TrimSpace(f.Address)
 	if p, err := strconv.Atoi(strings.TrimSpace(f.Port)); err == nil {
 		s.Port = p

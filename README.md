@@ -117,6 +117,8 @@ If Remmina ever says that the certificate **changed** and you did not press "New
 
 **One client at a time.** A second connection takes over from the first.
 
+**Copy and paste text** works between the two computers, both ways: copy on the Mac and paste on Linux, or the other way round. Only text travels, not pictures or files. Remmina has this on by default (its profile's **Turn off clipboard sync** must stay off).
+
 **Settings**, in the window. Each group says when its changes apply:
 
 | Setting | What it does |
@@ -131,6 +133,7 @@ If Remmina ever says that the certificate **changed** and you did not press "New
 | Bitrate cap (Mbit/s) | The most the video may use on the network (20 by default). mardp chooses the rate under it by itself |
 | Sound | **Off**, **On the client only** (the Mac itself stays silent), or **On both the client and the Mac** |
 | Swap Ctrl and Command | Ctrl on the Linux keyboard acts as Command on the Mac, so Ctrl+C copies |
+| Share the clipboard's text | Text copied on one computer can be pasted on the other (on by default). Turn it off to keep what you copy on the Mac from the client |
 | New certificate | Makes a new certificate; Remmina then asks to accept the new fingerprint |
 
 With both "Open the app at login" and "Start the server when the app opens" on, the Mac is reachable after every login without touching it.

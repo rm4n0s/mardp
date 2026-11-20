@@ -346,7 +346,7 @@ func (a *app) SaveSettings(ctx context.Context, s config.Settings) error {
 	a.mu.Unlock()
 	a.log.Info("the settings are saved", "port", s.Port, "address", s.Address, "display", s.Display,
 		"maxHeight", s.MaxHeight, "maxFps", s.MaxFPS, "maxBitrate", s.MaxBitrate, "sound", s.Sound,
-		"swapCtrlCommand", s.SwapCtrlCommand, "startServer", s.StartServer, "openAtLogin", s.OpenAtLogin)
+		"swapCtrlCommand", s.SwapCtrlCommand, "clipboard", !s.ClipboardOff, "startServer", s.StartServer, "openAtLogin", s.OpenAtLogin)
 	if old.OpenAtLogin != s.OpenAtLogin {
 		a.syncLogin(s.OpenAtLogin)
 	}

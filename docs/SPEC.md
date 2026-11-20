@@ -25,7 +25,7 @@ The measure of success is watching a video on the Mac from the Linux machine: sm
 - Hosts other than macOS. The library is portable, the host is not.
 - Legacy RDP security (RC4 "Standard RDP Security"). Only TLS (§8).
 
-Features planned after 1.0 are in §17 (M7): Network Level Authentication, the clipboard, AVC444, a virtual display that follows the client's window size.
+Features planned after 1.0 are in §17 (M7): Network Level Authentication, AVC444, a virtual display that follows the client's window size. The text clipboard, planned there too, is in since 1.0.5 (§10.6).
 
 ## 3. Decisions log
 
@@ -126,7 +126,7 @@ The library implements the server side of these Microsoft Open Specifications. E
 | MS-RDPEA | Sound (`rdpsnd`): formats, training, Wave2, Wave Confirm | yes |
 | MS-RDPEGDI | Only the Planar codec (used by the fallbacks) | yes |
 | MS-CSSP, MS-NLMP | NLA: CredSSP with NTLMv2 | after 1.0 |
-| MS-RDPECLIP | Clipboard, text | after 1.0 |
+| MS-RDPECLIP | Clipboard (`cliprdr`): the capabilities, Monitor Ready, the Format List and the Format Data PDUs, text alone; no files, no locking | yes, since 1.0.5 (§10.6) |
 | MS-RDPEDISP | The client asks for a new desktop size | after 1.0 |
 
 ### 5.1 Connection sequence
@@ -388,6 +388,18 @@ The server sends both as soon as it has them. The client shows a frame when it a
 - Double clicks are counted by the host from the time and distance between clicks, as macOS expects in the event.
 - Positions get the display's origin in the global space added (read again at most once a second). A move with a button down is a drag of the lowest button held. The wheel posts one line per notch (120), keeping what is less than a line for the next turn the same way; whether that speed suits is a manual check.
 
+### 10.6 Clipboard
+
+Since 1.0.5 (the owner, 2026-11-20: "I can't copy text from the rdp client to my other applications on linux"). Text alone: what is copied on one computer can be pasted on the other, both ways.
+
+- **Mac to client.** macOS has no notice of a change of the clipboard, only a count that changes with it (`NSPasteboard.changeCount`); the host reads it twice a second while a client with a clipboard is connected. When it changed, the client is told that the Mac has text, or has none (a Format List); the text itself goes only when the client's user pastes (the client's Format Data Request is answered with what the Mac's clipboard holds at that moment). What the Mac held before the session is not offered: a client sends its own clipboard when it connects, and an offer then would take that from it.
+- **Client to Mac.** When the client says it has text, the host asks for it at once and puts it on the Mac's clipboard, in the place of what it held. That change is the client's own and is not offered back. Asking at once costs one transfer per copy, and spares the Mac's apps a wait at each paste.
+- **Who has a clipboard.** A session whose client asked for `cliprdr`, on a host that takes the client's input, with the setting "Share the clipboard's text" on (the default; `clipboardOff` in the settings file, so that settings saved before 1.0.5 share it). A view-only session has none: reading the Mac's clipboard is more than watching its screen, and writing it is input.
+- **What the client can read.** Whatever the Mac's owner copies during a session, a password from a password manager too. The client's user already controls the Mac; the setting turns the clipboard off.
+- **Text.** The text formats of Windows: CF_UNICODETEXT (UTF-16, lines ended by CR LF, a zero at the end), which every client asks for, and CF_TEXT (8 bits a character, "?" for what does not fit) for one that does not. The Mac's lines end with LF; the CR is added on the way out and taken off on the way in. At most 256 KiB of text (UTF-8) goes to the client, and a channel message of the client's is at most 1 MiB; longer text is refused, not cut.
+- **The library** (`rdp`, MS-RDPECLIP): `Config.Clipboard` opens the channel; `Session.Clipboard()` has `Available`, `SetHandler` (the app's `ServerText` and `ClientText`) and `Offer(hasText)`. The server sends its capabilities (long format names) and Monitor Ready when the session opens; the client's first Format List ends the setup, and an Offer made before it goes out then. Format names are long when both sides say so, short otherwise (a client that sends no capabilities). When the client copies again before it has answered a request, the answer on its way is dropped and the text asked for again. A PDU that is malformed, out of turn, or about files or locking is ignored and logged at Debug; the session goes on.
+- **Not done:** pictures, files, rich text (a client that offers HTML gets its plain text taken).
+
 ## 11. Performance design
 
 D7 makes speed a requirement, so the rules are part of the specification:
@@ -397,7 +409,7 @@ D7 makes speed a requirement, so the rules are part of the specification:
 3. **One cgo call or callback per frame** and per sound packet, never per rectangle or per NAL unit.
 4. **Nothing waits behind the network in the capture path**: capture and encoding never block on a socket; they see only the skip flag.
 5. **The hardware does the work**: scaling on the GPU, colour conversion in the capture, H.264 in the hardware encoder, AES-GCM of TLS with the CPU's instructions.
-6. **Idle is free**: no timers that wake up many times a second while the screen is still and nothing plays. As built (6.4): a still screen sends no frames (ScreenCaptureKit's idle frames and frames with no dirty rectangle are dropped in C) and silence sends no sound (silent buffers are dropped); the H.264 path's backlog ticker runs only while the backlog holds the encoder back. What still runs during an idle session: the pointer read 4 times a second (§10.3), and once a second the session's numbers, the bitrate decision, and the capture's check that its display is still there. `scripts/perf.sh idle` measures an idle session with `mardp -test-pattern -still` and fails at 2% of one core; `scripts/perf.sh screen` reports the same on the real screen. The numbers are in `docs/PERFORMANCE.md`.
+6. **Idle is free**: no timers that wake up many times a second while the screen is still and nothing plays. As built (6.4): a still screen sends no frames (ScreenCaptureKit's idle frames and frames with no dirty rectangle are dropped in C) and silence sends no sound (silent buffers are dropped); the H.264 path's backlog ticker runs only while the backlog holds the encoder back. What still runs during an idle session: the pointer read 4 times a second (§10.3), the clipboard's count read twice a second (§10.6), and once a second the session's numbers, the bitrate decision, and the capture's check that its display is still there. `scripts/perf.sh idle` measures an idle session with `mardp -test-pattern -still` and fails at 2% of one core; `scripts/perf.sh screen` reports the same on the real screen. The numbers are in `docs/PERFORMANCE.md`.
 7. Every number of §14 has a measurement that produces it (§15.5), and a change that makes one worse is not merged without a reason written in `docs/PERFORMANCE.md`.
 
 ## 12. The app (Glutter)
@@ -415,10 +427,10 @@ D7 makes speed a requirement, so the rules are part of the specification:
 - **Status**: stopped, listening, or connected. When listening: the addresses to type into Remmina (each IP of the Mac with the port) and the certificate's fingerprint. When connected: the client's name and address, since when, the desktop size, the video path (§9.1), frames a second, bitrate, the sound format, the delay; and a "Disconnect" button.
 - **Start / Stop** of the server.
 - **Checklist**, shown until everything is done: Screen Recording, Accessibility, a password. Each line has its state and a button (open System Settings, or set the password). The lines update by themselves when the user grants a permission. The checklist comes back when a permission is withdrawn. The Screen Recording line explains that macOS asks again from time to time ("... requesting to bypass the system private window picker ...") and that the question is answered at the Mac. A running capture goes on while the question waits (§19 R6).
-- **Settings**: user name and password; port and address; start the server when the app opens; open the app at login; display; height cap; frame rate cap (30 or 60); bitrate cap; sound (off, client only, both); swap Ctrl and Command; new certificate.
+- **Settings**: user name and password; port and address; start the server when the app opens; open the app at login; display; height cap; frame rate cap (30 or 60); bitrate cap; sound (off, client only, both); swap Ctrl and Command; share the clipboard's text (1.0.5, §10.6); new certificate.
   - As built in 5.1, the settings card groups them by when they apply, and says so under each group's heading:
     - at once: the user name and password (a running server checks the next login against them) and "open the app at login" (§7.3);
-    - at the next session: port, address, display, height cap, frame rate cap, bitrate cap (typed in Mbit/s, 1 to 1000), sound, swap Ctrl and Command, and a new certificate. With the server running, the saved changes are pending: the window says so, and the server starts again with them as soon as no client is connected (checked four times a second). Stopping the server drops what is pending, since the next start reads the saved settings;
+    - at the next session: port, address, display, height cap, frame rate cap, bitrate cap (typed in Mbit/s, 1 to 1000), sound, swap Ctrl and Command, the clipboard, and a new certificate. With the server running, the saved changes are pending: the window says so, and the server starts again with them as soon as no client is connected (checked four times a second). Stopping the server drops what is pending, since the next start reads the saved settings;
     - the next time the app opens: "start the server when the app opens".
   - "Save settings" and "Undo changes" can be pressed only when the form differs from the saved settings. A field that is not valid is not saved and its message shows under it: "A port from 1 to 65535.", "An IP address of this Mac, or empty for every address." (the backend checks the address is one of the Mac's interfaces), "From 1 to 1000 Mbit/s.".
   - The display menu offers the main display (the default), then each display with its size, and "A display not connected now" for a saved display that is not connected. The height menu offers no cap, 2160, 1600, 1440, 1200, 1080, 900 and 720 pixels; a saved value the menus do not offer is shown among them.
@@ -547,7 +559,7 @@ The steps of each are in `docs/IMPLEMENTATION.md`.
 | M4 | **Sound.** RDPSND with PCM and AAC, the sound source, where the sound plays | The video's sound plays in Remmina, in sync |
 | M5 | **The app.** Settings, menu-bar icon, notifications, events, open at login, the built and signed `mardp.app` | Everything of §12 works on a fresh install |
 | M6 | **Performance.** Measure §14, fix what misses, write `docs/PERFORMANCE.md` | Every target is met or corrected with a reason. This is version 1.0 |
-| M7 | **After 1.0**, each its own decision: NLA; text clipboard; AVC444; a virtual display that follows the client's window size; Opus | |
+| M7 | **After 1.0**, each its own decision: NLA; text clipboard (done in 1.0.5, §10.6); AVC444; a virtual display that follows the client's window size; Opus | |
 
 ## 18. Licensing
 

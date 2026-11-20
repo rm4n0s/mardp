@@ -53,6 +53,9 @@ type Parts struct {
 	// sound, so that it plays on the client only (SPEC §10.1); nil plays
 	// it on both.
 	Output Output
+	// Clipboard is the Mac's clipboard, shared with a client that has
+	// input (SPEC §10.6); nil shares none.
+	Clipboard Clipboard
 }
 
 // Options tune a Host. The zero value is the defaults.
@@ -274,6 +277,19 @@ func (h *Host) SessionOpened(ctx context.Context, s *rdp.Session) {
 		var wg sync.WaitGroup
 		wg.Go(func() { h.runSound(ctx, s, l, log) })
 		defer wg.Wait()
+	}
+
+	if h.Clipboard() && s.Clipboard().Available() {
+		relay := &clipboardRelay{mac: h.parts.Clipboard, dst: s.Clipboard(), log: log}
+		relay.start()
+		s.Clipboard().SetHandler(relay)
+		log.Info("the clipboard's text is shared with the client")
+		var wg sync.WaitGroup
+		wg.Go(func() { relay.run(ctx) })
+		defer func() {
+			wg.Wait()
+			s.Clipboard().SetHandler(nil)
+		}()
 	}
 
 	p := picture{h: h, s: s, log: log, width: width, height: height, poll: poll,

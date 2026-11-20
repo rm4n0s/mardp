@@ -69,6 +69,9 @@ type Config struct {
 	// one it prefers first (SPEC §10.1); a session takes the first the
 	// client has. None means no sound.
 	AudioFormats []AudioFormat
+	// Clipboard opens the text clipboard for the clients that ask for it
+	// (SPEC §10.6); a session's app then sets its Clipboard's handler.
+	Clipboard bool
 }
 
 // Server is an RDP server. Make one with NewServer and run it with Serve.
@@ -86,6 +89,8 @@ type Server struct {
 	dvcCapsWait time.Duration
 	// audioFormats are Config.AudioFormats, copied.
 	audioFormats []AudioFormat
+	// clipboard is Config.Clipboard.
+	clipboard bool
 }
 
 // openSession is the session a server has open: one at a time, a new one
@@ -144,6 +149,7 @@ func NewServer(cfg Config) (*Server, error) {
 		maxPending:   cfg.MaxPending,
 		loginTimeout: cfg.LoginTimeout,
 		dvcCapsWait:  dvcCapsWait,
+		clipboard:    cfg.Clipboard,
 	}
 	wf := make([]rdpsnd.Format, 0, len(cfg.AudioFormats))
 	for _, f := range cfg.AudioFormats {

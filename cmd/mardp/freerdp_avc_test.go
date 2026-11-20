@@ -135,7 +135,7 @@ func serveHost(t *testing.T, addr string, parts host.Parts, opts host.Options, l
 		t.Fatal(err)
 	}
 	srv, err := rdp.NewServer(rdp.Config{Certificate: cert, Authenticator: rdp.StaticAuthenticator(testUser, testPassword),
-		Handler: hst, DesktopSize: hst.DesktopSize, AudioFormats: hst.AudioFormats(), Logger: log})
+		Handler: hst, DesktopSize: hst.DesktopSize, AudioFormats: hst.AudioFormats(), Clipboard: hst.Clipboard(), Logger: log})
 	if err != nil {
 		t.Fatal(err)
 	}

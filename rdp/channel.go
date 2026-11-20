@@ -7,14 +7,16 @@ import (
 	"github.com/rm4n0s/mardp/rdp/internal/wire"
 )
 
-// openedChannels are the static channels the server reads (SPEC §5.1 step
-// 3); the data of the others the client joins is ignored unread.
+// openedChannels are the static channels every server reads (SPEC §5.1
+// step 3); a server with Config.Clipboard reads cliprdr too (openChannel).
+// The data of the others the client joins is ignored unread.
 var openedChannels = [...]string{"drdynvc", "rdpsnd"}
 
 // channelMaxMessage is the longest message the server joins on a static
 // channel. What the client sends on drdynvc and rdpsnd is short: drdynvc's
 // own PDUs are chunked to fit in one static chunk, and rdpsnd's from the
-// client are confirmations.
+// client are confirmations. On cliprdr it bounds the text the client's
+// user copied.
 const channelMaxMessage = 1 << 20
 
 // channelHandler gets each whole message the client sends on a channel, on
@@ -37,12 +39,18 @@ func (s *Session) openChannels() {
 	for i, name := range s.client.Channels {
 		for _, o := range openedChannels {
 			if name == o {
-				ch := &staticChannel{name: name, id: s.c.channels[2+i]}
-				ch.join.Max = channelMaxMessage
-				s.channels = append(s.channels, ch)
+				s.openChannel(i)
 			}
 		}
 	}
+}
+
+// openChannel makes the server read the i-th static channel the client
+// joined.
+func (s *Session) openChannel(i int) {
+	ch := &staticChannel{name: s.client.Channels[i], id: s.c.channels[2+i]}
+	ch.join.Max = channelMaxMessage
+	s.channels = append(s.channels, ch)
 }
 
 // channel returns the static channel name when the server reads it and the

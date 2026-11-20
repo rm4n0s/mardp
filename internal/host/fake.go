@@ -309,6 +309,58 @@ func (p *StaticPointer) Current() (PointerShape, error) {
 	return p.shape, p.err
 }
 
+// FakeClipboard is a Clipboard in memory, for the tests and for the test
+// pattern, which leave the Mac's own alone.
+type FakeClipboard struct {
+	mu      sync.Mutex
+	text    string
+	has     bool
+	changes int64
+	err     error
+}
+
+// Put changes the clipboard as another program does: to text, or to
+// something that is not text.
+func (c *FakeClipboard) Put(text string, isText bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.text, c.has = text, isText
+	c.changes++
+}
+
+// Fail makes SetText fail with err; nil lets it work again.
+func (c *FakeClipboard) Fail(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.err = err
+}
+
+// Changes implements Clipboard.
+func (c *FakeClipboard) Changes() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.changes
+}
+
+// Text implements Clipboard.
+func (c *FakeClipboard) Text() (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.text, c.has
+}
+
+// SetText implements Clipboard.
+func (c *FakeClipboard) SetText(text string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return c.err
+	}
+	c.text, c.has = text, true
+	c.changes++
+	return nil
+}
+
 // FakeSystem is a System whose answers are set.
 type FakeSystem struct {
 	mu       sync.Mutex

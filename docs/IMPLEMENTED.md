@@ -986,3 +986,29 @@ The owner: "make the mardp's UI better to show everything in one large window wi
   - The built app: `minos` 14.0, the plist's 14.0, signed with mardp's identity (the same designated requirement as before, so the permissions stay). Its window is 1240 by 832 with the title bar.
   - Quit: a quit Apple Event sent to a test copy of the built app by its process id ended it within two seconds.
 - **Not proved:** the window on the owner's screen with real clicks (the close button, each Quit, a logout); this session cannot take a picture of a window on the screen (no Screen Recording for it), so the real window's title bar was not seen. Pending, see docs/MANUAL-CHECKS.md.
+
+## 1.0.5 The text clipboard (2026-11-20)
+
+The owner: "also I can't copy text from the rdp client to my other applications on linux". The clipboard was planned for after 1.0 (M7); this is it, text alone, both ways.
+
+- **Built:**
+  - `rdp/internal/cliprdr`: the PDUs of the clipboard channel (capabilities, Monitor Ready, Format List with long and short names, its response, Format Data Request and Response) and the two text formats.
+  - `rdp`: `Config.Clipboard`, `Session.Clipboard()` (`Available`, `SetHandler`, `Offer`), `ClipboardHandler`; `rdptest`: the client's end (`OpenClipboard`, `Copy`, `WaitOffer`, `PasteText`).
+  - `internal/host`: `Clipboard` (the Mac's), `Parts.Clipboard`, `Host.Clipboard()`, and the relay of a session: the client's text onto the Mac's clipboard at once, a change of the Mac's offered to the client within half a second; `FakeClipboard`.
+  - `internal/mac/clipboard`: the general pasteboard (`NSPasteboard`): its change count, its text, setting its text.
+  - `internal/config` `ClipboardOff`; `internal/ui`: the switch "Share the clipboard's text" among the settings of the next session; `cmd/mardp`: wired for a host that takes the client's input.
+  - SPEC §10.6 (new), §2, §5, §11, §12.2, §17; README.
+- **Proved:**
+  - The real client: FreeRDP in the test machine (`TestFreeRDPClipboard`, `mardp_freerdp`): text copied on the guest's X clipboard ("from Linux: μ ✓") is on the host's clipboard 2.5 s later, and the text the host copies then ("from the Mac: é 日本", two lines) is what the guest pastes. The host's clipboard in that test is one in memory: the Mac's own is not touched.
+  - The library with its test client (`TestClipboard` with long names, short names and no capabilities; a second copy before the first answer; an Offer before the setup ends; no clipboard; what is ignored), the host's relay step by step and in a whole session, a view-only host without one.
+  - The Mac's pasteboard on a pasteboard of the test's own (`TestClipboard` of `internal/mac/clipboard`): text with other scripts, 500 kB, text that is not UTF-8 refused and what was there kept.
+  - The window still fits: at most 784 of 800 with the new switch.
+- **Not proved:** the general pasteboard read and written by the running app (no test changes the owner's clipboard), and Remmina on the owner's machine: pending, see docs/MANUAL-CHECKS.md.
+
+## 1.0.5 The sound that does not seem to work: what was checked (2026-11-20)
+
+The owner: "the sound doesn't seem to work". Nothing was changed in the sound: no fault was found on this Mac.
+
+- **Checked:** FreeRDP in the test machine plays the host's test tone as PCM and as AAC (`TestFreeRDPSound`, as in 4.6); the capture gets another process's sound on this Mac (`TestMacSound`); and, new, the whole way at once: `TestFreeRDPRealSound` (`mardp_freerdp`): mardp -headless captures the Mac's real sound with "on both" (so it mutes nothing), `afplay` plays a quiet 1 kHz tone, FreeRDP plays what it gets into a file: 3.95 s of the 4 s on the bitmap path, 3.94 s with H.264, as AAC.
+- **Also:** `scripts/vm.sh` quits the UTM app when it opened it, and answers the machine's state without opening UTM: left open after a run, UTM's window said "stopping" for good, which the owner saw.
+- **Not known:** why the owner hears nothing: Remmina's "Audio output mode" (off by default), mardp's "Sound" setting, or something this Mac's tests do not show. "On the client only", the default, was not run here (it mutes the Mac's output; the rule of these tests is never to touch the owner's volume or mute). The questions are in docs/MANUAL-CHECKS.md.

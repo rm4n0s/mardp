@@ -220,7 +220,7 @@ func serve(t *testing.T, parts Parts, opts Options, w, h int) *session {
 	}
 	srv, err := rdp.NewServer(rdp.Config{
 		Certificate: cert, Authenticator: rdp.StaticAuthenticator(testUser, testPassword),
-		Handler: hst, DesktopSize: hst.DesktopSize, AudioFormats: hst.AudioFormats(), Logger: opts.Logger,
+		Handler: hst, DesktopSize: hst.DesktopSize, AudioFormats: hst.AudioFormats(), Clipboard: hst.Clipboard(), Logger: opts.Logger,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -256,6 +256,7 @@ func serve(t *testing.T, parts Parts, opts Options, w, h int) *session {
 	defer ccancel()
 	c, err := rdptest.Connect(cctx, nc, rdptest.Options{
 		TLSConfig: ccfg, User: testUser, Password: testPassword, Width: uint16(w), Height: uint16(h),
+		Channels: []string{"cliprdr", "rdpsnd", "drdynvc"},
 	})
 	if err != nil {
 		t.Fatal(err)

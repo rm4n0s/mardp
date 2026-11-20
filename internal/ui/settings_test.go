@@ -85,6 +85,7 @@ func TestForm(t *testing.T) {
 		{"sound unknown", func(f *Form) { f.Sound = "loud" }, nil, FieldSound},
 		{"display", func(f *Form) { f.Display = "2" }, func(s *config.Settings) { s.Display = "2" }, ""},
 		{"swap", func(f *Form) { f.SwapCtrlCommand = true }, func(s *config.Settings) { s.SwapCtrlCommand = true }, ""},
+		{"clipboard off", func(f *Form) { f.Clipboard = false }, func(s *config.Settings) { s.ClipboardOff = true }, ""},
 		{"start server", func(f *Form) { f.StartServer = !base.StartServer }, func(s *config.Settings) { s.StartServer = !base.StartServer }, ""},
 		{"open at login", func(f *Form) { f.OpenAtLogin = !base.OpenAtLogin }, func(s *config.Settings) { s.OpenAtLogin = !base.OpenAtLogin }, ""},
 	} {

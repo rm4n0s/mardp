@@ -453,3 +453,18 @@ After `sh scripts/install.sh` from a checkout at v1.0.4 or newer:
 3. Each of these should quit the app, so that its icon leaves the Dock and the menu bar: Quit in the Dock icon's menu (right-click), Command+Q with mardp's window in front, Quit mardp in the mardp menu at the top of the screen, Quit in the menu-bar icon's menu. Tell me which, if any, does not. (Quit is Glutter's since 1.0.4; here a quit event sent to a test copy ended it.)
 4. With mardp open, shut the Mac down or log out. Expected: mardp does not hold it up.
 
+## 1.0.5 Copy and paste with Remmina (SPEC §10.6)
+
+After `sh scripts/install.sh` from a checkout at v1.0.5 or newer, connected with Remmina:
+
+1. On the Mac (through Remmina), select some text and copy it (Command+C). On Linux, paste it into another program. Expected: the text, letters outside English included.
+2. On Linux, copy some text. On the Mac (through Remmina), paste it (Command+V). Expected: the same text.
+3. Tell me what does not arrive, and in which direction. FreeRDP in the test machine does both; Remmina on your machine is yours to check.
+
+## 1.0.5 The sound in Remmina (SPEC §10.1)
+
+You said the sound does not seem to work. Here the whole way works: a tone that another program plays on this Mac reaches FreeRDP in the test machine, on the bitmap path and with H.264. To find what differs on your side, tell me, while Remmina is connected and something plays on the Mac:
+
+1. What mardp's window says in its line **Sound:** ("AAC", "PCM", or "none").
+2. What **Audio output mode** says in Remmina's profile (Advanced). It must be **Local**; Remmina's default is off, and then the line above says "none".
+3. What **Sound** says in mardp's settings.

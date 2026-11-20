@@ -8,6 +8,7 @@ import (
 	"github.com/rm4n0s/mardp/internal/host"
 	"github.com/rm4n0s/mardp/internal/mac/aacenc"
 	"github.com/rm4n0s/mardp/internal/mac/capture"
+	"github.com/rm4n0s/mardp/internal/mac/clipboard"
 	"github.com/rm4n0s/mardp/internal/mac/input"
 	"github.com/rm4n0s/mardp/internal/mac/system"
 	"github.com/rm4n0s/mardp/internal/mac/video"
@@ -63,6 +64,14 @@ func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger
 			return host.Parts{}, err
 		}
 		parts.Input = in
+		// The clipboard goes with the client's input (host.Host.Clipboard).
+		if !s.ClipboardOff {
+			cb, err := clipboard.New()
+			if err != nil {
+				return host.Parts{}, err
+			}
+			parts.Clipboard = cb
+		}
 	}
 	return parts, nil
 }

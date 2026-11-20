@@ -322,6 +322,7 @@ func prepare(ctx context.Context, folder *config.Folder, settings func() config.
 		Handler:       hst,
 		DesktopSize:   hst.DesktopSize,
 		AudioFormats:  hst.AudioFormats(),
+		Clipboard:     hst.Clipboard(),
 		Logger:        log,
 	})
 	if err != nil {
