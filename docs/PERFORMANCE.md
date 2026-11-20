@@ -160,3 +160,52 @@ Notes:
 - After: the bitrate tried 6 Mbit/s for one second three times in 45 seconds (after 0, 10 and 20 seconds of staying), found each time that no more frames went, and went back to 8 Mbit/s. The trials grow rarer: the stay doubles up to 320 seconds.
 - Before: at 1.4 Mbit/s the pattern's frames no longer fit, and VideoToolbox's low-latency rate control dropped some of them too, so the client got fewer frames as well as a worse picture.
 - A model of a network that carries 3 Mbit/s (`TestRateControlModels`): the bitrate comes down to between 1.9 and 3.75 Mbit/s within 10 seconds and stays there, as before.
+
+## What a client shows of text (1.0.2, 2026-11-20)
+
+The owner, with 1.0.1 and Remmina: "with this rdp I can't read the letters that I am typing", and: "take pictures of implementation to prove me that the image doesn't glitch". Every number above was a count of frames or bytes; none looked at a picture.
+
+What was wrong: the capture hands over a picture only when the screen changed, and the encoder gives one frame one frame's share of the bitrate. A picture that follows other changes comes out coarse, and when the screen then stops, nothing more was sent: the client kept the coarse picture. For a client slower than the capture it was worse: the last pictures of a motion were skipped, and the client kept an older one.
+
+```sh
+scripts/perf.sh picture                                   # the whole server, pictures in build/pictures
+MARDP_PICTURES=/tmp/p go test -tags mardp_mac ./internal/mac/vtenc -run TestMacRefine -v   # the encoder alone
+```
+
+Both show pages of text as a desktop does (a 13 point font; each page differs from the one before in a few letters of every line, as text that is typed or scrolled): a second of pages, 60 a second, then the screen stops. The stream is decoded with VideoToolbox, as a client decodes it, and compared with the page on the screen: the peak signal-to-noise ratio, where about 30 dB is a soft picture and 40 a clean one.
+
+The encoder alone, 1920×1080, Apple M6:
+
+| Bitrate | As the screen stops (all a client had until 1.0.2) | Once sharpened (1.0.2) | The sharpening |
+|---|---|---|---|
+| 8 Mbit/s | 40.8 dB | 47.8 dB | 27 repeats, 207 KB, over 2.9 s |
+| 2 Mbit/s | 27.5 dB: the letters that changed cannot be read | 47.7 dB | 72 repeats, 410 KB, over 7.4 s |
+
+At 2 Mbit/s, the screen, what the client kept before 1.0.2, and what it shows now:
+
+![the screen](pictures/1.0.2/encoder-2mbit-0-the-screen.png)
+
+![as the screen stops](pictures/1.0.2/encoder-2mbit-1-as-the-screen-stops.png)
+
+![once sharpened](pictures/1.0.2/encoder-2mbit-2-once-sharpened.png)
+
+The whole server (`mardp -headless -test-pattern -text`, `rdptest` as the client, the loopback), what the client shows 80 ms after the screen stopped and 3.5 s later, three stops each:
+
+| Client | As the screen stops | 3.5 s later |
+|---|---|---|
+| Acknowledges at once | 35.0, 47.5, 47.6 dB | 47.5, 47.6, 47.7 dB |
+| Takes 25 ms a frame (40 frames a second at most) | 35.4, 46.5, 47.1 dB | 47.6, 47.7, 47.7 dB |
+| Bitrate cap of 2 Mbit/s | 31.5, 35.9, 35.9 dB | 47.5, 47.5, 47.6 dB |
+
+![a slow client, later](pictures/1.0.2/client-slow-2-later.png)
+
+![a cap of 2 Mbit/s, as the screen stops](pictures/1.0.2/client-cap-2mbit-1-as-the-screen-stops.png)
+
+![a cap of 2 Mbit/s, later](pictures/1.0.2/client-cap-2mbit-2-later.png)
+
+Notes:
+
+- While the screen moves the picture is softer than when it is still: that is what a bitrate is. It is sharp within a second or so after the screen stops at 8 Mbit/s, and within a few seconds at 2 Mbit/s.
+- The slow client's still picture is the page the screen stopped on (47.6 dB against it): the newest picture reaches it although the frames before it were skipped.
+- The bitrate no longer falls under 2 bits a second for each pixel (4.1 Mbit/s at 1920×1080), unless the cap of the settings is lower, as in the third row.
+- These pictures are decoded on this Mac. What Remmina shows on the owner's Linux machine is the owner's check (docs/MANUAL-CHECKS.md, 1.0.2).

@@ -22,6 +22,8 @@ type encoded struct {
 func testEncoder(t *testing.T, opts Options) (*Encoder, chan encoded) {
 	t.Helper()
 	ch := make(chan encoded, 1024)
+	// The tests count the frames they submit.
+	opts.NoRefine = true
 	e, err := New(opts, func(f *Frame) {
 		ch <- encoded{data: bytes.Clone(f.Data), key: f.Key, pts: f.PTS}
 	})

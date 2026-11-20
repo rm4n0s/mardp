@@ -80,6 +80,7 @@ type fakeMac struct {
 	posts    []bool
 	patterns int
 	stills   int
+	texts    int
 }
 
 func newFakeMac(granted ...host.Permission) *fakeMac {
@@ -167,11 +168,14 @@ func (f *fakeMac) parts(sys host.System, _ config.Settings, post bool, _ *slog.L
 
 // pattern is the fake test pattern: host.PatternVideo, and a tone unless
 // the sound is off.
-func (f *fakeMac) pattern(s config.Settings, still bool, _ *slog.Logger) (host.Parts, error) {
+func (f *fakeMac) pattern(s config.Settings, kind patternKind, _ *slog.Logger) (host.Parts, error) {
 	f.mu.Lock()
 	f.patterns++
-	if still {
+	switch kind {
+	case patternStill:
 		f.stills++
+	case patternText:
+		f.texts++
 	}
 	f.mu.Unlock()
 	p := host.Parts{Screen: &host.PatternScreen{Frames: 1}, Video: &host.PatternVideo{}}
@@ -381,7 +385,9 @@ func TestRunFlags(t *testing.T) {
 		{"log file", []string{"-headless", "-log-file", missing}, exitFailed, "", "the log file"},
 		{"test pattern without -headless", []string{"-test-pattern"}, exitUsage, "", "need -headless"},
 		{"measure without -headless", []string{"-measure"}, exitUsage, "", "need -headless"},
-		{"still without -test-pattern", []string{"-headless", "-still"}, exitUsage, "", "-still needs -test-pattern"},
+		{"still without -test-pattern", []string{"-headless", "-still"}, exitUsage, "", "-still and -text need -test-pattern"},
+		{"text without -test-pattern", []string{"-headless", "-text"}, exitUsage, "", "-still and -text need -test-pattern"},
+		{"still and text", []string{"-headless", "-test-pattern", "-still", "-text"}, exitUsage, "", "choose one"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

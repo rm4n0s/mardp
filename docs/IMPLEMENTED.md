@@ -904,3 +904,31 @@ The owner, after `scripts/install.sh`: "didn't this update mardp ? put the versi
   - SPEC §12.2; README.
 - **Proved:** the title with a version and without one, in the view model and in the window (`gluttertest`); the version from each source (table); the status carries the app's version. The owner's run of `scripts/install.sh` on this Mac made the identity check, built, copied to /Applications and opened v1.0.1, which proves the installer's steps after its checks on a Mac that already has the tools.
 - **Manual checks:** the title in the real window: pending, see docs/MANUAL-CHECKS.md (1.0.2).
+
+## 1.0.2 Letters that cannot be read, and Quit (2026-11-20)
+
+The owner, with 1.0.1 and Remmina: "I have the same problem as before ... with this rdp I can't read the letters that I am typing", "The quit button doesn't work and the scrollbar doesn't work", and: "from now on, take pictures of implementation to prove me that the image doesn't glitch".
+
+- **Cause of the picture:** two things that no measurement so far looked at, since they all counted frames and bytes on a client that acknowledges at once.
+  - The capture hands over a picture only when the screen changed, and a frame gets a frame's share of the bitrate. A picture that follows other changes is coarse; when the screen then stopped, nothing more was sent, so the client kept it (measured: 27.5 dB at 2 Mbit/s after a second of changing text, the changed letters unreadable; VideoToolbox needs 400 KB more to make it clean).
+  - A picture skipped for the backlog, or dropped by VideoToolbox, was never sent later: a client slower than the capture kept an older picture than the screen's until the screen changed again.
+  - 1.0.1's rule for the bitrate stays: it was a real fault (1.4 Mbit/s for a slow client), but not all of it.
+- **Built:**
+  - `internal/mac/vtenc`: the encoder keeps the newest picture and encodes it again every tenth of a second in which no new one came, until 3 repeats in a row are small and the last 4 seconds took no more than a second's bitrate, or for 10 seconds; a skipped or dropped picture, and a key frame wanted on a still screen, go with a repeat (`refine.go`; `mardpEncRepeat` in C). `Options.NoRefine` for the tests that count frames. The capture's queue has 5 surfaces for a capture into the encoder.
+  - `internal/host`: the bitrate starts at 4 bits a second for each pixel (at least 8 Mbit/s) and does not fall under 2 (at least 1 Mbit/s), both under the cap.
+  - `internal/mac/vtdec`: an H.264 decoder (VideoToolbox) into pictures, for the proofs.
+  - `mardp -headless -test-pattern -text`: pages of text, a second of pages that change and four seconds of the last (`vtenc.SubmitText`, `vtenc.TextPage`).
+  - `scripts/perf.sh picture` (`TestPerfPicture`) and `TestMacRefine`: what a client shows as the screen stops and later, against the screen, in dB and as PNG files.
+  - Quit: `internal/mac/system` `WatchQuit` takes `-[NSApplication terminate:]`, so the app menu's Quit, Cmd+Q and the Dock's Quit quit the app; until now they hid the window, as the close button does, and only the menu-bar icon's Quit quit.
+  - SPEC §9.3, §9.4, §9.5, §12.3, §13, §15.5 and the package table; README; docs/GLUTTER-ISSUES.md; docs/PERFORMANCE.md with the pictures (docs/pictures/1.0.2).
+- **Proved, with pictures looked at** (docs/PERFORMANCE.md):
+  - The encoder alone, 1920×1080, after a second of changing text: at 2 Mbit/s 27.5 dB as the screen stops (unreadable) and 47.7 dB once sharpened; at 8 Mbit/s 40.8 and 47.8 dB; then the encoder sends nothing more.
+  - The whole server with `rdptest` decoding as a client, three stops each: 47.5 to 47.7 dB 3.5 s after the screen stops, for a client that acknowledges at once, one that takes 25 ms a frame (it shows the page the screen stopped on), and a cap of 2 Mbit/s.
+  - Nothing else moved: an idle session still sends nothing and costs 0.02% of one core (`perf.sh idle`, 60 s); 60.0 frames a second, 5.9 ms host delay at p95, 13.9% of one core (`perf.sh`, 30 s); a slow client keeps 8.0 Mbit/s (`perf.sh slow`).
+  - `internal/mac/vtenc`: the sharpening ticked by hand on a fake session (the run of small repeats, the bitrate spent, a new picture, skipping, a key frame, a dropped frame, ten seconds, a closed encoder, `NoRefine`). `internal/mac/vtdec`: the NAL units, the refusals with their routes; with the real VideoToolbox, a page encoded and decoded back. `internal/host`: the start and the floor for each size.
+  - Quit: `terminate:` calls the watcher and the process goes on (test); in the real bundle, `terminate:` sent as the app menu's Quit sends it logged "Quit chosen: quitting" and the app ended within a second.
+- **Not proved:**
+  - What Remmina shows on the owner's Linux machine: the pictures are decoded on this Mac. If letters still cannot be read there, the status card's values and a screenshot are needed (docs/MANUAL-CHECKS.md, 1.0.2): twice now a cause was fixed without seeing the owner's screen.
+  - Quit with a real click or key press: the owner's check.
+  - The scrollbar: not changed. It is not clear which scrollbar; asked in docs/MANUAL-CHECKS.md.
+- **New in docs/GLUTTER-ISSUES.md:** the entry on Cmd+Q now says mardp takes the quit itself.

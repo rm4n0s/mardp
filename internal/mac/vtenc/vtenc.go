@@ -104,6 +104,10 @@ type Options struct {
 	Bitrate int
 	// FPS is the frame rate the encoder expects; 0 is DefaultFPS.
 	FPS int
+	// NoRefine keeps the encoder from encoding a still picture again
+	// until it is sharp (SPEC §9.3): for tests that count the frames they
+	// submit.
+	NoRefine bool
 	// Logger receives the log; nil discards it.
 	Logger *slog.Logger
 }
@@ -131,6 +135,9 @@ type Stats struct {
 	// Dropped are the frames VideoToolbox dropped, Failed the ones it
 	// failed to encode or that came out malformed.
 	Dropped, Failed int64
+	// Repeats are the frames, among Frames, that encoded a still picture
+	// again to sharpen it (SPEC §9.3).
+	Repeats int64
 }
 
 // output is one frame as VideoToolbox handed it over.
@@ -138,6 +145,7 @@ type output struct {
 	status  int  // an OSStatus; not 0 when encoding failed
 	dropped bool // VideoToolbox dropped the frame
 	key     bool
+	repeat  bool     // the newest picture encoded again, not a new one
 	sets    [][]byte // the parameter sets, on key frames
 	nalLen  int      // the length of the NAL unit lengths in avcc
 	avcc    []byte   // the NAL units, each after its length
@@ -179,6 +187,14 @@ type session interface {
 	// submitter returns the C function frames are submitted to and its
 	// first argument.
 	submitter() (fn, arg unsafe.Pointer)
+	// repeat encodes the newest picture submitted again; it returns the
+	// OSStatus, repeatSkipped when the session skips, and repeatNothing
+	// when no picture was submitted yet.
+	repeat() int
+	// captured counts the pictures submitted.
+	captured() uint32
+	// stale says the newest picture submitted was skipped.
+	stale() bool
 }
 
 // backend is VideoToolbox, or a fake.
@@ -207,7 +223,10 @@ type Encoder struct {
 	closed    bool
 	closeOnce sync.Once
 
-	frames, keys, dropped, failed atomic.Int64
+	frames, keys, dropped, failed, repeats atomic.Int64
+
+	// ref sharpens a still picture (refine.go).
+	ref refiner
 }
 
 var _ host.VideoEncoder = (*Encoder)(nil)
@@ -233,6 +252,7 @@ func newEncoder(opts Options, frame func(*Frame), be backend) (*Encoder, error) 
 		log = slog.New(slog.DiscardHandler)
 	}
 	e := &Encoder{cfg: cfg, frame: frame, log: log}
+	e.ref.init(cfg, opts.NoRefine)
 	s, f := be.create(cfg, e)
 	if f != nil {
 		return nil, errors.New(TagEncoderCreateFailed, "VideoToolbox refused the encoder",
@@ -257,25 +277,33 @@ func (e *Encoder) SetBitrate(bitsPerSecond int) error {
 	if st := e.s.setBitrate(bitsPerSecond); st != 0 {
 		return errors.New(TagEncoderBitrateFailed, "VideoToolbox refused the bitrate", "bitrate", bitsPerSecond, "status", st)
 	}
+	e.ref.setBitrate(bitsPerSecond)
 	return nil
 }
 
-// ForceKeyFrame makes the next frame encoded a key frame.
+// ForceKeyFrame makes the next frame encoded a key frame. On a still
+// screen the newest picture is encoded again for it.
 func (e *Encoder) ForceKeyFrame() {
 	e.closeMu.Lock()
 	defer e.closeMu.Unlock()
 	if !e.closed {
 		e.s.forceKeyFrame()
+		e.kick(true)
 	}
 }
 
 // SetSkip makes the encoder skip the frames it gets, or encode them again.
-// A forced key frame waits for the first frame encoded.
+// A forced key frame waits for the first frame encoded. When it encodes
+// again, the newest picture goes if it was skipped, and a still picture
+// goes on getting sharper.
 func (e *Encoder) SetSkip(skip bool) {
 	e.closeMu.Lock()
 	defer e.closeMu.Unlock()
 	if !e.closed {
 		e.s.setSkip(skip)
+		if !skip {
+			e.kick(e.s.stale())
+		}
 	}
 }
 
@@ -292,7 +320,8 @@ func (e *Encoder) Submitter() (fn, arg unsafe.Pointer) { return e.s.submitter() 
 
 // Stats returns the counts so far.
 func (e *Encoder) Stats() Stats {
-	return Stats{Frames: e.frames.Load(), KeyFrames: e.keys.Load(), Dropped: e.dropped.Load(), Failed: e.failed.Load()}
+	return Stats{Frames: e.frames.Load(), KeyFrames: e.keys.Load(), Dropped: e.dropped.Load(), Failed: e.failed.Load(),
+		Repeats: e.repeats.Load()}
 }
 
 // Close waits for the frames being encoded and ends the session. It may be
@@ -312,6 +341,8 @@ func (e *Encoder) deliver(o output) {
 	if o.dropped {
 		e.dropped.Add(1)
 		e.log.Debug("VideoToolbox dropped a frame", "pts", o.pts)
+		// The client did not get this picture: it is encoded again.
+		e.kick(true)
 		return
 	}
 	if o.status != 0 {
@@ -319,6 +350,7 @@ func (e *Encoder) deliver(o output) {
 		e.log.Warn("VideoToolbox failed to encode a frame", "status", o.status, "pts", o.pts)
 		return
 	}
+	e.refined(o)
 	buf, err := appendAnnexB(e.buf[:0], o.sets, o.nalLen, o.avcc)
 	if err != nil {
 		e.failed.Add(1)
@@ -329,6 +361,9 @@ func (e *Encoder) deliver(o output) {
 	e.frames.Add(1)
 	if o.key {
 		e.keys.Add(1)
+	}
+	if o.repeat {
+		e.repeats.Add(1)
 	}
 	e.out = Frame{Data: buf, Key: o.key, PTS: o.pts, Encoded: time.Now()}
 	if o.age >= 0 && o.age < maxAge {

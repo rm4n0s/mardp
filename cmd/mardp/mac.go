@@ -29,7 +29,7 @@ type machine interface {
 	// pattern makes the parts of `mardp -headless -test-pattern` for the
 	// settings s: a moving test pattern through the real encoder and a
 	// tone, without capture and without input (SPEC §15.5).
-	pattern(s config.Settings, still bool, log *slog.Logger) (host.Parts, error)
+	pattern(s config.Settings, kind patternKind, log *slog.Logger) (host.Parts, error)
 }
 
 // mac is the real Mac.
@@ -67,8 +67,8 @@ func (mac) parts(sys host.System, s config.Settings, post bool, log *slog.Logger
 	return parts, nil
 }
 
-func (mac) pattern(s config.Settings, still bool, log *slog.Logger) (host.Parts, error) {
-	if still {
+func (mac) pattern(s config.Settings, kind patternKind, log *slog.Logger) (host.Parts, error) {
+	if kind == patternStill {
 		parts := host.Parts{Screen: &host.PatternScreen{Frames: 1}, Video: video.NewPattern(video.Options{Logger: log, Still: true})}
 		if s.Sound != config.SoundOff {
 			parts.Sound = host.QuietSource{}
@@ -76,7 +76,7 @@ func (mac) pattern(s config.Settings, still bool, log *slog.Logger) (host.Parts,
 		}
 		return parts, nil
 	}
-	parts := host.Parts{Screen: &host.PatternScreen{}, Video: video.NewPattern(video.Options{Logger: log})}
+	parts := host.Parts{Screen: &host.PatternScreen{}, Video: video.NewPattern(video.Options{Logger: log, Text: kind == patternText})}
 	if s.Sound != config.SoundOff {
 		parts.Sound = &host.ToneSource{}
 		parts.AAC = aacParts(log)
@@ -98,6 +98,15 @@ func (mac) window(ctx context.Context, b ui.Backend, log *slog.Logger) error {
 		cancel()
 	})
 	defer stop()
+	// Glutter: a quit (the app menu's Quit, Command+Q, the Dock's Quit)
+	// reaches the app as a close request too, and the window hid; mardp
+	// takes the quit itself. Glutter should say what asked the app to exit
+	// (docs/GLUTTER-ISSUES.md).
+	stopQuit := system.WatchQuit(func() {
+		log.Info("Quit chosen: quitting")
+		cancel()
+	})
+	defer stopQuit()
 	return ui.Run(ctx, b, log)
 }
 

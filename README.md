@@ -113,7 +113,7 @@ If Remmina ever says that the certificate **changed** and you did not press "New
 
 **The window**'s title says which version runs, such as "mardp v1.0.2". Under it the window shows the state: **Stopped**, **Listening** (waiting for a connection) or **Connected**. While someone is connected it shows who, since when, the size of the desktop, how the picture is sent (**Video:**), the frames a second, the bitrate, the sound format and the delay, and a **Disconnect** button.
 
-**Closing the window does not stop mardp.** It keeps running, with an icon in the menu bar (a screen on a stand: empty when stopped, with a dot when listening, filled when someone is connected). The icon's menu has Start or Stop, Disconnect, **Show window** and **Quit**. Clicking mardp in the Dock also brings the window back. To really stop it, choose **Quit** from the menu-bar icon. (Command+Q only hides the window.)
+**Closing the window does not stop mardp.** It keeps running, with an icon in the menu bar (a screen on a stand: empty when stopped, with a dot when listening, filled when someone is connected). The icon's menu has Start or Stop, Disconnect, **Show window** and **Quit**. Clicking mardp in the Dock also brings the window back. To really stop it, choose **Quit**: from the menu-bar icon, from the mardp menu at the top of the screen, or with Command+Q.
 
 **One client at a time.** A second connection takes over from the first.
 
@@ -160,7 +160,7 @@ If the network is slow (Wi-Fi far from the router, a VPN), lower the **Bitrate c
 
 | What you see | What to do |
 |---|---|
-| The picture turns into smears or blocks as soon as something moves | Update to version 1.0.1 or newer ([Updating](#updating-and-removing)): 1.0.0 lowered the quality far too much for a client that decodes slower than the Mac captures. Then see [Watching video](#watching-video) |
+| Letters cannot be read after something moved, or the picture stays smeared | Update to version 1.0.2 or newer ([Updating](#updating-and-removing)): older versions sent a coarse picture while the screen moved and never sharpened it once it stopped. While something moves the picture is softer; it is sharp within a second after it stops. Then see [Watching video](#watching-video) |
 | The picture is slow, like a slideshow | mardp's window says how the picture is sent. If **Video:** is not "H.264 (AVC420) …", set Remmina's **Colour depth** to **GFX AVC420 (32 bpp)**, and on Fedora check the [video decoder](#check-the-video-decoder-fedora) |
 | The keyboard and mouse do nothing; the window says **View only** | Give mardp **Accessibility** (System Settings › Privacy & Security › Accessibility), then press **Stop** and **Start** |
 | No sound on the Linux computer | Remmina: **Audio output mode: Local**. mardp: **Sound** is not **Off** |

@@ -277,7 +277,8 @@ func (h *Host) SessionOpened(ctx context.Context, s *rdp.Session) {
 	}
 
 	p := picture{h: h, s: s, log: log, width: width, height: height, poll: poll,
-		rate: &rateControl{bitrate: min(StartBitrate, h.opts.MaxBitrate), max: h.opts.MaxBitrate}}
+		rate: &rateControl{bitrate: startBitrate(width, height, h.opts.MaxBitrate), max: h.opts.MaxBitrate,
+			floor: floorBitrate(width, height, h.opts.MaxBitrate)}}
 	p.sw.want = p.wantAVC
 	s.SetFlowSink(&p.sw)
 	defer s.SetFlowSink(nil)

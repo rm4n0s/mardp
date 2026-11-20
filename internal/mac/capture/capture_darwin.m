@@ -350,7 +350,9 @@ static long start(uintptr_t handle, uint32_t displayID, int width, int height, i
 		cfg.colorSpaceName = kCGColorSpaceSRGB;
 		cfg.showsCursor = NO;
 		cfg.minimumFrameInterval = CMTimeMake(1, fps);
-		cfg.queueDepth = 3;
+		// The encoder keeps the newest picture, to encode it again while the
+		// screen is still (vtenc), so a capture into it has two more surfaces.
+		cfg.queueDepth = video ? 5 : 3;
 		if (sound) {
 			cfg.capturesAudio = YES;
 			cfg.excludesCurrentProcessAudio = includeSelf ? NO : YES;

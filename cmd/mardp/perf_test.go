@@ -31,7 +31,12 @@ import (
 	"github.com/rm4n0s/errors"
 
 	"github.com/rm4n0s/mardp/internal/config"
+	"github.com/rm4n0s/mardp/internal/mac/vtdec"
+	"github.com/rm4n0s/mardp/internal/mac/vtenc"
 	"github.com/rm4n0s/mardp/rdp/rdptest"
+	"image"
+	"image/png"
+	"math"
 )
 
 // perfSeconds is how long the client watches, from MARDP_PERF_SECONDS,
@@ -925,5 +930,203 @@ func bytes2Lines(b []byte) func(func(string) bool) {
 				return
 			}
 		}
+	}
+}
+
+// The pictures of 1.0.2 (SPEC §9.3, §15.5): what a client shows of text.
+// mardp -headless -test-pattern -text serves pages of text, a second of
+// pages that each differ a little from the one before and then four
+// seconds of the last. The test is the client: it decodes every frame
+// with VideoToolbox, as Remmina does with OpenH264, and looks at what it
+// shows a moment after the screen stopped and three and a half seconds
+// later, against the page the screen shows. It fails when the still
+// picture is not clean. MARDP_PICTURES names a folder for the pictures.
+// scripts/perf.sh picture runs it:
+//
+//	scripts/perf.sh picture     # pictures in build/pictures
+func TestPerfPicture(t *testing.T) {
+	const (
+		width, height = 1920, 1080
+		fps           = 60
+		cycle         = 5 * fps // the pattern's cycle, in ticks
+		cycles        = 3
+	)
+	for _, tt := range []struct {
+		name string
+		cap  int           // the bitrate cap of the settings, 0 for the default
+		show time.Duration // how long the client takes to show a frame
+	}{
+		{"fast-client", 0, 0},
+		{"slow-client", 0, 25 * time.Millisecond},
+		{"cap-2mbit", 2_000_000, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHome(t, func(s *config.Settings) {
+				s.Sound = config.SoundOff
+				if tt.cap != 0 {
+					s.MaxBitrate = tt.cap
+				}
+			})
+			p := startPerf(t, h, "-text")
+			c, err := connectSized(t, h, testUser, testPassword, width, height)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if err := c.Activate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			c.KeepChannel(c.ChannelID("drdynvc"))
+			g, err := c.StartGFX(ctx, rdptest.AVC420Caps())
+			if err != nil {
+				t.Fatal(err)
+			}
+			type got struct {
+				at   time.Time
+				h264 []byte
+			}
+			frames := make(chan got, 4096)
+			read := make(chan error, 1)
+			rctx, stop := context.WithCancel(ctx)
+			go func() {
+				var total uint32
+				for {
+					f, err := c.ReadGFXFrame(rctx, g.ChannelID)
+					if err != nil {
+						read <- err
+						return
+					}
+					time.Sleep(tt.show)
+					total++
+					if err := c.AckFrame(rctx, g.ChannelID, 0, f.ID, total); err != nil {
+						read <- err
+						return
+					}
+					for _, u := range f.H264 {
+						frames <- got{at: time.Now(), h264: bytes.Clone(u)}
+					}
+				}
+			}()
+			dec := vtdec.New()
+			defer dec.Close()
+			// shown is what the client shows; the test notes it a moment
+			// after each burst of frames ended (the screen stopped) and
+			// again later.
+			var (
+				shown             *image.RGBA
+				last              time.Time
+				burst             int
+				asStops, settled  []*image.RGBA
+				noteStop, noteEnd time.Time
+				count, size       int
+			)
+			tick := time.NewTicker(10 * time.Millisecond)
+			defer tick.Stop()
+			for len(settled) < cycles {
+				select {
+				case f := <-frames:
+					img, err := dec.Decode(f.h264)
+					if err != nil {
+						t.Fatal(err)
+					}
+					shown = img
+					count++
+					size += len(f.h264)
+					if f.at.Sub(last) < 60*time.Millisecond {
+						burst++
+					} else {
+						burst = 0
+					}
+					last = f.at
+				case now := <-tick.C:
+					switch {
+					case burst >= 10 && now.Sub(last) > 80*time.Millisecond:
+						// A second of pages just ended.
+						burst = 0
+						asStops = append(asStops, shown)
+						noteStop, noteEnd = now, now.Add(3500*time.Millisecond)
+					case !noteEnd.IsZero() && now.After(noteEnd):
+						settled = append(settled, shown)
+						noteEnd = time.Time{}
+					}
+				case err := <-read:
+					t.Fatalf("the client stopped reading: %v", err)
+				case <-ctx.Done():
+					t.Fatalf("%d bursts seen, %d settled, by %v", len(asStops), len(settled), noteStop)
+				}
+			}
+			stop()
+			t.Logf("the client stopped reading: %v", <-read)
+			if err := c.Disconnect(ctx); err != nil {
+				t.Log(err)
+			}
+			p.stop(t)
+
+			// Which page the screen stopped on: the last of a cycle's
+			// first second.
+			page := func(img *image.RGBA) (best uint32, db float64) {
+				for c := range uint32(12) {
+					n := c*cycle + fps - 1
+					if d := psnr(img, vtenc.TextPage(width, height, n)); d > db {
+						best, db = n, d
+					}
+				}
+				return best, db
+			}
+			part := image.Rect(0, 0, 960, 220)
+			for i := range settled {
+				n, after := page(settled[i])
+				want := vtenc.TextPage(width, height, n)
+				before := psnr(asStops[i], want)
+				t.Logf("stop %d, page %d: %.1f dB as the screen stops, %.1f dB three and a half seconds later", i+1, n, before, after)
+				if after < 38 {
+					t.Errorf("stop %d: the still picture is %.1f dB against the screen, want at least 38", i+1, after)
+				}
+				if i == len(settled)-1 {
+					savePicture(t, tt.name+"-0-the-screen", want, part)
+					savePicture(t, tt.name+"-1-as-the-screen-stops", asStops[i], part)
+					savePicture(t, tt.name+"-2-later", settled[i], part)
+				}
+			}
+			t.Logf("%d frames, %d bytes", count, size)
+		})
+	}
+}
+
+// psnr is the peak signal-to-noise ratio of got against want, in dB, over
+// red, green and blue: about 30 is a soft picture, 40 a clean one; 0 when
+// either is missing.
+func psnr(got, want *image.RGBA) float64 {
+	if got == nil || want == nil || len(got.Pix) != len(want.Pix) {
+		return 0
+	}
+	var sum float64
+	for i := 0; i+3 < len(want.Pix); i += 4 {
+		for c := range 3 {
+			d := float64(got.Pix[i+c]) - float64(want.Pix[i+c])
+			sum += d * d
+		}
+	}
+	if sum == 0 {
+		return 99
+	}
+	return 10 * math.Log10(255*255/(sum/float64(len(want.Pix)/4*3)))
+}
+
+// savePicture writes the part r of img as name.png into the folder
+// MARDP_PICTURES names, when it is set.
+func savePicture(t *testing.T, name string, img *image.RGBA, r image.Rectangle) {
+	t.Helper()
+	dir := os.Getenv("MARDP_PICTURES")
+	if dir == "" || img == nil {
+		return
+	}
+	var b bytes.Buffer
+	if err := png.Encode(&b, img.SubImage(r)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".png"), b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

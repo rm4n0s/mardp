@@ -35,6 +35,13 @@ type fakeVT struct {
 	closed   int
 	// onClose runs in close, as VideoToolbox's last frames do.
 	onClose func()
+	// What the sharpening asks: pictures counts the pictures submitted,
+	// isStale says the newest was skipped, repeats counts repeat calls
+	// and repeatStatus is what they return.
+	pictures     uint32
+	isStale      bool
+	repeats      int
+	repeatStatus int
 }
 
 func (f *fakeVT) create(cfg config, enc *Encoder) (session, *createFailure) {
@@ -67,6 +74,18 @@ func (f *fakeVT) close() {
 	f.closed++
 	f.mu.Unlock()
 }
+
+func (f *fakeVT) repeat() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.repeatStatus == 0 {
+		f.repeats++
+	}
+	return f.repeatStatus
+}
+
+func (f *fakeVT) captured() uint32 { f.mu.Lock(); defer f.mu.Unlock(); return f.pictures }
+func (f *fakeVT) stale() bool      { f.mu.Lock(); defer f.mu.Unlock(); return f.isStale }
 
 func (f *fakeVT) submitter() (fn, arg unsafe.Pointer) {
 	return unsafe.Pointer(f), unsafe.Pointer(&f.forced)

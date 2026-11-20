@@ -21,6 +21,11 @@
 #   scripts/perf.sh slow   the test pattern for a client that takes 25 ms to
 #                          show a frame (default 45 s): the frames and the
 #                          bitrate it gets; the bitrate must not fall.
+#   scripts/perf.sh picture pages of text for a client that decodes them:
+#                          the pictures it shows as the screen stops and
+#                          later, as PNG files in build/pictures
+#                          (MARDP_PICTURES); the still picture must be
+#                          clean.
 set -eu
 cd "$(dirname "$0")/.."
 TMPDIR=$(cd "${TMPDIR:-/tmp}" && pwd -P)/
@@ -31,8 +36,14 @@ idle) test='^TestPerfIdle$' seconds=${MARDP_PERF_SECONDS:-300} ;;
 screen) test='^TestPerfScreen$' seconds=${MARDP_PERF_SECONDS:-300} ;;
 long) test='^TestPerfLong$' seconds=${MARDP_PERF_SECONDS:-1800} ;;
 slow) test='^TestPerfSlow$' seconds=${MARDP_PERF_SECONDS:-45} ;;
+picture)
+	test='^TestPerfPicture$' seconds=${MARDP_PERF_SECONDS:-120}
+	MARDP_PICTURES=${MARDP_PICTURES:-$PWD/build/pictures}
+	export MARDP_PICTURES
+	mkdir -p "$MARDP_PICTURES"
+	;;
 *)
-	echo "usage: scripts/perf.sh [idle|screen|long|slow]" >&2
+	echo "usage: scripts/perf.sh [idle|screen|long|slow|picture]" >&2
 	exit 2
 	;;
 esac

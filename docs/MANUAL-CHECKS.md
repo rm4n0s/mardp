@@ -291,7 +291,7 @@ The tests drive the icon's menu on Glutter's fake Linux desktop. This check clic
 4. Choose "Start". Expected: the window and the menu say "Listening", the menu has "Stop" in place of "Start", and the icon has a dot in the middle of the screen.
 5. Connect with Remmina. Expected: the icon's screen is filled, and the menu has "Connected", "Stop" and "Disconnect". Choose "Disconnect": Remmina closes, and the icon has its dot again.
 6. Close the window with its red button. Expected: the window goes, mardp's icon stays, and Remmina can still connect. Choose "Show window": the window comes back as it was. Close it again and click mardp's icon in the Dock: it comes back too.
-7. Press Cmd+Q in the window. Expected: the window hides as with the red button (Glutter cannot tell them apart, docs/GLUTTER-ISSUES.md).
+7. Open the app again, press Cmd+Q in the window (or choose Quit mardp in the mardp menu at the top of the screen). Expected, since 1.0.2: the app quits, icon and all, as with Quit in the icon's menu. Open it again for the next step.
 8. Choose "Quit" in the icon's menu. Expected: the icon and the app go, and the server stops (Remmina cannot connect).
 9. Only when it suits you, since it ends your session: open the app, press Start, and log out of the Mac. Expected: the logout goes on without a message that mardp interrupted it; afterwards `/tmp/mardp.log` ends with "the Mac logs out or shuts down: quitting".
 
@@ -415,32 +415,38 @@ The numbers of §14 that only your two machines can give. It takes about 25 minu
 
 Tell me (or paste): the time to the first picture (step 3), the last lines of step 8, `/tmp/mardp-top.txt` and `/tmp/mardp-top-idle.txt`, the 5 differences of step 5, what step 6 showed, and any dropout or stutter. With them I tune the constants of §9.5 and record every row of §14 in `docs/PERFORMANCE.md`.
 
-## 1.0.1 Motion with Remmina (SPEC §9.5)
+## 1.0.2 Text and motion with Remmina (SPEC §9.3, §9.5)
 
-The picture smeared when a window moved, because the bitrate fell to 1 Mbit/s for a client slower than the capture. After the fix:
+With 1.0.0 and 1.0.1 the letters could not be read after something moved. 1.0.2 sharpens the picture once the screen stops, always sends the newest picture, and keeps the bitrate over a floor. What it looks like on this Mac's own decoder is in docs/PERFORMANCE.md; what Remmina shows is yours to check:
 
-1. Build and install the fixed app, and start it with a log:
-
-   ```bash
-   scripts/build-app.sh
-   ```
+1. Quit mardp, install the new version and start it with a log:
 
    ```bash
-   ditto build/mardp.app /Applications/mardp.app
+   sh scripts/install.sh
    ```
 
    ```bash
    open -n /Applications/mardp.app --args -log-file /tmp/mardp.log
    ```
 
-2. Connect with Remmina (the README's profile). Drag a window around for 10 seconds, then play a video (Apple TV) for a minute.
-3. Look at the status card in mardp's window while the video plays: the video path, the frames a second and the bitrate.
+2. Connect with Remmina (the README's profile). Type in a text editor, scroll a page of text and stop, drag a window and let go, then play a video (Apple TV) for a minute.
+3. While it is connected, read the status card in mardp's window: the line **Video:**, the frames a second and the bitrate.
 
-Tell me: whether the picture is still distorted while things move, the three values of step 3, and the output of:
+Tell me: whether letters can be read a second after the screen stops, and while you type; the three values of step 3; the size of the Remmina window (or "full screen" and the Linux monitor's size); and the output of:
 
 ```bash
-grep -E 'sets the pace|video path|bitrate' /tmp/mardp.log | tail -20
+grep -E 'sets the pace|H.264 encoder|video path|bitrate' /tmp/mardp.log | tail -20
 ```
+
+A photo or a screenshot of Remmina's window when it looks wrong settles more than anything else.
+
+## 1.0.2 Quit (SPEC §7.3)
+
+With mardp's window in front: press Command+Q, or choose Quit mardp from the mardp menu at the top of the screen. Expected: the app quits (its menu-bar icon goes). Tell me if it does not, and which Quit you used.
+
+## 1.0.2 The scrollbar
+
+You said the scrollbar does not work. I could not tell which one, so nothing is changed yet. Tell me: is it the scrollbar of mardp's own window (the list of settings), or scrolling inside the remote desktop in Remmina? And what you do (drag the bar, the mouse wheel, two fingers on a trackpad) and what happens.
 
 ## 1.0.2 The version in the window
 

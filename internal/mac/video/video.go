@@ -25,7 +25,17 @@ type Options struct {
 	// and again each time the session forces a key frame, as a still
 	// display would be (`mardp -test-pattern -still`).
 	Still bool
+	// Text makes the test pattern pages of text: a second of pages that
+	// each differ a little from the one before, as text that is typed or
+	// scrolled, then textStill seconds of the last one, and so on
+	// (`mardp -test-pattern -text`): for the proofs that a client can
+	// read the picture while it moves and after it stops.
+	Text bool
 }
+
+// textStill is how many seconds the text pattern stays on a page after
+// each second of pages.
+const textStill = 4
 
 // capturer is what a Source needs of the capture.
 type capturer interface {
@@ -38,6 +48,8 @@ type encoder interface {
 	capture.VideoSink
 	// SubmitPattern encodes picture n of the test pattern.
 	SubmitPattern(n uint32) int
+	// SubmitText encodes page n of the text pattern.
+	SubmitText(n uint32) int
 	Close()
 }
 
@@ -148,8 +160,8 @@ func (s *Source) still(ctx context.Context, k *keyWatch) {
 }
 
 // pattern submits the test pattern to enc fps times a second until ctx
-// ends. A picture the encoder refuses is logged, the first of a run of
-// them as a warning.
+// ends: the moving pattern at every tick, or, as text, a page at every
+// tick of each cycle's first second and nothing for textStill seconds.
 func (s *Source) pattern(ctx context.Context, enc encoder, fps int) {
 	c, stop := s.tick(time.Second / time.Duration(fps))
 	defer stop()
@@ -160,7 +172,16 @@ func (s *Source) pattern(ctx context.Context, enc encoder, fps int) {
 			return
 		case <-c:
 		}
-		switch st := enc.SubmitPattern(n); st {
+		var st int
+		switch {
+		case !s.opts.Text:
+			st = enc.SubmitPattern(n)
+		case n%uint32((1+textStill)*fps) < uint32(fps):
+			st = enc.SubmitText(n)
+		default:
+			continue
+		}
+		switch st {
 		case 0, 1: // encoded or skipped
 			refused = 0
 		default:

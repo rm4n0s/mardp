@@ -140,13 +140,15 @@ func (s *windowState) Dispose() {
 	s.settings.dispose()
 }
 
-// exitRequested is the window's close button, and Cmd+Q: the window is
-// hidden and the app goes on with the menu-bar icon (SPEC §7.3), unless
-// the user chose Quit.
+// exitRequested is the window's close button: the window is hidden and
+// the app goes on with the menu-bar icon (SPEC §7.3), unless the user
+// chose Quit.
 //
-// Glutter: on macOS, Cmd+Q and the close button both arrive here and
-// cannot be told apart, so Cmd+Q hides the window too and Quit is only in
-// the icon's menu. Glutter should say which one asked (docs/GLUTTER-ISSUES.md).
+// Glutter: on macOS a quit (Cmd+Q, the app menu's Quit, the Dock's)
+// arrives here too and cannot be told from the close button; mardp takes
+// the quit before Glutter does (cmd/mardp/mac.go, system.WatchQuit), so
+// only the close button comes here. Glutter should say which one asked
+// (docs/GLUTTER-ISSUES.md).
 func (s *windowState) exitRequested() gui.AppExitResponse {
 	if s.quitting {
 		return gui.AppExitResponseExit

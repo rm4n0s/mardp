@@ -50,6 +50,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		"with -headless: serve a moving test pattern and a tone instead of the screen and its sound, without permissions (scripts/perf.sh)")
 	still := fs.Bool("still", false,
 		"with -test-pattern: the pattern does not move and nothing plays, an idle desktop (scripts/perf.sh idle)")
+	text := fs.Bool("text", false,
+		"with -test-pattern: the pattern is pages of text, a second of pages that change and then seconds of the last (scripts/perf.sh picture)")
 	measure := fs.Bool("measure", false,
 		"with -headless: log how long the H.264 frames take from capture to the socket, every 10 seconds and for each session")
 	if err := fs.Parse(args); err != nil {
@@ -63,9 +65,20 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		complain(stderr, "mardp: -test-pattern and -measure need -headless\n")
 		return exitUsage
 	}
-	if *still && !*testPattern {
-		complain(stderr, "mardp: -still needs -test-pattern\n")
+	if (*still || *text) && !*testPattern {
+		complain(stderr, "mardp: -still and -text need -test-pattern\n")
 		return exitUsage
+	}
+	if *still && *text {
+		complain(stderr, "mardp: -still and -text are two patterns: choose one\n")
+		return exitUsage
+	}
+	kind := patternMoving
+	switch {
+	case *still:
+		kind = patternStill
+	case *text:
+		kind = patternText
 	}
 	if *showVersion {
 		if _, err := fmt.Fprintln(stdout, "mardp", version()); err != nil {
@@ -92,7 +105,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	log.Info("mardp starting", "version", version(), "headless", *headless)
 	var err error
 	if *headless {
-		err = serve(ctx, getenv, m, serveOptions{viewOnly: *viewOnly, testPattern: *testPattern, still: *still, measure: *measure}, log)
+		err = serve(ctx, getenv, m, serveOptions{viewOnly: *viewOnly, testPattern: *testPattern, pattern: kind, measure: *measure}, log)
 	} else {
 		err = window(ctx, getenv, m, *viewOnly, log)
 	}
@@ -180,8 +193,8 @@ type serveOptions struct {
 	// testPattern serves the test pattern and a tone instead of the screen
 	// and its sound (SPEC §15.5).
 	testPattern bool
-	// still makes the test pattern still and silent.
-	still bool
+	// pattern is which test pattern.
+	pattern patternKind
 	// measure logs the H.264 frames' timing (SPEC §14).
 	measure bool
 }
@@ -194,12 +207,15 @@ func serve(ctx context.Context, getenv func(string) string, m machine, opts serv
 		return err
 	}
 	if opts.testPattern {
-		if opts.still {
+		switch opts.pattern {
+		case patternStill:
 			log.Info("serving a still test pattern and no sound instead of the screen (-test-pattern -still)")
-		} else {
+		case patternText:
+			log.Info("serving pages of text and a tone instead of the screen (-test-pattern -text)")
+		default:
 			log.Info("serving a test pattern and a tone instead of the screen (-test-pattern)")
 		}
-		m = patterned{machine: m, still: opts.still}
+		m = patterned{machine: m, kind: opts.pattern}
 	}
 	sys, err := m.system()
 	if err != nil {

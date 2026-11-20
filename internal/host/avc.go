@@ -13,10 +13,17 @@ import (
 const (
 	// DefaultVideoFPS is the H.264 path's frame-rate cap (SPEC §9.4).
 	DefaultVideoFPS = 60
-	// StartBitrate, MinBitrate and DefaultMaxBitrate bound the bitrate.
+	// StartBitrate, MinBitrate and DefaultMaxBitrate bound the bitrate;
+	// a large desktop starts and stays higher (startBitrate,
+	// floorBitrate).
 	StartBitrate      = 8_000_000
 	MinBitrate        = 1_000_000
 	DefaultMaxBitrate = 20_000_000
+	// floorPerPixel and startPerPixel are the bits a second for each
+	// pixel of the desktop that the bitrate does not fall under, and that
+	// it starts with: 4 and 8 Mbit/s at 1920x1080.
+	floorPerPixel = 2
+	startPerPixel = 4
 	// maxUnacked is how many frames may be on their way before the next
 	// captured frame is skipped.
 	maxUnacked = 2
@@ -80,6 +87,8 @@ func (p seen) betterThan(q seen) bool {
 // missed fewer than minMissed frames raises the bitrate a sixteenth.
 type rateControl struct {
 	bitrate, max int
+	// floor is the lowest bitrate; under MinBitrate, that is.
+	floor int
 	// tried says the last period's fall is a trial; from is the bitrate
 	// before it, origin the bitrate before the first trial of its run,
 	// and was is what that period saw.
@@ -91,8 +100,23 @@ type rateControl struct {
 	hold, nextHold int
 }
 
-// fall drops the bitrate a quarter, not below MinBitrate.
-func (r *rateControl) fall() { r.bitrate = max(MinBitrate, r.bitrate-r.bitrate/4) }
+// fall drops the bitrate a quarter, not below the floor.
+func (r *rateControl) fall() { r.bitrate = max(MinBitrate, r.floor, r.bitrate-r.bitrate/4) }
+
+// floorBitrate is the lowest bitrate of a desktop of width by height under
+// the cap: floorPerPixel for each pixel, at least MinBitrate. Under it the
+// letters that change while the screen moves cannot be read (measured at
+// 2 Mbit/s and 1920x1080, docs/PERFORMANCE.md), and a client is better
+// served by fewer frames.
+func floorBitrate(width, height, cap int) int {
+	return min(cap, max(MinBitrate, floorPerPixel*width*height))
+}
+
+// startBitrate is the bitrate a session of width by height starts with
+// under the cap: startPerPixel for each pixel, at least StartBitrate.
+func startBitrate(width, height, cap int) int {
+	return min(cap, max(StartBitrate, startPerPixel*width*height))
+}
 
 // update returns the bitrate after a period that saw p; clientPace says
 // it found that the last fall did not help, so the client sets the pace

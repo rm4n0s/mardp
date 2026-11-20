@@ -30,9 +30,24 @@ void mardpEncForceKey(mardpEnc *e);
 void mardpEncSetSkip(mardpEnc *e, int skip);
 
 // mardpEncSubmit encodes pb at pts unless the encoder skips: it returns
-// the OSStatus of VideoToolbox, or 1 when the frame was skipped. It may be
-// called from any thread until mardpEncClose.
+// the OSStatus of VideoToolbox, or 1 when the frame was skipped. It keeps
+// pb, encoded or skipped, as the newest picture, until the next one. It
+// may be called from any thread until mardpEncClose.
 long mardpEncSubmit(mardpEnc *e, CVPixelBufferRef pb, CMTime pts);
+
+// mardpEncRepeat encodes the newest picture handed to mardpEncSubmit
+// again, encoded or skipped, stamped with the host clock: a still picture
+// encoded again gets sharper, since the encoder spends the frame on what
+// the last one left coarse. It returns the OSStatus of VideoToolbox, 1
+// when the encoder skips, and 2 when no picture was handed over yet.
+long mardpEncRepeat(mardpEnc *e);
+
+// mardpEncCaptured counts the pictures handed to mardpEncSubmit.
+unsigned mardpEncCaptured(mardpEnc *e);
+
+// mardpEncStale says the newest picture handed over was skipped, so what
+// the client shows is older than the screen.
+int mardpEncStale(mardpEnc *e);
 
 // mardpEncPool is the session's pool of pixel buffers, NV12 of its size.
 CVPixelBufferPoolRef mardpEncPool(mardpEnc *e);
@@ -43,6 +58,17 @@ CVPixelBufferPoolRef mardpEncPool(mardpEnc *e);
 // stamps its frames. It returns what mardpEncSubmit returns, or -1 when
 // the pool gave no buffer.
 long mardpEncSubmitPattern(mardpEnc *e, uint32_t n);
+
+// mardpEncSubmitText submits page of the text pattern as
+// mardpEncSubmitPattern submits a picture: lines of text as a desktop
+// shows them, each page differing from the others in a few letters of
+// every line.
+long mardpEncSubmitText(mardpEnc *e, uint32_t page);
+
+// mardpTextPage writes page of the text pattern, width by height, into
+// out as RGBA, 8 bits each, the first row on top: what mardpEncSubmitText
+// gives the encoder. It returns 0, or -1 when it could not be drawn.
+int mardpTextPage(int width, int height, uint32_t page, uint8_t *out);
 
 // mardpHostNanos is the host clock, CMClockGetHostTimeClock, in
 // nanoseconds: the clock of ScreenCaptureKit's presentation times.

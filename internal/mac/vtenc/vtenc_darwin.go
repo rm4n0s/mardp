@@ -4,12 +4,13 @@ package vtenc
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework Foundation -framework CoreMedia -framework CoreVideo -framework VideoToolbox
+#cgo LDFLAGS: -framework Foundation -framework CoreGraphics -framework CoreMedia -framework CoreText -framework CoreVideo -framework VideoToolbox
 #include "vtenc_darwin.h"
 */
 import "C"
 
 import (
+	"image"
 	"runtime/cgo"
 	"time"
 	"unsafe"
@@ -57,6 +58,12 @@ func (s *vtSession) forceKeyFrame() { C.mardpEncForceKey(s.enc) }
 
 func (s *vtSession) setSkip(skip bool) { C.mardpEncSetSkip(s.enc, cBool(skip)) }
 
+func (s *vtSession) repeat() int { return int(C.mardpEncRepeat(s.enc)) }
+
+func (s *vtSession) captured() uint32 { return uint32(C.mardpEncCaptured(s.enc)) }
+
+func (s *vtSession) stale() bool { return C.mardpEncStale(s.enc) != 0 }
+
 func (s *vtSession) submitter() (fn, arg unsafe.Pointer) {
 	return C.mardpEncSubmit, unsafe.Pointer(s.enc)
 }
@@ -69,6 +76,28 @@ func (e *Encoder) SubmitPattern(n uint32) int {
 	return int(C.mardpEncSubmitPattern(e.s.(*vtSession).enc, C.uint32_t(n)))
 }
 
+// SubmitText encodes page of the text pattern, as SubmitPattern encodes a
+// picture: lines of text as a desktop shows them, each page differing from
+// the others in a few letters of every line (`mardp -test-pattern -text`,
+// SPEC §15.5).
+func (e *Encoder) SubmitText(page uint32) int {
+	return int(C.mardpEncSubmitText(e.s.(*vtSession).enc, C.uint32_t(page)))
+}
+
+// TextPage is page of the text pattern, width by height: what SubmitText
+// gives the encoder, for comparing with what a client decodes. It is nil
+// when the page cannot be drawn.
+func TextPage(width, height int, page uint32) *image.RGBA {
+	if width <= 0 || height <= 0 {
+		return nil
+	}
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	if C.mardpTextPage(C.int(width), C.int(height), C.uint32_t(page), (*C.uint8_t)(unsafe.Pointer(&img.Pix[0]))) != 0 {
+		return nil
+	}
+	return img
+}
+
 func (s *vtSession) close() {
 	C.mardpEncClose(s.enc)
 	// No output can reach Go any more.
@@ -76,10 +105,10 @@ func (s *vtSession) close() {
 }
 
 //export mardpEncOutput
-func mardpEncOutput(h C.uintptr_t, status C.int, dropped C.int, key C.int, sets **C.uint8_t, setLens *C.size_t, nsets C.int,
+func mardpEncOutput(h C.uintptr_t, status C.int, dropped C.int, key C.int, repeat C.int, sets **C.uint8_t, setLens *C.size_t, nsets C.int,
 	nalLen C.int, data *C.uint8_t, n C.size_t, pts C.int64_t, age C.int64_t) {
 	e := cgo.Handle(h).Value().(*Encoder)
-	o := output{status: int(status), dropped: dropped != 0, key: key != 0, nalLen: int(nalLen), pts: time.Duration(pts), age: time.Duration(age)}
+	o := output{status: int(status), dropped: dropped != 0, key: key != 0, repeat: repeat != 0, nalLen: int(nalLen), pts: time.Duration(pts), age: time.Duration(age)}
 	var buf [4][]byte
 	if nsets > 0 {
 		ps := unsafe.Slice(sets, int(nsets))

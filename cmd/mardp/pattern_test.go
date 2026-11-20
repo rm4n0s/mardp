@@ -18,22 +18,23 @@ import (
 // session's timing when it ends.
 func TestServePattern(t *testing.T) {
 	for _, tt := range []struct {
-		name   string
-		args   []string
-		log    string
-		stills int
+		name          string
+		args          []string
+		log           string
+		stills, texts int
 	}{
-		{"moving", []string{"-headless", "-test-pattern", "-measure"}, "serving a test pattern and a tone", 0},
-		{"still", []string{"-headless", "-test-pattern", "-still", "-measure"}, "serving a still test pattern and no sound", 1},
+		{"moving", []string{"-headless", "-test-pattern", "-measure"}, "serving a test pattern and a tone", 0, 0},
+		{"still", []string{"-headless", "-test-pattern", "-still", "-measure"}, "serving a still test pattern and no sound", 1, 0},
+		{"text", []string{"-headless", "-test-pattern", "-text", "-measure"}, "serving pages of text and a tone", 0, 1},
 	} {
-		t.Run(tt.name, func(t *testing.T) { servePattern(t, tt.args, tt.log, tt.stills) })
+		t.Run(tt.name, func(t *testing.T) { servePattern(t, tt.args, tt.log, tt.stills, tt.texts) })
 	}
 }
 
 // servePattern runs mardp with args, a session of 10 H.264 frames, and
 // checks the log has want, and the machine made the pattern once, still
-// stills times, and never the screen's parts.
-func servePattern(t *testing.T, args []string, want string, stills int) {
+// stills times and as text texts times, and never the screen's parts.
+func servePattern(t *testing.T, args []string, want string, stills, texts int) {
 	h := newHome(t, func(s *config.Settings) { s.Sound = config.SoundOff })
 	m := newFakeMac() // nothing granted
 	r := start(t, h, m, args...)
@@ -83,8 +84,8 @@ func servePattern(t *testing.T, args []string, want string, stills int) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.patterns != 1 || m.stills != stills || len(m.posts) != 0 {
-		t.Errorf("the pattern made %d times, %d still, the screen's parts %d times", m.patterns, m.stills, len(m.posts))
+	if m.patterns != 1 || m.stills != stills || m.texts != texts || len(m.posts) != 0 {
+		t.Errorf("the pattern made %d times, %d still, %d text, the screen's parts %d times", m.patterns, m.stills, m.texts, len(m.posts))
 	}
 }
 

@@ -36,6 +36,10 @@ func TestRateControl(t *testing.T) {
 		{"a frame lost to a full queue: a quarter less, every time", 8_000_000,
 			[]step{{seen{sent: 60, lost: true}, 6_000_000, false}, {seen{sent: 60, lost: true}, 4_500_000, false}}},
 		{"never below the floor", 1_200_000, []step{{seen{sent: 60, lost: true}, MinBitrate, false}}},
+		{"at the floor a fall changes nothing, and the client's pace is found all the same", MinBitrate, []step{
+			{slow, MinBitrate, false},
+			{slow, MinBitrate, true},
+		}},
 		{"held back: a quarter less, as a trial", 8_000_000, []step{{slow, 6_000_000, false}}},
 		{"the network: the fall brings the frames back and stays", 8_000_000, []step{
 			{slower, 6_000_000, false},
@@ -136,6 +140,39 @@ func TestRateControlHold(t *testing.T) {
 	}
 	if got := trial(); got != 10 {
 		t.Errorf("the next: after %d periods, want 10", got)
+	}
+}
+
+func TestBitrateBounds(t *testing.T) {
+	for _, tt := range []struct {
+		name               string
+		width, height, cap int
+		start, floor       int
+	}{
+		{"1280x720", 1280, 720, DefaultMaxBitrate, StartBitrate, 1_843_200},
+		{"1920x1080", 1920, 1080, DefaultMaxBitrate, 8_294_400, 4_147_200},
+		{"3840x2160: the cap", 3840, 2160, DefaultMaxBitrate, DefaultMaxBitrate, 16_588_800},
+		{"3840x2160 under a high cap", 3840, 2160, 100_000_000, 33_177_600, 16_588_800},
+		{"small: the constants", 640, 360, DefaultMaxBitrate, StartBitrate, MinBitrate},
+		{"a cap under both", 1920, 1080, 2_000_000, 2_000_000, 2_000_000},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := startBitrate(tt.width, tt.height, tt.cap); got != tt.start {
+				t.Errorf("startBitrate = %d, want %d", got, tt.start)
+			}
+			if got := floorBitrate(tt.width, tt.height, tt.cap); got != tt.floor {
+				t.Errorf("floorBitrate = %d, want %d", got, tt.floor)
+			}
+			// A lost frame costs a quarter, down to the floor and no
+			// further.
+			r := rateControl{bitrate: tt.start, max: tt.cap, floor: tt.floor}
+			for range 20 {
+				r.update(seen{sent: 60, lost: true})
+			}
+			if r.bitrate != tt.floor {
+				t.Errorf("the bitrate fell to %d, want the floor %d", r.bitrate, tt.floor)
+			}
+		})
 	}
 }
 

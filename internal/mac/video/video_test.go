@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 	"unsafe"
@@ -24,7 +25,13 @@ type fakeEncoder struct {
 	closed   int
 	forced   int
 	pictures []uint32
+	pages    []uint32 // SubmitText calls
 	statuses []int
+}
+
+func (e *fakeEncoder) SubmitText(n uint32) int {
+	e.pages = append(e.pages, n)
+	return 0
 }
 
 func (e *fakeEncoder) SubmitPattern(n uint32) int {
@@ -265,5 +272,35 @@ func assertRoute(t *testing.T, err error, route string) {
 	}
 	if !appErr.HasRoute(route) {
 		t.Errorf("route %s, want %s", appErr.Route(), route)
+	}
+}
+
+// TestTextPattern: as text, the pattern submits a page at every tick of a
+// second, then nothing for four, and so on, and never the moving pattern.
+func TestTextPattern(t *testing.T) {
+	enc := &fakeEncoder{}
+	ticks := make(chan time.Time)
+	s := NewPattern(Options{Text: true})
+	s.newEncoder = func(o vtenc.Options, frame func(*vtenc.Frame)) (encoder, error) {
+		enc.opts, enc.frame = o, frame
+		return enc, nil
+	}
+	s.tick = func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- s.CaptureVideo(ctx, host.VideoConfig{Width: 1920, Height: 1080, MaxFPS: 2, Bitrate: 8e6},
+			func(host.VideoEncoder) {}, func(*host.EncodedFrame) {})
+	}()
+	// Two frames a second: a cycle is ten ticks, pages at its first two.
+	for range 23 {
+		ticks <- time.Now()
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if want := []uint32{0, 1, 10, 11, 20, 21}; !slices.Equal(enc.pages, want) || len(enc.pictures) != 0 {
+		t.Errorf("pages %v, want %v; %d pictures of the moving pattern", enc.pages, want, len(enc.pictures))
 	}
 }
