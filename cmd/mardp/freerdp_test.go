@@ -290,3 +290,123 @@ func freeRDPHeadless(t *testing.T, addr, args, path string) {
 		t.Error("mardp's log has the password")
 	}
 }
+
+// motionDir is the guest's folder of TestFreeRDPMotion.
+const motionDir = "/tmp/mardp-motion"
+
+// motionScript runs xfreerdp in the guest on the H.264 path against addr
+// and records its display for seconds, ten pictures a second, as PNG
+// files f/NNN.png and as a video; it prints "window W" and xfreerdp's exit
+// status.
+func motionScript(addr string, port, seconds int) string {
+	return fmt.Sprintf(`set -u
+D=%s; rm -rf "$D"; mkdir -p "$D/f"; cd "$D"; export HOME="$D"
+Xvfb :98 -screen 0 1280x800x24 -nolisten tcp >xvfb.log 2>&1 & X=$!
+export DISPLAY=:98
+i=0; while ! xdotool getdisplaygeometry >/dev/null 2>&1; do i=$((i+1)); [ $i -gt 100 ] && break; sleep 0.1; done
+timeout 120 xfreerdp /v:%s:%d '/u:%s' '/p:%s' /cert:ignore /size:1280x800 /bpp:32 /gfx:AVC420 /log-level:INFO >freerdp.log 2>&1 & F=$!
+W=$(timeout 30 xdotool search --sync --onlyvisible --class freerdp | head -n 1)
+echo "window $W"
+if [ -n "$W" ]; then
+	xdotool windowmove "$W" 0 0 2>/dev/null
+	ffmpeg -loglevel error -f x11grab -framerate 10 -video_size 1280x800 -i :98 -t %d f/%%03d.png
+	ffmpeg -loglevel error -y -framerate 10 -i f/%%03d.png -c:v libopenh264 -b:v 6M -pix_fmt yuv420p motion.mp4 2>mp4.log ||
+		ffmpeg -loglevel error -y -framerate 10 -i f/%%03d.png -c:v libvpx-vp9 -b:v 4M motion.webm 2>webm.log
+	ls f | wc -l
+	ls -la motion.* 2>/dev/null
+fi
+kill $F 2>/dev/null
+wait $F; echo "exit $?"
+kill $X 2>/dev/null; wait 2>/dev/null
+true
+`, motionDir, addr, port, testUser, testPassword, seconds)
+}
+
+// TestFreeRDPMotion is the picture proof with a real client (SPEC §15.3):
+// mardp -headless serves the Mac's real screen over H.264, FreeRDP in the
+// test machine shows it, a window of text moves around on the Mac for 8
+// seconds and then stays still, and the client's display is recorded all
+// the while, ten pictures a second. The pictures and a video go to
+// $MARDP_FREERDP_LOGS; the test only checks that they were made. They are
+// to be looked at.
+func TestFreeRDPMotion(t *testing.T) {
+	addr := requireVM(t)
+	dir := logDir(t)
+	l, err := net.Listen("tcp", net.JoinHostPort(addr, "0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	h := newHome(t, func(s *config.Settings) { s.Address, s.Port, s.Sound = addr, port, config.SoundOff })
+	logPath := startApp(t, h.dir, dir)
+
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	mover := filepath.Join(t.TempDir(), "mover")
+	command(t, ctx, "swiftc", "-O", "-o", mover, filepath.Join(root, "scripts", "mover.swift"))
+
+	const moving, still, record = 8, 8, 22
+	// The window starts to move once the session is on the H.264 path
+	// and the recording has begun.
+	moved := make(chan error, 1)
+	go func() {
+		for {
+			b, _ := os.ReadFile(logPath) // read again until the line is there
+			if bytes.Contains(b, []byte("path=avc420")) {
+				break
+			}
+			if ctx.Err() != nil {
+				moved <- ctx.Err()
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		time.Sleep(4 * time.Second)
+		moved <- exec.CommandContext(ctx, mover, strconv.Itoa(moving), strconv.Itoa(still)).Run()
+	}()
+	out, err := vm(ctx, "sh", motionScript(addr, port, record))
+	t.Logf("the guest:\n%s", out)
+	if err != nil {
+		t.Fatalf("the guest's script: %v", err)
+	}
+	if merr := <-moved; merr != nil {
+		t.Errorf("the window that moves: %v", merr)
+	}
+	// One picture a second, and those around the stop; the rest stay in
+	// the guest until the next run.
+	pulled := 0
+	for i := 1; i <= record*10; i++ {
+		if i%10 != 5 && (i < 100 || i > 150 || i%2 != 0) {
+			continue
+		}
+		name := fmt.Sprintf("%03d.png", i)
+		if _, perr := vm(ctx, "pull", motionDir+"/f/"+name, filepath.Join(dir, name)); perr == nil {
+			pulled++
+		}
+	}
+	for _, f := range []string{"freerdp.log", "motion.mp4", "motion.webm"} {
+		if _, perr := vm(ctx, "pull", motionDir+"/"+f, filepath.Join(dir, f)); perr != nil {
+			t.Logf("pulling %s: %v", f, perr)
+		}
+	}
+	b, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for l := range bytes.Lines(b) {
+		if bytes.Contains(l, []byte("sets the pace")) || bytes.Contains(l, []byte("H.264 encoder")) || bytes.Contains(l, []byte("session closed")) {
+			t.Logf("mardp: %s", bytes.TrimSpace(l))
+		}
+	}
+	t.Logf("%d pictures in %s", pulled, dir)
+	if pulled < record {
+		t.Errorf("%d pictures of the client's display, want at least %d", pulled, record)
+	}
+}

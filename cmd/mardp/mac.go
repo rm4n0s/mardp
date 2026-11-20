@@ -98,9 +98,9 @@ func (mac) window(ctx context.Context, b ui.Backend, log *slog.Logger) error {
 		cancel()
 	})
 	defer stop()
-	// Glutter: a quit (the app menu's Quit, Command+Q, the Dock's Quit)
-	// reaches the app as a close request too, and the window hid; mardp
-	// takes the quit itself. Glutter should say what asked the app to exit
+	// Glutter: a quit (the app menu's Quit, Command+Q, the Dock's Quit, a
+	// quit Apple Event) reaches the app as a close request too, and the
+	// window hid; mardp answers macOS's question itself. Glutter should say what asked the app to exit
 	// (docs/GLUTTER-ISSUES.md).
 	stopQuit := system.WatchQuit(func() {
 		log.Info("Quit chosen: quitting")

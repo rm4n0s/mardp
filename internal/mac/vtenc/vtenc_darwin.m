@@ -303,6 +303,11 @@ mardpEncCreated mardpEncCreate(uintptr_t handle, int width, int height, int full
 			{kVTCompressionPropertyKey_AverageBitRate, (__bridge CFTypeRef)@(bitrate), "AverageBitRate"},
 			{kVTCompressionPropertyKey_ExpectedFrameRate, (__bridge CFTypeRef)@(fps), "ExpectedFrameRate"},
 			{kVTCompressionPropertyKey_MaxKeyFrameInterval, (__bridge CFTypeRef)@(INT32_MAX), "MaxKeyFrameInterval"},
+			// One reference frame: each frame is predicted from the one
+			// before it alone. Low-latency rate control otherwise uses up
+			// to 5, and FreeRDP's decoder (OpenH264 2.6.0) then shows
+			// garbage wherever the picture moves (SPEC §9.3).
+			{kVTCompressionPropertyKey_ReferenceBufferCount, (__bridge CFTypeRef)@(1), "ReferenceBufferCount"},
 			{kVTCompressionPropertyKey_ColorPrimaries, kCVImageBufferColorPrimaries_ITU_R_709_2, "ColorPrimaries"},
 			{kVTCompressionPropertyKey_TransferFunction, kCVImageBufferTransferFunction_ITU_R_709_2, "TransferFunction"},
 			{kVTCompressionPropertyKey_YCbCrMatrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2, "YCbCrMatrix"},

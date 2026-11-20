@@ -14,15 +14,18 @@ import (
 	"sync"
 )
 
-// WatchQuit calls fn, on the thread that asks, when the app is told to
-// quit: the app menu's Quit, Command+Q, the Dock's Quit, or a logout
-// (-[NSApplication terminate:]), until stop is called. The request does
-// not go on to the app's delegate: mardp ends itself.
+// WatchQuit calls fn, on the main thread, when macOS asks the app whether
+// it may quit: the app menu's Quit, Command+Q, the Dock's Quit, a quit
+// Apple Event, or a logout (applicationShouldTerminate:), until stop is
+// called. macOS is told "not now": mardp stops its server and ends by
+// itself. It takes the place of the answer of the application's delegate,
+// which it looks for once the app runs.
 //
-// Glutter: Glutter passes a quit on as a request to close the windows,
-// which it cannot tell from the close button, and mardp hides its window
-// on a close (SPEC §7.3); so Quit hid the window and the app went on.
-// Glutter should say what asked the app to exit (docs/GLUTTER-ISSUES.md).
+// Glutter: Glutter's delegate passes the question on as a request to close
+// the windows, which it cannot tell from the close button, and mardp hides
+// its window on a close (SPEC §7.3); so Quit hid the window and the app
+// went on. Glutter should say what asked the app to exit
+// (docs/GLUTTER-ISSUES.md).
 //
 // Only one watcher counts at a time: the last.
 func WatchQuit(fn func()) (stop func()) {
@@ -41,6 +44,10 @@ func WatchQuit(fn func()) (stop func()) {
 func mardpQuit(h C.uintptr_t) {
 	cgo.Handle(h).Value().(func())()
 }
+
+// testDelegate gives the application a delegate that lets it quit at
+// once, as an app's own would, for the tests.
+func testDelegate() { C.mardpQuitTestDelegate() }
 
 // sendTerminate tells the app to quit, as its menu's Quit does, for the
 // tests; only while a watcher watches.

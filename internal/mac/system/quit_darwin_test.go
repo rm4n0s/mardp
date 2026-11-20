@@ -8,8 +8,10 @@ import (
 )
 
 // TestWatchQuit: fn is called when the app is told to quit, each time, and
-// the process goes on: mardp ends itself.
+// the process goes on, although its delegate would let it quit at once:
+// mardp ends itself.
 func TestWatchQuit(t *testing.T) {
+	testDelegate()
 	var calls atomic.Int32
 	stop := WatchQuit(func() { calls.Add(1) })
 	defer stop()

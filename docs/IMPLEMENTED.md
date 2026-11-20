@@ -932,3 +932,20 @@ The owner, with 1.0.1 and Remmina: "I have the same problem as before ... with t
   - Quit with a real click or key press: the owner's check.
   - The scrollbar: not changed. It is not clear which scrollbar; asked in docs/MANUAL-CHECKS.md.
 - **New in docs/GLUTTER-ISSUES.md:** the entry on Cmd+Q now says mardp takes the quit itself.
+
+## 1.0.3 Garbage where the picture moves: the real client (2026-11-20)
+
+The owner, with 1.0.2: "the quit doesn't close the application, I still see it in the dock. I told you to take pictures or a video of your rdp client and moving a window around inside the vm to prove the problem, where is that ? Because the problem persists!"
+
+- **Cause of the picture, found with the real client:** VideoToolbox's low-latency rate control predicts each frame from up to five earlier ones (`max_num_ref_frames` 5). FreeRDP's decoder, OpenH264 2.6.0, decodes that wrongly in the Constrained High profile once the picture moves: garbage in the moving window, and ghosts of it that stay. VideoToolbox's own decoder shows the same stream right, so the proofs of 1.0.2, made with it, passed. The tests against FreeRDP of M3 showed colour bars that do not move.
+- **Cause of Quit:** 1.0.2 replaced `-[NSApplication terminate:]`. The Dock's Quit (a quit Apple Event) does not go through it: AppKit asks the delegate directly, Glutter's delegate says no, and the app goes on. Reproduced by sending the event to a test copy of the app by its process id: "User cancelled", and the app stayed.
+- **Built:**
+  - `internal/mac/vtenc`: one reference frame (`kVTCompressionPropertyKey_ReferenceBufferCount` 1); the stream test asserts `max_num_ref_frames` 1.
+  - `cmd/mardp` `TestFreeRDPMotion` (`mardp_freerdp`) and `scripts/mover.swift`: the Mac's real screen, a window of text that moves and stops, FreeRDP in the test machine, its display recorded as pictures and a video.
+  - `internal/mac/system` `WatchQuit`: answers `applicationShouldTerminate:` in the place of the application delegate's own answer (found once the app runs), so every way to quit ends the app.
+  - SPEC §9.3, §12.3, §15.3; docs/PERFORMANCE.md (the window, cropped, before and after); docs/GLUTTER-ISSUES.md.
+- **Proved, by looking at the real client's pictures:**
+  - 1.0.2: the window garbage while it moves, ghosts after it stopped. The same with one reference frame: clean while it moves and after. Also recorded: no low-latency rate control (clean), Constrained Baseline (clean). The final code recorded once more: clean. The owner has the full pictures and both videos.
+  - With the real VideoToolbox the SPS says one reference frame, and the sharpening and the decoder tests pass as before.
+  - Quit: a quit Apple Event sent to a test copy of the fixed app by its process id logged "Quit chosen: quitting" and the app ended within a second; before the fix it stayed.
+- **Not proved:** Remmina on the owner's Linux machine (it uses the same FreeRDP and OpenH264 as the test machine's client, but it is not the same program); Quit with a real click. The scrollbar is still an open question (docs/MANUAL-CHECKS.md).

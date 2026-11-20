@@ -209,3 +209,38 @@ Notes:
 - The slow client's still picture is the page the screen stopped on (47.6 dB against it): the newest picture reaches it although the frames before it were skipped.
 - The bitrate no longer falls under 2 bits a second for each pixel (4.1 Mbit/s at 1920×1080), unless the cap of the settings is lower, as in the third row.
 - These pictures are decoded on this Mac. What Remmina shows on the owner's Linux machine is the owner's check (docs/MANUAL-CHECKS.md, 1.0.2).
+
+## What the real client shows when a window moves (1.0.3, 2026-11-20)
+
+The owner, with 1.0.2: "the problem persists", and: "take pictures or a video of your rdp client and moving a window around inside the vm". Everything above was decoded on the Mac, by VideoToolbox. The fault was in what OpenH264, FreeRDP's decoder, makes of the stream.
+
+```sh
+scripts/vm.sh start
+MARDP_FREERDP_LOGS=$PWD/build/freerdp go test -tags mardp_freerdp ./cmd/mardp -run 'TestFreeRDPMotion$' -count=1 -v
+scripts/vm.sh stop
+```
+
+mardp serves the Mac's real screen; FreeRDP 3.33.1 with OpenH264 2.6.0 in the test machine shows it at 1280×720 on the H.264 path; a window of text moves around on the Mac for 8 seconds and then stays still; `ffmpeg` records the client's display, ten pictures a second.
+
+What the client showed of the window while it moved, with 1.0.2 and with 1.0.3:
+
+![1.0.2: the window while it moves](pictures/1.0.3/freerdp-before-window-moving.png)
+
+![1.0.3: the window while it moves](pictures/1.0.3/freerdp-after-window-moving.png)
+
+With 1.0.2 the rest of the screen kept ghosts of the window where it had passed, for as long as the session went on.
+
+Which setting of the encoder it was, each recorded and looked at:
+
+| The encoder | `max_num_ref_frames` | The real client |
+|---|---|---|
+| Low-latency rate control, Constrained High (1.0.0 to 1.0.2) | 5 | garbage where the picture moves, ghosts after |
+| No low-latency rate control, Constrained High | 1 | clean |
+| Low-latency rate control, Constrained Baseline | 5 | clean |
+| Low-latency rate control, Constrained High, one reference frame (1.0.3) | 1 | clean |
+
+Notes:
+
+- VideoToolbox's low-latency rate control predicts a frame from up to five earlier ones. OpenH264 decodes that wrongly in the Constrained High profile once the picture moves. 1.0.3 asks the encoder for one reference frame; the rest of the encoder stays as measured.
+- The proofs of 1.0.1 and 1.0.2 (the bitrate that stays for a slow client, the sharpening of a still picture) are real and stay; they were not what the owner saw.
+- The full pictures and the videos show the owner's desktop, so they are not in the repository: the test writes them to `$MARDP_FREERDP_LOGS`.

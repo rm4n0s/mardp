@@ -179,6 +179,11 @@ func TestMacStream(t *testing.T) {
 			if !s.restriction || s.maxReorder != 0 {
 				t.Errorf("bitstream_restriction %v, max_num_reorder_frames %d; want 0", s.restriction, s.maxReorder)
 			}
+			// One reference frame: with more, FreeRDP's OpenH264 shows
+			// garbage where the picture moves (SPEC §9.3).
+			if s.refFrames != 1 {
+				t.Errorf("max_num_ref_frames %d, want 1", s.refFrames)
+			}
 			if !s.signal || s.fullRange != tt.opts.FullRange || s.primaries != 1 || s.transfer != 1 || s.matrix != 1 {
 				t.Errorf("video signal %v, full range %v, primaries %d, transfer %d, matrix %d; want BT.709 and full range %v",
 					s.signal, s.fullRange, s.primaries, s.transfer, s.matrix, tt.opts.FullRange)

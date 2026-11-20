@@ -120,6 +120,7 @@ type sps struct {
 	primaries, transfer, matrix uint8
 	restriction                 bool // bitstream_restriction_flag
 	maxReorder, maxDecBuffering uint32
+	refFrames                   uint32 // max_num_ref_frames
 }
 
 // parseSPS reads a sequence parameter set NAL unit.
@@ -177,7 +178,7 @@ func parseSPS(t *testing.T, nal []byte) sps {
 			r.se()
 		}
 	}
-	r.ue() // max_num_ref_frames
+	s.refFrames = r.ue() // max_num_ref_frames
 	r.u(1)
 	s.widthMBs = r.ue() + 1
 	s.heightMBs = r.ue() + 1
@@ -343,11 +344,11 @@ func TestParseSPS(t *testing.T) {
 		hrd     bool
 		want    sps
 	}{
-		{"constrained high", 100, false, 2, false, sps{profile: 100, constraints: 0x0c, level: 42, widthMBs: 120, heightMBs: 68,
+		{"constrained high", 100, false, 2, false, sps{refFrames: 1, profile: 100, constraints: 0x0c, level: 42, widthMBs: 120, heightMBs: 68,
 			signal: true, fullRange: true, primaries: 1, transfer: 1, matrix: 1, restriction: true, maxReorder: 0, maxDecBuffering: 1}},
-		{"high with scaling lists and HRD", 100, true, 0, true, sps{profile: 100, level: 40, widthMBs: 80, heightMBs: 45,
+		{"high with scaling lists and HRD", 100, true, 0, true, sps{refFrames: 1, profile: 100, level: 40, widthMBs: 80, heightMBs: 45,
 			signal: true, primaries: 1, transfer: 1, matrix: 1, restriction: true, maxReorder: 2, maxDecBuffering: 4}},
-		{"baseline, poc type 1, no restriction", 66, false, 1, false, sps{profile: 66, constraints: 0xc0, level: 31,
+		{"baseline, poc type 1, no restriction", 66, false, 1, false, sps{refFrames: 1, profile: 66, constraints: 0xc0, level: 31,
 			widthMBs: 40, heightMBs: 30}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

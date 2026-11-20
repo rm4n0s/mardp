@@ -415,9 +415,9 @@ The numbers of §14 that only your two machines can give. It takes about 25 minu
 
 Tell me (or paste): the time to the first picture (step 3), the last lines of step 8, `/tmp/mardp-top.txt` and `/tmp/mardp-top-idle.txt`, the 5 differences of step 5, what step 6 showed, and any dropout or stutter. With them I tune the constants of §9.5 and record every row of §14 in `docs/PERFORMANCE.md`.
 
-## 1.0.2 Text and motion with Remmina (SPEC §9.3, §9.5)
+## 1.0.3 Text and motion with Remmina (SPEC §9.3, §9.5)
 
-With 1.0.0 and 1.0.1 the letters could not be read after something moved. 1.0.2 sharpens the picture once the screen stops, always sends the newest picture, and keeps the bitrate over a floor. What it looks like on this Mac's own decoder is in docs/PERFORMANCE.md; what Remmina shows is yours to check:
+Until 1.0.3 the picture turned to garbage where something moved, and kept ghosts: FreeRDP's decoder could not follow the encoder's five reference frames. 1.0.3 uses one. What FreeRDP shows in the test machine is in docs/PERFORMANCE.md; what Remmina shows on your machine is yours to check:
 
 1. Quit mardp, install the new version and start it with a log:
 
@@ -440,9 +440,9 @@ grep -E 'sets the pace|H.264 encoder|video path|bitrate' /tmp/mardp.log | tail -
 
 A photo or a screenshot of Remmina's window when it looks wrong settles more than anything else.
 
-## 1.0.2 Quit (SPEC §7.3)
+## 1.0.3 Quit (SPEC §7.3)
 
-With mardp's window in front: press Command+Q, or choose Quit mardp from the mardp menu at the top of the screen. Expected: the app quits (its menu-bar icon goes). Tell me if it does not, and which Quit you used.
+Each of these should quit the app, so that its icon leaves the Dock and the menu bar: Quit in the Dock icon's menu (right-click), Command+Q with mardp's window in front, Quit mardp in the mardp menu at the top of the screen, Quit in the menu-bar icon's menu. Tell me which, if any, does not.
 
 ## 1.0.2 The scrollbar
 
