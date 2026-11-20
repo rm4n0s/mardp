@@ -949,3 +949,18 @@ The owner, with 1.0.2: "the quit doesn't close the application, I still see it i
   - With the real VideoToolbox the SPS says one reference frame, and the sharpening and the decoder tests pass as before.
   - Quit: a quit Apple Event sent to a test copy of the fixed app by its process id logged "Quit chosen: quitting" and the app ended within a second; before the fix it stayed.
 - **Not proved:** Remmina on the owner's Linux machine (it uses the same FreeRDP and OpenH264 as the test machine's client, but it is not the same program); Quit with a real click. The scrollbar is still an open question (docs/MANUAL-CHECKS.md).
+
+## 1.0.4 The pointer that disappears after typing (2026-11-20)
+
+The owner, with 1.0.3: "it works, but I lose the mouse pointer, it disappears some times", and when asked: "after typing".
+
+- **Cause:** macOS hides its pointer while keys are typed, and mardp sends a hidden pointer to the client as "hidden" (SPEC §10.3). The client's pointer came back only when macOS said its own was shown again, and macOS goes on saying hidden while the client's mouse already moves it: watched on this Mac through mardp's own reader, 50 reads a second, the pointer hid, and was still reported hidden 0.37 s and 13 positions after it began to move. Until then the user moved a pointer they could not see.
+- **Built:**
+  - `internal/host` `pointerPoll.shown`: once the Mac hides its pointer, the client's first mouse event after that shows the client's pointer again, until the Mac has shown its own and hidden it again. `pointerPoll.keep` keeps a copy of the last shape read with its picture, for a hidden pointer that comes without one.
+  - `internal/mac/input`: the pointer's image is read whether macOS shows the pointer or not; a hidden pointer whose image cannot be read is no error, it comes without one.
+  - `rdp` `TestFreeRDPPointer` (`mardp_freerdp`): the real client gets a shape, "hidden", the same shape (its cache index), "hidden", a new shape; its display around the mouse is recorded with the X pointer drawn in.
+  - SPEC §10.3.
+- **Proved:**
+  - The host's rule, step by step (`TestPointerPollHidden`), and a whole session with the library's test client (`TestSession`, "the client's mouse moves a hidden pointer"): hidden, the client's mouse moves, the pointer shows again from the client's cache.
+  - The real client shows a pointer again after "hidden", from its cache and new: FreeRDP in the test machine, `docs/pictures/1.0.4/freerdp-pointer-after-hidden.png` (110 pictures, 5 a second, row by row: the client's own pointer, magenta, hidden, magenta, hidden, green). So the fault was not the client's.
+- **Not proved:** that macOS gives the image of a pointer it hides (it could not be hidden here without typing on the owner's desktop, which no test does; a helper in the background that asks macOS to hide the pointer is ignored): if it does not, the last shape shows. The owner's own typing in Remmina: pending, see docs/MANUAL-CHECKS.md.

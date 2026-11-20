@@ -122,9 +122,8 @@ mardpPtrInfo mardpPtrRead(const char *uuid, uint8_t *buf, int cap) {
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 	r.visible = CGCursorIsVisible() ? 1 : 0;
 #pragma clang diagnostic pop
-	if (!r.visible) {
-		return r;
-	}
+	// The image is read when the pointer is hidden too: the host shows it
+	// to a client whose mouse moves while macOS still says hidden.
 	@autoreleasepool {
 		NSCursor *c = [NSCursor currentSystemCursor];
 		NSImage *img = c.image;

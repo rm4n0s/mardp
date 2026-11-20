@@ -36,10 +36,13 @@ func TestMacPointer(t *testing.T) {
 	if !sh.OnDisplay {
 		t.Error("the pointer is not on the main display")
 	}
-	if !sh.Visible {
-		t.Skip("the pointer is hidden: no image to check")
-	}
 	img := sh.Image
+	if img == nil {
+		if sh.Visible {
+			t.Fatal("a shown pointer without an image")
+		}
+		t.Skip("the pointer is hidden and macOS gave no image of it")
+	}
 	opaque := 0
 	for y := range img.Height {
 		for x := range img.Width {

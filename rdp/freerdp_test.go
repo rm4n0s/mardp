@@ -385,3 +385,159 @@ func TestServe(t *testing.T) {
 	time.Sleep(d)
 	fmt.Println(ts.log.text(t))
 }
+
+// The pointer test: where the guest puts its mouse, how many pictures of
+// the client's display it records and how many a second, and the piece of
+// each kept around the mouse.
+const (
+	pointerAt     = 300
+	pointerFrames = 110
+	pointerRate   = 5
+	pointerCrop   = 64
+	pointerMargin = 16
+	pointerCols   = 11
+)
+
+// pointerScript runs xfreerdp in the guest with the mouse over its window
+// and records the display around the mouse, the X pointer drawn in, into
+// one picture: sheet.png, the recorded pieces row by row.
+func pointerScript(host string, port int) string {
+	return fmt.Sprintf(`set -u
+D=%s; rm -rf "$D"; mkdir -p "$D/f"; cd "$D"; export HOME="$D"
+Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >xvfb.log 2>&1 & X=$!
+export DISPLAY=:99
+i=0; while ! xdotool getdisplaygeometry >/dev/null 2>&1; do i=$((i+1)); [ $i -gt 100 ] && break; sleep 0.1; done
+timeout 90 xfreerdp /v:%s:%d '/u:%s' '/p:%s' /cert:ignore /size:1024x768 /bpp:32 /log-level:INFO >freerdp.log 2>&1 & F=$!
+W=$(timeout 30 xdotool search --sync --onlyvisible --class freerdp | head -n 1)
+echo "window $W"
+if [ -n "$W" ]; then
+	xdotool windowmove "$W" 0 0 2>/dev/null
+	xdotool mousemove --sync %d %d
+	ffmpeg -loglevel error -f x11grab -draw_mouse 1 -framerate %d -video_size 1280x1024 -i :99 -frames:v %d -vf crop=%d:%d:%d:%d f/%%03d.png
+	ffmpeg -loglevel error -y -i f/%%03d.png -vf tile=%dx%d -frames:v 1 sheet.png
+	ls f | wc -l
+fi
+kill $F 2>/dev/null
+wait $F; echo "exit $?"
+kill $X 2>/dev/null; wait 2>/dev/null
+true
+`, guestDir, host, port, testUser, testPassword, pointerAt, pointerAt, pointerRate, pointerFrames,
+		pointerCrop, pointerCrop, pointerAt-pointerMargin, pointerAt-pointerMargin, pointerCols, pointerFrames/pointerCols)
+}
+
+// square is a pointer shape: an opaque square of one color, its hotspot at
+// its top left corner.
+func square(blue, green, red byte) *Image {
+	const side = 24
+	img := &Image{Pix: make([]byte, 4*side*side), Stride: 4 * side, Width: side, Height: side}
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = blue, green, red, 0xff
+	}
+	return img
+}
+
+// TestFreeRDPPointer shows that a real client shows a pointer again after
+// it was hidden (SPEC §10.3): the same shape, which goes as its index in
+// the client's cache, and a new one. The server shows a magenta square,
+// hides it, shows it again, hides it, and shows a green square, three
+// seconds each, over a gray desktop; the client's display around its mouse
+// is recorded with the X pointer drawn in.
+func TestFreeRDPPointer(t *testing.T) {
+	host := requireVM(t)
+	gray := &Image{Pix: bytes.Repeat([]byte{0x80, 0x80, 0x80, 0xff}, 1024*768), Stride: 4 * 1024, Width: 1024, Height: 768}
+	magenta, green := square(0xff, 0x00, 0xff), square(0x00, 0xff, 0x00)
+	steps := make(chan error, 1)
+	h := HandlerFunc(func(ctx context.Context, s *Session) {
+		w, ht := s.DesktopSize()
+		p := s.Pointer()
+		err := s.Video().SendRects(gray, []image.Rectangle{image.Rect(0, 0, w, ht)})
+		for i, step := range []func() error{
+			func() error { return p.SetShape(magenta, 0, 0) },
+			p.Hide,
+			func() error { return p.SetShape(magenta, 0, 0) },
+			p.Hide,
+			func() error { return p.SetShape(green, 0, 0) },
+		} {
+			wait := 3 * time.Second
+			if i == 0 {
+				wait = 5 * time.Second // the guest puts its mouse and starts to record
+			}
+			select {
+			case <-ctx.Done():
+				err = ctx.Err()
+			case <-time.After(wait):
+			}
+			if err != nil {
+				break
+			}
+			err = step()
+		}
+		steps <- err
+		<-ctx.Done()
+	})
+	ts := startAt(t, Config{Handler: h}, net.JoinHostPort(host, "0"))
+	_, portStr, err := net.SplitHostPort(ts.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := runDir(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	out, err := vm(ctx, "sh", pointerScript(host, port))
+	t.Logf("the guest:\n%s", out)
+	for _, f := range []string{"freerdp.log", "sheet.png"} {
+		if _, perr := vm(ctx, "pull", guestDir+"/"+f, filepath.Join(dir, f)); perr != nil {
+			t.Logf("pulling %s: %v", f, perr)
+		}
+	}
+	if err != nil {
+		t.Fatalf("the guest's script: %v", err)
+	}
+	select {
+	case err := <-steps:
+		if err != nil {
+			t.Fatalf("the pointer's steps: %v", err)
+		}
+	default:
+		t.Fatalf("the session did not get through the pointer's steps; FreeRDP's log:\n%s\nserver:\n%s",
+			logTail(filepath.Join(dir, "freerdp.log")), ts.log.text(t))
+	}
+
+	f, err := os.Open(filepath.Join(dir, "sheet.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }() // read only
+	sheet, err := png.Decode(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What each picture shows under the pointer's square, runs of the
+	// same joined.
+	var seen []string
+	for i := range pointerFrames {
+		x, y := i%pointerCols*pointerCrop+pointerMargin+12, i/pointerCols*pointerCrop+pointerMargin+12
+		r, g, b, _ := sheet.At(x, y).RGBA()
+		what := fmt.Sprintf("%02x%02x%02x", r>>8, g>>8, b>>8)
+		switch {
+		case r>>8 > 0xe0 && g>>8 < 0x20 && b>>8 > 0xe0:
+			what = "magenta"
+		case r>>8 < 0x20 && g>>8 > 0xe0 && b>>8 < 0x20:
+			what = "green"
+		case r>>8 > 0x70 && r>>8 < 0x90 && g>>8 > 0x70 && g>>8 < 0x90 && b>>8 > 0x70 && b>>8 < 0x90:
+			what = "desktop"
+		}
+		if len(seen) == 0 || seen[len(seen)-1] != what {
+			seen = append(seen, what)
+		}
+	}
+	t.Logf("under the pointer, in turn: %v (%s)", seen, filepath.Join(dir, "sheet.png"))
+	want := []string{"magenta", "desktop", "magenta", "desktop", "green"}
+	if i := slices.Index(seen, "magenta"); i < 0 || !slices.Equal(seen[i:], want) {
+		t.Errorf("the client showed %v, want it to end with %v", seen, want)
+	}
+}

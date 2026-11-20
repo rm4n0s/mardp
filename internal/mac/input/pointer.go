@@ -47,12 +47,17 @@ const (
 	readNotDrawn = 3
 )
 
-// checkRead turns the C reader's answer into the info or its error.
+// checkRead turns the C reader's answer into the info or its error. A
+// hidden pointer whose image could not be read is no error: it comes
+// without an image.
 func checkRead(status int, info pointerInfo) (pointerInfo, error) {
-	switch status {
-	case readOK:
+	switch {
+	case status == readOK:
 		return info, nil
-	case readTooLarge:
+	case !info.visible:
+		info.width, info.height, info.hotX, info.hotY = 0, 0, 0, 0
+		return info, nil
+	case status == readTooLarge:
 		return pointerInfo{}, errors.New(TagPointerTooLarge, "the pointer's image is too large",
 			"width", info.width, "height", info.height, "max", maxPointerSide)
 	}
@@ -67,7 +72,8 @@ type pointerReader interface {
 
 // Pointer reads the system pointer (SPEC §10.3): its image at the display's
 // scale with straight alpha, its hotspot, whether it is shown, and where
-// it is on the display. It implements host.PointerSource; the host decides
+// it is on the display. A hidden pointer comes with its image too, when
+// macOS gives one. It implements host.PointerSource; the host decides
 // when to read it. Its image is valid until the next Current.
 type Pointer struct {
 	opts PointerOptions
@@ -96,10 +102,10 @@ func (p *Pointer) Current() (host.PointerShape, error) {
 		return host.PointerShape{}, err
 	}
 	sh := host.PointerShape{Visible: info.visible, OnDisplay: info.onDisplay, X: info.x, Y: info.y}
-	if !info.visible {
-		return sh, nil
-	}
 	w, h := info.width, info.height
+	if w <= 0 || h <= 0 {
+		return sh, nil // hidden, and macOS gave no image
+	}
 	p.img = host.Image{Pix: p.buf[:4*w*h], Stride: 4 * w, Width: w, Height: h}
 	sh.Image, sh.HotX, sh.HotY = &p.img, info.hotX, info.hotY
 	var dims [16]byte

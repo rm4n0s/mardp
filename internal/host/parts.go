@@ -213,9 +213,11 @@ type Injector interface {
 
 // PointerShape is the system pointer.
 type PointerShape struct {
-	// Visible says the pointer is shown; the rest is unset when not.
+	// Visible says the system shows the pointer.
 	Visible bool
-	// Image is the pointer's picture; HotX and HotY its hotspot.
+	// Image is the pointer's picture; HotX and HotY its hotspot. A hidden
+	// pointer has them too when the system gives its picture, else Image
+	// is nil.
 	Image      *rdp.Image
 	HotX, HotY int
 	// Hash identifies the picture and hotspot: equal hashes are the same

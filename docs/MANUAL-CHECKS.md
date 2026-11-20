@@ -440,6 +440,10 @@ grep -E 'sets the pace|H.264 encoder|video path|bitrate' /tmp/mardp.log | tail -
 
 A photo or a screenshot of Remmina's window when it looks wrong settles more than anything else.
 
+## 1.0.4 The pointer after typing (SPEC §10.3)
+
+Until 1.0.4 the pointer could stay away after you typed. With 1.0.4, in Remmina: click in a text field on the Mac, type a few words, then move the mouse. Expected: the pointer is there as soon as the mouse moves, and stays. Tell me if it is ever missing while you move the mouse, and what you did just before.
+
 ## 1.0.3 Quit (SPEC §7.3)
 
 Each of these should quit the app, so that its icon leaves the Dock and the menu bar: Quit in the Dock icon's menu (right-click), Command+Q with mardp's window in front, Quit mardp in the mardp menu at the top of the screen, Quit in the menu-bar icon's menu. Tell me which, if any, does not.

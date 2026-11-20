@@ -55,7 +55,11 @@ type pointerPoll struct {
 
 	// Only run's goroutine uses these.
 	sent      bool
-	last      PointerShape
+	last      PointerShape // what the client shows: Visible, and which shape
+	hiddenAt  int64        // when the Mac's pointer was first read hidden, in UnixNano; 0 while it shows
+	over      bool         // the client's mouse moved since: its pointer shows all the same
+	kept      PointerShape // a copy of the last shape read with its picture; Image is nil before the first
+	keptImg   rdp.Image
 	failures  int
 	off       bool
 	moves     uint64
@@ -113,17 +117,19 @@ func (p *pointerPoll) poll() {
 		return
 	}
 	p.position(sh)
-	if p.off || p.sent && sh.Visible == p.last.Visible && (!sh.Visible || sh.Hash == p.last.Hash) {
+	sh = p.keep(sh)
+	show := p.shown(sh)
+	if p.off || p.sent && show == p.last.Visible && (!show || sh.Hash == p.last.Hash) {
 		return
 	}
-	if sh.Visible {
+	if show {
 		err = p.dst.SetShape(sh.Image, sh.HotX, sh.HotY)
 	} else {
 		err = p.dst.Hide()
 	}
 	switch {
 	case err == nil:
-		p.sent, p.last = true, PointerShape{Visible: sh.Visible, Hash: sh.Hash}
+		p.sent, p.last = true, PointerShape{Visible: show, Hash: sh.Hash}
 	case hasTag(err, rdp.TagQueueFull):
 		// The next read tries again.
 	case hasTag(err, rdp.TagFastPathUnsupported), hasTag(err, rdp.TagSessionOver):
@@ -131,8 +137,60 @@ func (p *pointerPoll) poll() {
 		p.off = true
 	default:
 		p.log.Warn("the pointer was not sent", "err", err)
-		p.sent, p.last = true, PointerShape{Visible: sh.Visible, Hash: sh.Hash}
+		p.sent, p.last = true, PointerShape{Visible: show, Hash: sh.Hash}
 	}
+}
+
+// keep copies the shape read when it has a picture, and gives the last
+// copy to a hidden one that came without: macOS may give no picture of a
+// pointer it hides, and the client's may have to show all the same.
+func (p *pointerPoll) keep(sh PointerShape) PointerShape {
+	img := sh.Image
+	if img == nil {
+		if !sh.Visible && p.kept.Image != nil {
+			sh.Image, sh.HotX, sh.HotY, sh.Hash = p.kept.Image, p.kept.HotX, p.kept.HotY, p.kept.Hash
+		}
+		return sh
+	}
+	if p.kept.Image != nil && p.kept.Hash == sh.Hash {
+		return sh
+	}
+	n := img.Width * 4
+	if img.Width <= 0 || img.Height <= 0 || img.Stride < n || len(img.Pix) < (img.Height-1)*img.Stride+n {
+		return sh // SetShape refuses it
+	}
+	if cap(p.keptImg.Pix) < n*img.Height {
+		p.keptImg.Pix = make([]byte, n*img.Height)
+	}
+	p.keptImg.Pix = p.keptImg.Pix[:n*img.Height]
+	for y := range img.Height {
+		copy(p.keptImg.Pix[y*n:(y+1)*n], img.Pix[y*img.Stride:])
+	}
+	p.keptImg.Stride, p.keptImg.Width, p.keptImg.Height = n, img.Width, img.Height
+	p.kept = PointerShape{Image: &p.keptImg, HotX: sh.HotX, HotY: sh.HotY, Hash: sh.Hash}
+	return sh
+}
+
+// shown says whether the client shows the pointer (SPEC §10.3): when the
+// Mac shows its own, and also when the Mac hides it but the client's mouse
+// has moved since it hid, until the Mac shows it again. macOS hides the
+// pointer while keys are typed, and goes on saying hidden while the
+// client's mouse moves it again: a user who moves the mouse must see where
+// it is.
+func (p *pointerPoll) shown(sh PointerShape) bool {
+	if sh.Visible {
+		p.hiddenAt, p.over = 0, false
+		return true
+	}
+	if p.hiddenAt == 0 {
+		p.hiddenAt = p.now().UnixNano()
+	}
+	if !p.over && p.lastMouse.Load() > p.hiddenAt {
+		p.over = true
+		p.log.Debug("the pointer is shown though macOS hides it: the client's mouse moved",
+			"hidden", time.Duration(p.now().UnixNano()-p.hiddenAt))
+	}
+	return p.over && sh.Image != nil
 }
 
 // position sends the pointer's position when something on the Mac moved

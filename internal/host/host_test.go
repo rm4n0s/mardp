@@ -403,6 +403,27 @@ func TestSession(t *testing.T) {
 		s.readUntil(t, "the pointer's position", func() bool { return s.cur.X == 400 && s.cur.Y == 200 })
 	})
 
+	t.Run("the client's mouse moves a hidden pointer", func(t *testing.T) {
+		// The Mac still says its pointer is hidden, as after keys were
+		// typed, and gives no picture of it: the client's mouse moves, and
+		// its pointer shows again, the last shape, from the client's cache.
+		if !s.cur.Hidden {
+			t.Fatalf("cursor %+v, want it hidden", s.cur)
+		}
+		n := len(in.Events())
+		clock.Add(int64(time.Second))
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.c.SendInput(ctx, rdptest.Move(100, 200)); err != nil { // where the held button went down
+			t.Fatal(err)
+		}
+		in.Wait(ctx, n+1)
+		s.readUntil(t, "the pointer shown again", func() bool { return !s.cur.Hidden })
+		if s.cur.Cached != 1 || s.cur.Shape.Width != 8 || s.cur.Shape.HotX != 1 || s.cur.Shape.HotY != 2 {
+			t.Errorf("cursor %+v, want the first shape from the cache", s.cur)
+		}
+	})
+
 	t.Run("released at the end", func(t *testing.T) {
 		n := len(in.Events())
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -236,3 +236,87 @@ func TestPointerPollNoScale(t *testing.T) {
 		t.Errorf("sent %v", got)
 	}
 }
+
+// TestPointerPollHidden: the Mac hides its pointer (keys are typed) and
+// goes on saying so; the client's pointer shows again when its mouse
+// moves, and stays until the Mac has shown and hidden its own again.
+func TestPointerPollHidden(t *testing.T) {
+	src := &StaticPointer{}
+	dst := &fakeTarget{}
+	rec := &recorder{}
+	now := time.Unix(1000, 0)
+	p := newPointerPoll(src, dst, slog.New(rec), func() time.Time { return now })
+	hidden := func(hash uint64) PointerShape {
+		sh := testShape(hash)
+		sh.Visible = false
+		return sh
+	}
+	mouse := func() {
+		now = now.Add(time.Second)
+		p.afterMouse()
+	}
+	later := func() { now = now.Add(time.Minute) }
+	steps := []struct {
+		name   string
+		before func()
+		shape  PointerShape
+		want   []string
+	}{
+		{"shown", nil, testShape(1), []string{"shape"}},
+		{"the client's mouse moves", mouse, testShape(1), nil},
+		{"keys are typed: the Mac hides it", later, hidden(1), []string{"hide"}},
+		{"still hidden, the mouse still", later, hidden(1), nil},
+		{"the mouse moves, the Mac says hidden", mouse, hidden(1), []string{"shape"}},
+		{"it stays, however long the mouse rests", later, hidden(1), nil},
+		{"over something else: its shape", mouse, hidden(2), []string{"shape"}},
+		{"no picture of the hidden pointer: the last one", nil, PointerShape{}, nil},
+		{"a picture again", nil, hidden(1), []string{"shape"}},
+		{"the Mac shows it", later, testShape(1), nil},
+		{"hidden again: hidden again", later, hidden(1), []string{"hide"}},
+		{"shown by the Mac alone", later, testShape(3), []string{"shape"}},
+		{"hidden at the mouse's last event", func() { later(); p.afterMouse() }, hidden(3), []string{"hide"}},
+	}
+	for _, s := range steps {
+		if s.before != nil {
+			s.before()
+		}
+		src.Set(s.shape, nil)
+		dst.mu.Lock()
+		dst.got = nil
+		dst.mu.Unlock()
+		p.poll()
+		if got := dst.sent(); !slices.Equal(got, s.want) {
+			t.Fatalf("%s: sent %v, want %v", s.name, got, s.want)
+		}
+	}
+	if n := len(rec.find("the pointer is shown though macOS hides it: the client's mouse moved")); n != 1 {
+		t.Errorf("logged %d times, want once: one time the mouse moved a hidden pointer", n)
+	}
+	if p.kept.Image == nil || p.kept.Hash != 3 || p.kept.Image.Width != 8 || len(p.kept.Image.Pix) != 4*8*8 || p.kept.Image.Pix[0] != 3 {
+		t.Errorf("the shape kept: %+v", p.kept)
+	}
+
+	// No picture was ever read: nothing to show.
+	dst = &fakeTarget{}
+	p = newPointerPoll(src, dst, slog.New(slog.DiscardHandler), func() time.Time { return now })
+	src.Set(PointerShape{}, nil)
+	p.poll()
+	mouse()
+	p.poll()
+	if got := dst.sent(); !slices.Equal(got, []string{"hide"}) {
+		t.Errorf("never a picture: sent %v", got)
+	}
+}
+
+func TestPointerPollAllocs(t *testing.T) {
+	src := &StaticPointer{}
+	p := newPointerPoll(src, &fakeTarget{}, slog.New(slog.DiscardHandler), time.Now)
+	a, b := testShape(1), testShape(2)
+	p.keep(a)
+	if n := testing.AllocsPerRun(100, func() {
+		p.keep(b)
+		p.keep(a)
+	}); n != 0 {
+		t.Errorf("%v allocations to keep a shape, want 0", n)
+	}
+}

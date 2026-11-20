@@ -64,9 +64,20 @@ func TestPointerCurrent(t *testing.T) {
 		t.Error("another size, same hash")
 	}
 
-	f.info = pointerInfo{onDisplay: true, x: 5, y: 6}
+	// Hidden, with its image: the hash is the shown pointer's.
+	f.info.visible = false
 	s, err := p.Current()
-	if err != nil || s.Visible || s.Image != nil || !s.OnDisplay || s.X != 5 {
+	if err != nil || s.Visible || s.Image == nil || s.Image.Width != 3 || s.Image.Height != 4 || s.HotX != 2 || s.HotY != 2 || s.Hash == 0 {
+		t.Errorf("hidden with an image: %+v %v", s, err)
+	}
+	f.info.visible = true
+	if size := read(); size.hash != s.Hash {
+		t.Error("the same pointer hashed differently when hidden")
+	}
+	// Hidden, and macOS gave no image.
+	f.info = pointerInfo{onDisplay: true, x: 5, y: 6}
+	s, err = p.Current()
+	if err != nil || s.Visible || s.Image != nil || s.Hash != 0 || !s.OnDisplay || s.X != 5 {
 		t.Errorf("hidden: %+v %v", s, err)
 	}
 	f.err = errors.New("TestReadFailed", "no")
@@ -95,6 +106,12 @@ func TestCheckRead(t *testing.T) {
 		assertRoute(t, err, tt.route)
 		if got != (pointerInfo{}) {
 			t.Errorf("status %d: info %+v", tt.status, got)
+		}
+		// A hidden pointer that could not be read comes without an image.
+		hidden := pointerInfo{width: 300, height: 300, hotX: 1, hotY: 2, onDisplay: true, x: 3, y: 4}
+		got, err = checkRead(tt.status, hidden)
+		if want := (pointerInfo{onDisplay: true, x: 3, y: 4}); err != nil || got != want {
+			t.Errorf("status %d, hidden: %+v %v, want %+v", tt.status, got, err, want)
 		}
 	}
 }
